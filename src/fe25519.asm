@@ -439,14 +439,168 @@ mul38_hi:  !byte 0
 
 ; =============================================================================
 ; fe_sqr - (fe_dst) = (fe_src1)^2 mod p
+;
+; Dedicated squaring: exploits symmetry a[i]*a[j] = a[j]*a[i].
+; 1. Cross terms: accumulate a[i]*a[j] for i < j   (496 mul_8x8 calls)
+; 2. Double the 64-byte buffer (shift left 1 bit)
+; 3. Diagonal: add a[i]*a[i] at position 2*i        (32 mul_8x8 calls)
+; 4. Reduce mod p
+; Total: 528 byte-multiplies vs 1024 for schoolbook.
+;
 ; Clobbers: A, X, Y
 ; =============================================================================
 fe_sqr:
-        lda fe_src1
-        sta fe_src2
-        lda fe_src1+1
-        sta fe_src2+1
-        jmp fe_mul
+        ; 1. Zero the 64-byte product buffer
+        ldx #63
+        lda #0
+@zero_wide:
+        sta fe_wide,x
+        dex
+        bpl @zero_wide
+
+        ; 2. Cross terms: accumulate a[i]*a[j] for all i < j
+        lda #0
+        sta fe_mul_i           ; i = 0
+@sqr_outer:
+        ldy fe_mul_i
+        lda (fe_src1),y
+        beq @sqr_skip_i       ; skip if a[i] == 0
+
+        ; j starts at i+1
+        lda fe_mul_i
+        clc
+        adc #1
+        sta fe_mul_j
+
+@sqr_inner:
+        ; Load a[i]
+        ldy fe_mul_i
+        lda (fe_src1),y
+        pha                    ; save a[i]
+
+        ; Load a[j]
+        ldy fe_mul_j
+        lda (fe_src1),y
+        beq @sqr_skip_j       ; skip if a[j] == 0
+        tax                    ; X = a[j]
+        pla                    ; A = a[i]
+        jsr mul_8x8            ; poly_prod_lo/hi = a[i] * a[j]
+
+        ; Add to fe_wide[i+j]
+        lda fe_mul_i
+        clc
+        adc fe_mul_j
+        tax                    ; X = i+j
+
+        clc
+        lda fe_wide,x
+        adc poly_prod_lo
+        sta fe_wide,x
+        inx
+        lda fe_wide,x
+        adc poly_prod_hi
+        sta fe_wide,x
+        bcc @sqr_next_j
+
+        ; Propagate carry
+@sqr_prop:
+        inx
+        cpx #64
+        bcs @sqr_next_j
+        sec
+        lda fe_wide,x
+        adc #0                 ; carry is set via SEC
+        sta fe_wide,x
+        bcs @sqr_prop
+        jmp @sqr_next_j        ; carry propagation done, skip pla
+
+@sqr_skip_j:
+        pla                    ; discard a[i]
+@sqr_next_j:
+        inc fe_mul_j
+        lda fe_mul_j
+        cmp #32
+        bcc @sqr_inner
+
+@sqr_skip_i:
+        inc fe_mul_i
+        lda fe_mul_i
+        cmp #31                ; i goes 0..30 (j needs room for i+1)
+        bcs @sqr_cross_done
+        jmp @sqr_outer
+@sqr_cross_done:
+
+        ; 3. Double the entire 64-byte buffer (left shift by 1 bit)
+        ;    Use DEX for loop count (preserves carry) and INY for index.
+        clc
+        ldx #64                ; count down
+        ldy #0                 ; index up
+@double_loop:
+        lda fe_wide,y
+        rol                    ; uses carry from previous byte
+        sta fe_wide,y
+        iny
+        dex                    ; DEX preserves carry!
+        bne @double_loop
+
+        ; 4. Add diagonal terms: a[i]^2 at position 2*i
+        lda #0
+        sta fe_mul_i
+@diag_outer:
+        ldy fe_mul_i
+        lda (fe_src1),y
+        beq @diag_skip         ; skip if a[i] == 0
+        tax                    ; X = a[i]
+        ; A already = a[i]
+        jsr mul_8x8            ; poly_prod = a[i]^2
+
+        ; Add to fe_wide[2*i]
+        lda fe_mul_i
+        asl                    ; A = 2*i
+        tax
+
+        clc
+        lda fe_wide,x
+        adc poly_prod_lo
+        sta fe_wide,x
+        inx
+        lda fe_wide,x
+        adc poly_prod_hi
+        sta fe_wide,x
+        bcc @diag_skip
+
+        ; Propagate carry
+@diag_prop:
+        inx
+        cpx #64
+        bcs @diag_skip
+        sec
+        lda fe_wide,x
+        adc #0                 ; carry is set via SEC
+        sta fe_wide,x
+        bcs @diag_prop
+
+@diag_skip:
+        inc fe_mul_i
+        lda fe_mul_i
+        cmp #32
+        bcs @sqr_reduce
+        jmp @diag_outer
+
+@sqr_reduce:
+        ; 5. Reduce mod p (same as fe_mul)
+        jsr fe_reduce_wide
+
+        ; Copy result to (fe_dst)
+        ldy #31
+@copy_result:
+        lda fe_wide,y
+        sta (fe_dst),y
+        dey
+        bpl @copy_result
+
+        jsr fe_reduce_final
+        rts
 
 ; =============================================================================
 ; fe_mul_a24 - (fe_dst) = (fe_src1) * 121665 mod p
