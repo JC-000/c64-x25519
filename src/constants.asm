@@ -8,6 +8,7 @@ chrout          = $ffd2         ; output character
 getin           = $ffe4         ; get character from keyboard
 
 ; --- Hardware registers ---
+vic_ctrl1       = $d011         ; VIC-II control register 1 (DEN=bit4)
 vic_border      = $d020         ; border color
 vic_bg          = $d021         ; background color
 cia1_ta_lo      = $dc04         ; CIA #1 timer A low byte

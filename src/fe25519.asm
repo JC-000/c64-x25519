@@ -193,8 +193,11 @@ fe_cswap:
 ; =============================================================================
 ; fe_mul - (fe_dst) = (fe_src1) * (fe_src2) mod p
 ;
-; Schoolbook 32x32→64-byte multiply using mul_8x8 (quarter-square table).
-; Then reduce mod p.
+; Optimized schoolbook 32x32->64-byte multiply with inlined quarter-square
+; multiplication. Copies src2 to an absolute buffer to avoid repeated
+; indirect-indexed loads, caches src1[i] per outer iteration, and inlines
+; the mul_8x8 logic to avoid JSR/RTS overhead (~12 cycles saved per multiply).
+;
 ; Clobbers: A, X, Y
 ; =============================================================================
 fe_mul:
@@ -206,27 +209,81 @@ fe_mul:
         dex
         bpl @zero_wide
 
-        ; 2. Schoolbook multiply: src1[i] * src2[j]
+        ; 2. Copy src2 to absolute buffer (saves 1-2 cycles per inner access)
+        ldy #31
+@copy_src2:
+        lda (fe_src2),y
+        sta mul_src2_buf,y
+        dey
+        bpl @copy_src2
+
+        ; 3. Schoolbook multiply with inlined mul_8x8
         lda #0
         sta fe_mul_i
 @mul_outer:
         ldy fe_mul_i
         lda (fe_src1),y
-        beq @skip_zero         ; skip if src1[i] == 0
+        bne @nonzero_i         ; branch if src1[i] != 0
+        jmp @skip_zero
+@nonzero_i:
+        sta mul_cached_a       ; cache src1[i] for entire inner loop
 
         lda #0
         sta fe_mul_j
 @mul_inner:
-        ldy fe_mul_i
-        lda (fe_src1),y        ; A = src1[i]
-        pha
-        ldy fe_mul_j
-        lda (fe_src2),y        ; A = src2[j]
-        beq @skip_j_zero       ; skip if zero
-        tax                    ; X = src2[j]
-        pla                    ; A = src1[i]
-        jsr mul_8x8            ; poly_prod_lo/hi = result
+        ldx fe_mul_j
+        lda mul_src2_buf,x     ; A = src2[j] (absolute indexed = 4 cycles)
+        beq @next_j            ; skip if zero
 
+        ; --- INLINED mul_8x8: mul_cached_a * A -> poly_prod_lo/hi ---
+        sta mul_b              ; save src2[j]
+        tax                    ; X = src2[j] (kept for later)
+
+        ; Compute sum = a + b
+        lda mul_cached_a
+        clc
+        adc mul_b              ; A = a + b (low byte)
+        tay                    ; Y = sum low byte
+        lda #0
+        adc #0                 ; carry -> sum page (0 or 1)
+        sta mul_s_pg
+
+        ; Compute |a - b|
+        lda mul_cached_a
+        sec
+        sbc mul_b
+        bcs @no_neg
+        eor #$ff
+        adc #1                 ; negate (carry was clear, so ADC adds 1)
+@no_neg:
+        tax                    ; X = |a-b| (always <= 255)
+
+        ; sqtab[sum] - sqtab[|diff|]
+        lda mul_s_pg
+        beq @sum_pg0
+
+        ; sum is in page 1 (256..510)
+        lda sqtab_lo+256,y
+        sec
+        sbc sqtab_lo,x
+        sta poly_prod_lo
+        lda sqtab_hi+256,y
+        sbc sqtab_hi,x
+        sta poly_prod_hi
+        jmp @accum
+
+@sum_pg0:
+        ; sum is in page 0 (0..255)
+        lda sqtab_lo,y
+        sec
+        sbc sqtab_lo,x
+        sta poly_prod_lo
+        lda sqtab_hi,y
+        sbc sqtab_hi,x
+        sta poly_prod_hi
+        ; --- END INLINED mul_8x8 ---
+
+@accum:
         ; Add 16-bit product to fe_wide[i+j]
         lda fe_mul_i
         clc
@@ -253,15 +310,13 @@ fe_mul:
         adc #0
         sta fe_wide,x
         bcs @prop_carry
-        jmp @next_j
 
-@skip_j_zero:
-        pla                    ; discard src1[i]
 @next_j:
         inc fe_mul_j
         lda fe_mul_j
         cmp #32
-        bcc @mul_inner
+        bcs @skip_zero
+        jmp @mul_inner
 
 @skip_zero:
         inc fe_mul_i
@@ -271,7 +326,7 @@ fe_mul:
         jmp @mul_outer
 @mul_done:
 
-        ; 3. Reduce mod p
+        ; 4. Reduce mod p
         jsr fe_reduce_wide
 
         ; Copy result to (fe_dst)
@@ -301,8 +356,7 @@ fe_reduce_wide:
         beq @reduce1_zero
 
         stx fe_loop            ; save byte index
-        ldx #38
-        jsr mul_8x8            ; poly_prod_lo/hi = byte * 38
+        jsr mul_by_38          ; poly_prod_lo/hi = A * 38
         ldx fe_loop            ; restore byte index
 
         ; Add product + running carry to fe_wide[x]
@@ -344,8 +398,7 @@ fe_reduce_wide:
         ; If carry remains, multiply by 38 and add to bottom
         lda fe_carry
         beq @done
-        ldx #38
-        jsr mul_8x8
+        jsr mul_by_38
 
         clc
         lda fe_wide
@@ -384,15 +437,225 @@ fe_reduce_wide:
         rts
 
 ; =============================================================================
+; mul_by_38 - Multiply A by 38, result in poly_prod_hi:poly_prod_lo
+;
+; Uses shift-and-add: 38 = 32 + 4 + 2
+; Input:  A = multiplicand (0-255)
+; Output: poly_prod_lo/poly_prod_hi = A * 38 (16-bit, max 9690=$25DA)
+; Clobbers: A, Y
+; Preserves: X
+; =============================================================================
+mul_by_38:
+        sta mul38_in           ; save input
+        ; 16-bit shift register starts as A
+        lda mul38_in
+        sta mul38_lo
+        lda #0
+        sta mul38_hi
+
+        ; shift left 1 -> A*2, add to prod
+        asl mul38_lo
+        rol mul38_hi
+        lda mul38_lo
+        sta poly_prod_lo
+        lda mul38_hi
+        sta poly_prod_hi       ; prod = A*2
+
+        ; shift left 1 more -> A*4, add to prod
+        asl mul38_lo
+        rol mul38_hi           ; mul38 = A*4
+        clc
+        lda poly_prod_lo
+        adc mul38_lo
+        sta poly_prod_lo
+        lda poly_prod_hi
+        adc mul38_hi
+        sta poly_prod_hi       ; prod = A*2 + A*4 = A*6
+
+        ; shift left 3 more -> A*32, add to prod
+        asl mul38_lo
+        rol mul38_hi           ; A*8
+        asl mul38_lo
+        rol mul38_hi           ; A*16
+        asl mul38_lo
+        rol mul38_hi           ; A*32
+        clc
+        lda poly_prod_lo
+        adc mul38_lo
+        sta poly_prod_lo
+        lda poly_prod_hi
+        adc mul38_hi
+        sta poly_prod_hi       ; prod = A*6 + A*32 = A*38
+        rts
+
+mul38_in:  !byte 0
+mul38_lo:  !byte 0
+mul38_hi:  !byte 0
+
+; =============================================================================
 ; fe_sqr - (fe_dst) = (fe_src1)^2 mod p
+;
+; Dedicated squaring: exploits symmetry a[i]*a[j] = a[j]*a[i].
+; 1. Cross terms: accumulate a[i]*a[j] for i < j   (496 mul_8x8 calls)
+; 2. Double the 64-byte buffer (shift left 1 bit)
+; 3. Diagonal: add a[i]*a[i] at position 2*i        (32 mul_8x8 calls)
+; 4. Reduce mod p
+; Total: 528 byte-multiplies vs 1024 for schoolbook.
+;
 ; Clobbers: A, X, Y
 ; =============================================================================
 fe_sqr:
-        lda fe_src1
-        sta fe_src2
-        lda fe_src1+1
-        sta fe_src2+1
-        jmp fe_mul
+        ; 1. Zero the 64-byte product buffer
+        ldx #63
+        lda #0
+@zero_wide:
+        sta fe_wide,x
+        dex
+        bpl @zero_wide
+
+        ; 2. Cross terms: accumulate a[i]*a[j] for all i < j
+        lda #0
+        sta fe_mul_i           ; i = 0
+@sqr_outer:
+        ldy fe_mul_i
+        lda (fe_src1),y
+        beq @sqr_skip_i       ; skip if a[i] == 0
+
+        ; j starts at i+1
+        lda fe_mul_i
+        clc
+        adc #1
+        sta fe_mul_j
+
+@sqr_inner:
+        ; Load a[i]
+        ldy fe_mul_i
+        lda (fe_src1),y
+        pha                    ; save a[i]
+
+        ; Load a[j]
+        ldy fe_mul_j
+        lda (fe_src1),y
+        beq @sqr_skip_j       ; skip if a[j] == 0
+        tax                    ; X = a[j]
+        pla                    ; A = a[i]
+        jsr mul_8x8            ; poly_prod_lo/hi = a[i] * a[j]
+
+        ; Add to fe_wide[i+j]
+        lda fe_mul_i
+        clc
+        adc fe_mul_j
+        tax                    ; X = i+j
+
+        clc
+        lda fe_wide,x
+        adc poly_prod_lo
+        sta fe_wide,x
+        inx
+        lda fe_wide,x
+        adc poly_prod_hi
+        sta fe_wide,x
+        bcc @sqr_next_j
+
+        ; Propagate carry
+@sqr_prop:
+        inx
+        cpx #64
+        bcs @sqr_next_j
+        sec
+        lda fe_wide,x
+        adc #0                 ; carry is set via SEC
+        sta fe_wide,x
+        bcs @sqr_prop
+        jmp @sqr_next_j        ; carry propagation done, skip pla
+
+@sqr_skip_j:
+        pla                    ; discard a[i]
+@sqr_next_j:
+        inc fe_mul_j
+        lda fe_mul_j
+        cmp #32
+        bcc @sqr_inner
+
+@sqr_skip_i:
+        inc fe_mul_i
+        lda fe_mul_i
+        cmp #31                ; i goes 0..30 (j needs room for i+1)
+        bcs @sqr_cross_done
+        jmp @sqr_outer
+@sqr_cross_done:
+
+        ; 3. Double the entire 64-byte buffer (left shift by 1 bit)
+        ;    Use DEX for loop count (preserves carry) and INY for index.
+        clc
+        ldx #64                ; count down
+        ldy #0                 ; index up
+@double_loop:
+        lda fe_wide,y
+        rol                    ; uses carry from previous byte
+        sta fe_wide,y
+        iny
+        dex                    ; DEX preserves carry!
+        bne @double_loop
+
+        ; 4. Add diagonal terms: a[i]^2 at position 2*i
+        lda #0
+        sta fe_mul_i
+@diag_outer:
+        ldy fe_mul_i
+        lda (fe_src1),y
+        beq @diag_skip         ; skip if a[i] == 0
+        tax                    ; X = a[i]
+        ; A already = a[i]
+        jsr mul_8x8            ; poly_prod = a[i]^2
+
+        ; Add to fe_wide[2*i]
+        lda fe_mul_i
+        asl                    ; A = 2*i
+        tax
+
+        clc
+        lda fe_wide,x
+        adc poly_prod_lo
+        sta fe_wide,x
+        inx
+        lda fe_wide,x
+        adc poly_prod_hi
+        sta fe_wide,x
+        bcc @diag_skip
+
+        ; Propagate carry
+@diag_prop:
+        inx
+        cpx #64
+        bcs @diag_skip
+        sec
+        lda fe_wide,x
+        adc #0                 ; carry is set via SEC
+        sta fe_wide,x
+        bcs @diag_prop
+
+@diag_skip:
+        inc fe_mul_i
+        lda fe_mul_i
+        cmp #32
+        bcs @sqr_reduce
+        jmp @diag_outer
+
+@sqr_reduce:
+        ; 5. Reduce mod p (same as fe_mul)
+        jsr fe_reduce_wide
+
+        ; Copy result to (fe_dst)
+        ldy #31
+@copy_result:
+        lda fe_wide,y
+        sta (fe_dst),y
+        dey
+        bpl @copy_result
+
+        jsr fe_reduce_final
+        rts
 
 ; =============================================================================
 ; fe_mul_a24 - (fe_dst) = (fe_src1) * 121665 mod p
@@ -472,8 +735,7 @@ fe_mul_a24:
         ; Reduce: fe_wide[32..34] * 38 → add to fe_wide[0..31]
         lda fe_wide+32
         beq @r_b33
-        ldx #38
-        jsr mul_8x8
+        jsr mul_by_38
         clc
         lda fe_wide
         adc poly_prod_lo
@@ -493,8 +755,7 @@ fe_mul_a24:
 @r_b33:
         lda fe_wide+33
         beq @r_b34
-        ldx #38
-        jsr mul_8x8
+        jsr mul_by_38
         clc
         lda fe_wide+1
         adc poly_prod_lo
@@ -514,8 +775,7 @@ fe_mul_a24:
 @r_b34:
         lda fe_wide+34
         beq @r_done_a24
-        ldx #38
-        jsr mul_8x8
+        jsr mul_by_38
         clc
         lda fe_wide+2
         adc poly_prod_lo
