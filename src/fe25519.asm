@@ -193,8 +193,11 @@ fe_cswap:
 ; =============================================================================
 ; fe_mul - (fe_dst) = (fe_src1) * (fe_src2) mod p
 ;
-; Schoolbook 32x32→64-byte multiply using mul_8x8 (quarter-square table).
-; Then reduce mod p.
+; Optimized schoolbook 32x32->64-byte multiply with inlined quarter-square
+; multiplication. Copies src2 to an absolute buffer to avoid repeated
+; indirect-indexed loads, caches src1[i] per outer iteration, and inlines
+; the mul_8x8 logic to avoid JSR/RTS overhead (~12 cycles saved per multiply).
+;
 ; Clobbers: A, X, Y
 ; =============================================================================
 fe_mul:
@@ -206,27 +209,81 @@ fe_mul:
         dex
         bpl @zero_wide
 
-        ; 2. Schoolbook multiply: src1[i] * src2[j]
+        ; 2. Copy src2 to absolute buffer (saves 1-2 cycles per inner access)
+        ldy #31
+@copy_src2:
+        lda (fe_src2),y
+        sta mul_src2_buf,y
+        dey
+        bpl @copy_src2
+
+        ; 3. Schoolbook multiply with inlined mul_8x8
         lda #0
         sta fe_mul_i
 @mul_outer:
         ldy fe_mul_i
         lda (fe_src1),y
-        beq @skip_zero         ; skip if src1[i] == 0
+        bne @nonzero_i         ; branch if src1[i] != 0
+        jmp @skip_zero
+@nonzero_i:
+        sta mul_cached_a       ; cache src1[i] for entire inner loop
 
         lda #0
         sta fe_mul_j
 @mul_inner:
-        ldy fe_mul_i
-        lda (fe_src1),y        ; A = src1[i]
-        pha
-        ldy fe_mul_j
-        lda (fe_src2),y        ; A = src2[j]
-        beq @skip_j_zero       ; skip if zero
-        tax                    ; X = src2[j]
-        pla                    ; A = src1[i]
-        jsr mul_8x8            ; poly_prod_lo/hi = result
+        ldx fe_mul_j
+        lda mul_src2_buf,x     ; A = src2[j] (absolute indexed = 4 cycles)
+        beq @next_j            ; skip if zero
 
+        ; --- INLINED mul_8x8: mul_cached_a * A -> poly_prod_lo/hi ---
+        sta mul_b              ; save src2[j]
+        tax                    ; X = src2[j] (kept for later)
+
+        ; Compute sum = a + b
+        lda mul_cached_a
+        clc
+        adc mul_b              ; A = a + b (low byte)
+        tay                    ; Y = sum low byte
+        lda #0
+        adc #0                 ; carry -> sum page (0 or 1)
+        sta mul_s_pg
+
+        ; Compute |a - b|
+        lda mul_cached_a
+        sec
+        sbc mul_b
+        bcs @no_neg
+        eor #$ff
+        adc #1                 ; negate (carry was clear, so ADC adds 1)
+@no_neg:
+        tax                    ; X = |a-b| (always <= 255)
+
+        ; sqtab[sum] - sqtab[|diff|]
+        lda mul_s_pg
+        beq @sum_pg0
+
+        ; sum is in page 1 (256..510)
+        lda sqtab_lo+256,y
+        sec
+        sbc sqtab_lo,x
+        sta poly_prod_lo
+        lda sqtab_hi+256,y
+        sbc sqtab_hi,x
+        sta poly_prod_hi
+        jmp @accum
+
+@sum_pg0:
+        ; sum is in page 0 (0..255)
+        lda sqtab_lo,y
+        sec
+        sbc sqtab_lo,x
+        sta poly_prod_lo
+        lda sqtab_hi,y
+        sbc sqtab_hi,x
+        sta poly_prod_hi
+        ; --- END INLINED mul_8x8 ---
+
+@accum:
         ; Add 16-bit product to fe_wide[i+j]
         lda fe_mul_i
         clc
@@ -253,15 +310,13 @@ fe_mul:
         adc #0
         sta fe_wide,x
         bcs @prop_carry
-        jmp @next_j
 
-@skip_j_zero:
-        pla                    ; discard src1[i]
 @next_j:
         inc fe_mul_j
         lda fe_mul_j
         cmp #32
-        bcc @mul_inner
+        bcs @skip_zero
+        jmp @mul_inner
 
 @skip_zero:
         inc fe_mul_i
@@ -271,7 +326,7 @@ fe_mul:
         jmp @mul_outer
 @mul_done:
 
-        ; 3. Reduce mod p
+        ; 4. Reduce mod p
         jsr fe_reduce_wide
 
         ; Copy result to (fe_dst)
