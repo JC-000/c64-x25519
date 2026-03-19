@@ -48,3 +48,9 @@ x25_e:
 x25_basepoint:
         !byte 9
         !fill 31, 0
+
+; --- fe_mul optimization buffers ---
+mul_cached_a:
+        !byte 0                ; cached src1[i] for inlined multiply
+mul_src2_buf:
+        !fill 32, 0           ; absolute copy of src2 for fast indexed access
