@@ -198,41 +198,263 @@ fe_cswap:
 ; Clobbers: A, X, Y
 ; =============================================================================
 fe_mul:
-        ; 1. Zero the 64-byte product buffer
-        ldx #63
-        lda #0
-@zero_wide:
-        sta fe_wide,x
-        dex
-        bpl @zero_wide
+        ; --- Single-level Karatsuba 32x32 multiply ---
+        ; Split a = aH*2^128 + aL, b = bH*2^128 + bL (16 bytes each)
+        ; P0 = aL*bL, P2 = aH*bH, P1 = (aL+aH)*(bL+bH) - P0 - P2
+        ; result = P0 + P1*2^128 + P2*2^256
+        ; Then reduce mod p (2^256 ≡ 38).
 
-        ; 2. Schoolbook multiply: src1[i] * src2[j]
+        ; Copy src1 and src2 to absolute buffers
+        ldy #31
+@cpy:   lda (fe_src1),y
+        sta kara_a,y
+        lda (fe_src2),y
+        sta kara_b,y
+        dey
+        bpl @cpy
+
+        ; Save fe_dst on stack (2 bytes) for later
+        lda fe_dst+1
+        pha
+        lda fe_dst
+        pha
+
+        ; --- P0 = aL * bL (16x16 → 32 bytes) ---
+        lda #<kara_a
+        sta fe_src1
+        lda #>kara_a
+        sta fe_src1+1
+        lda #<kara_b
+        sta fe_src2
+        lda #>kara_b
+        sta fe_src2+1
+        ldx #31
+        lda #0
+@z0:    sta fe_wide,x
+        dex
+        bpl @z0
+        lda #16
+        sta kara_mul_len
+        jsr schoolbook_16x16
+        ldy #31
+@cp0:   lda fe_wide,y
+        sta kara_p0,y
+        dey
+        bpl @cp0
+
+        ; --- P2 = aH * bH (16x16 → 32 bytes) ---
+        lda #<(kara_a+16)
+        sta fe_src1
+        lda #>(kara_a+16)
+        sta fe_src1+1
+        lda #<(kara_b+16)
+        sta fe_src2
+        lda #>(kara_b+16)
+        sta fe_src2+1
+        ldx #31
+        lda #0
+@z2:    sta fe_wide,x
+        dex
+        bpl @z2
+        lda #16
+        sta kara_mul_len
+        jsr schoolbook_16x16
+        ldy #31
+@cp2:   lda fe_wide,y
+        sta kara_p2,y
+        dey
+        bpl @cp2
+
+        ; --- sum_a = aL + aH (17 bytes) ---
+        clc
+        ldy #0
+        ldx #16
+@adda:  lda kara_a,y
+        adc kara_a+16,y
+        sta kara_sum_a,y
+        iny
+        dex                    ; DEX doesn't affect carry
+        bne @adda
+        lda #0
+        adc #0
+        sta kara_sum_a+16      ; carry byte
+
+        ; --- sum_b = bL + bH (17 bytes) ---
+        clc
+        ldy #0
+        ldx #16
+@addb:  lda kara_b,y
+        adc kara_b+16,y
+        sta kara_sum_b,y
+        iny
+        dex                    ; DEX doesn't affect carry
+        bne @addb
+        lda #0
+        adc #0
+        sta kara_sum_b+16      ; carry byte
+
+        ; --- P1_raw = sum_a * sum_b (17x17 → 34 bytes) ---
+        lda #<kara_sum_a
+        sta fe_src1
+        lda #>kara_sum_a
+        sta fe_src1+1
+        lda #<kara_sum_b
+        sta fe_src2
+        lda #>kara_sum_b
+        sta fe_src2+1
+        ldx #33
+        lda #0
+@z1:    sta fe_wide,x
+        dex
+        bpl @z1
+        lda #17
+        sta kara_mul_len
+        jsr schoolbook_16x16
+        ; Copy fe_wide[0..33] to kara_p1
+        ldy #33
+@cp1:   lda fe_wide,y
+        sta kara_p1,y
+        dey
+        bpl @cp1
+
+        ; --- P1 = P1_raw - P0 (34-byte minus 32-byte, padded) ---
+        sec
+        ldy #0
+        ldx #32
+@sub0:  lda kara_p1,y
+        sbc kara_p0,y
+        sta kara_p1,y
+        iny
+        dex                    ; DEX doesn't affect carry
+        bne @sub0
+        ; Propagate borrow through remaining 2 bytes
+        lda kara_p1+32
+        sbc #0
+        sta kara_p1+32
+        lda kara_p1+33
+        sbc #0
+        sta kara_p1+33
+
+        ; --- P1 = P1 - P2 ---
+        sec
+        ldy #0
+        ldx #32
+@sub2:  lda kara_p1,y
+        sbc kara_p2,y
+        sta kara_p1,y
+        iny
+        dex                    ; DEX doesn't affect carry
+        bne @sub2
+        lda kara_p1+32
+        sbc #0
+        sta kara_p1+32
+        lda kara_p1+33
+        sbc #0
+        sta kara_p1+33
+
+        ; --- Combine: result = P0 + P1*2^128 + P2*2^256 ---
+        ; Build into fe_wide[0..63]
+
+        ; Start with P0 in [0..31]
+        ldy #31
+@init:  lda kara_p0,y
+        sta fe_wide,y
+        dey
+        bpl @init
+        ; Zero upper half [32..63]
+        lda #0
+        ldx #32
+@zhi:   sta fe_wide,x
+        inx
+        cpx #64
+        bcc @zhi
+
+        ; Add P1 at offset 16 (P1 is 34 bytes → positions 16..49)
+        clc
+        ldy #0
+        ldx #34
+@addp1: lda fe_wide+16,y
+        adc kara_p1,y
+        sta fe_wide+16,y
+        iny
+        dex                    ; DEX doesn't affect carry
+        bne @addp1
+        ; Propagate carry through remaining bytes
+        bcc @p1done
+@prop1: cpy #48                ; y is at 34 after loop; max offset = 16+48=64
+        bcs @p1done
+        lda fe_wide+16,y
+        clc
+        adc #1                 ; add the carry we're propagating
+        sta fe_wide+16,y
+        iny
+        bcs @prop1             ; if still overflowed, keep propagating
+@p1done:
+
+        ; Add P2 at offset 32 (P2 is 32 bytes → positions 32..63)
+        clc
+        ldy #0
+        ldx #32
+@addp2: lda fe_wide+32,y
+        adc kara_p2,y
+        sta fe_wide+32,y
+        iny
+        dex                    ; DEX doesn't affect carry
+        bne @addp2
+        ; Any carry past byte 63 is handled by reduction
+
+        ; --- Reduce mod p ---
+        jsr fe_reduce_wide
+
+        ; Restore fe_dst from stack
+        pla
+        sta fe_dst
+        pla
+        sta fe_dst+1
+
+        ; Copy result to (fe_dst)
+        ldy #31
+@cpres: lda fe_wide,y
+        sta (fe_dst),y
+        dey
+        bpl @cpres
+
+        jsr fe_reduce_final
+        jsr fe_reduce_final    ; second pass needed when reduce_wide gives >= 2p
+        rts
+
+; =============================================================================
+; schoolbook_16x16 - Inner schoolbook multiply for Karatsuba
+;
+; Multiplies (fe_src1)[0..len-1] * (fe_src2)[0..len-1]
+; Length in kara_mul_len (16 or 17)
+; Result accumulated into fe_wide[] (MUST be pre-zeroed by caller)
+; Clobbers: A, X, Y, fe_mul_i, fe_mul_j
+; =============================================================================
+schoolbook_16x16:
         lda #0
         sta fe_mul_i
-@mul_outer:
+@outer:
         ldy fe_mul_i
         lda (fe_src1),y
-        beq @skip_zero         ; skip if src1[i] == 0
-
+        beq @skip_i
         lda #0
         sta fe_mul_j
-@mul_inner:
+@inner:
         ldy fe_mul_i
-        lda (fe_src1),y        ; A = src1[i]
+        lda (fe_src1),y
         pha
         ldy fe_mul_j
-        lda (fe_src2),y        ; A = src2[j]
-        beq @skip_j_zero       ; skip if zero
-        tax                    ; X = src2[j]
-        pla                    ; A = src1[i]
-        jsr mul_8x8            ; poly_prod_lo/hi = result
-
-        ; Add 16-bit product to fe_wide[i+j]
+        lda (fe_src2),y
+        beq @skip_j_zero
+        tax
+        pla
+        jsr mul_8x8
+        ; Accumulate at fe_wide[i+j]
         lda fe_mul_i
         clc
         adc fe_mul_j
-        tax                    ; X = i+j
-
+        tax
         clc
         lda fe_wide,x
         adc poly_prod_lo
@@ -242,47 +464,30 @@ fe_mul:
         adc poly_prod_hi
         sta fe_wide,x
         bcc @next_j
-
         ; Propagate carry
-@prop_carry:
-        inx
-        cpx #64
+@prop:  inx
+        cpx #34              ; max product size (17x17)
         bcs @next_j
         sec
         lda fe_wide,x
-        adc #0
+        adc #0               ; SEC + ADC #0 = add 1
         sta fe_wide,x
-        bcs @prop_carry
+        bcs @prop
         jmp @next_j
-
 @skip_j_zero:
-        pla                    ; discard src1[i]
+        pla
 @next_j:
         inc fe_mul_j
         lda fe_mul_j
-        cmp #32
-        bcc @mul_inner
-
-@skip_zero:
+        cmp kara_mul_len
+        bcc @inner
+@skip_i:
         inc fe_mul_i
         lda fe_mul_i
-        cmp #32
-        bcs @mul_done
-        jmp @mul_outer
-@mul_done:
-
-        ; 3. Reduce mod p
-        jsr fe_reduce_wide
-
-        ; Copy result to (fe_dst)
-        ldy #31
-@copy_result:
-        lda fe_wide,y
-        sta (fe_dst),y
-        dey
-        bpl @copy_result
-
-        jsr fe_reduce_final
+        cmp kara_mul_len
+        bcs @done
+        jmp @outer
+@done:
         rts
 
 ; =============================================================================

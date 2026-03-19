@@ -20,6 +20,16 @@ fe_p:
         !fill 30, $ff
         !byte $7f
 
+; --- Karatsuba working buffers ---
+kara_a:     !fill 32, 0     ; copy of src1
+kara_b:     !fill 32, 0     ; copy of src2
+kara_p0:    !fill 32, 0     ; aL * bL
+kara_p2:    !fill 32, 0     ; aH * bH
+kara_sum_a: !fill 17, 0     ; aL + aH with carry
+kara_sum_b: !fill 17, 0     ; bL + bH with carry
+kara_p1:    !fill 34, 0     ; (aL+aH)*(bL+bH) - P0 - P2
+kara_mul_len: !byte 0       ; length param for schoolbook_16x16
+
 ; --- X25519 state ---
 x25_scalar:
         !fill 32, 0            ; clamped scalar
