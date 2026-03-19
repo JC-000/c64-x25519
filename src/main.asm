@@ -113,6 +113,25 @@ bench_stop:
 bench_ticks:    !fill 3, 0
 
 ; =============================================================================
+; VIC-II screen blanking for maximum CPU throughput
+; Blanking eliminates ~40 stolen cycles/rasterline from VIC-II DMA
+; =============================================================================
+
+; vic_blank - Disable VIC-II display (DEN=0) for ~20-25% CPU speedup
+vic_blank:
+        lda vic_ctrl1
+        and #$ef               ; clear bit 4 (DEN - Display Enable)
+        sta vic_ctrl1
+        rts
+
+; vic_unblank - Re-enable VIC-II display (DEN=1)
+vic_unblank:
+        lda vic_ctrl1
+        ora #$10               ; set bit 4
+        sta vic_ctrl1
+        rts
+
+; =============================================================================
 ; Assembly modules
 ; =============================================================================
 !source "mul_8x8.asm"

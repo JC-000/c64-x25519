@@ -301,8 +301,7 @@ fe_reduce_wide:
         beq @reduce1_zero
 
         stx fe_loop            ; save byte index
-        ldx #38
-        jsr mul_8x8            ; poly_prod_lo/hi = byte * 38
+        jsr mul_by_38          ; poly_prod_lo/hi = A * 38
         ldx fe_loop            ; restore byte index
 
         ; Add product + running carry to fe_wide[x]
@@ -344,8 +343,7 @@ fe_reduce_wide:
         ; If carry remains, multiply by 38 and add to bottom
         lda fe_carry
         beq @done
-        ldx #38
-        jsr mul_8x8
+        jsr mul_by_38
 
         clc
         lda fe_wide
@@ -382,6 +380,62 @@ fe_reduce_wide:
 
 @done:
         rts
+
+; =============================================================================
+; mul_by_38 - Multiply A by 38, result in poly_prod_hi:poly_prod_lo
+;
+; Uses shift-and-add: 38 = 32 + 4 + 2
+; Input:  A = multiplicand (0-255)
+; Output: poly_prod_lo/poly_prod_hi = A * 38 (16-bit, max 9690=$25DA)
+; Clobbers: A, Y
+; Preserves: X
+; =============================================================================
+mul_by_38:
+        sta mul38_in           ; save input
+        ; 16-bit shift register starts as A
+        lda mul38_in
+        sta mul38_lo
+        lda #0
+        sta mul38_hi
+
+        ; shift left 1 -> A*2, add to prod
+        asl mul38_lo
+        rol mul38_hi
+        lda mul38_lo
+        sta poly_prod_lo
+        lda mul38_hi
+        sta poly_prod_hi       ; prod = A*2
+
+        ; shift left 1 more -> A*4, add to prod
+        asl mul38_lo
+        rol mul38_hi           ; mul38 = A*4
+        clc
+        lda poly_prod_lo
+        adc mul38_lo
+        sta poly_prod_lo
+        lda poly_prod_hi
+        adc mul38_hi
+        sta poly_prod_hi       ; prod = A*2 + A*4 = A*6
+
+        ; shift left 3 more -> A*32, add to prod
+        asl mul38_lo
+        rol mul38_hi           ; A*8
+        asl mul38_lo
+        rol mul38_hi           ; A*16
+        asl mul38_lo
+        rol mul38_hi           ; A*32
+        clc
+        lda poly_prod_lo
+        adc mul38_lo
+        sta poly_prod_lo
+        lda poly_prod_hi
+        adc mul38_hi
+        sta poly_prod_hi       ; prod = A*6 + A*32 = A*38
+        rts
+
+mul38_in:  !byte 0
+mul38_lo:  !byte 0
+mul38_hi:  !byte 0
 
 ; =============================================================================
 ; fe_sqr - (fe_dst) = (fe_src1)^2 mod p
@@ -472,8 +526,7 @@ fe_mul_a24:
         ; Reduce: fe_wide[32..34] * 38 → add to fe_wide[0..31]
         lda fe_wide+32
         beq @r_b33
-        ldx #38
-        jsr mul_8x8
+        jsr mul_by_38
         clc
         lda fe_wide
         adc poly_prod_lo
@@ -493,8 +546,7 @@ fe_mul_a24:
 @r_b33:
         lda fe_wide+33
         beq @r_b34
-        ldx #38
-        jsr mul_8x8
+        jsr mul_by_38
         clc
         lda fe_wide+1
         adc poly_prod_lo
@@ -514,8 +566,7 @@ fe_mul_a24:
 @r_b34:
         lda fe_wide+34
         beq @r_done_a24
-        ldx #38
-        jsr mul_8x8
+        jsr mul_by_38
         clc
         lda fe_wide+2
         adc poly_prod_lo
