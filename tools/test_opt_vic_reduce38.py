@@ -32,11 +32,11 @@ VERBOSE = False
 P = (1 << 255) - 19
 
 
-def robust_jsr(transport, addr, timeout=30.0, retries=3):
+def robust_jsr(transport, addr, timeout=10.0, retries=3, poll_interval=0.2):
     """jsr() with retry for transient VICE connection failures."""
     for attempt in range(retries):
         try:
-            return jsr(transport, addr, timeout=timeout)
+            return jsr(transport, addr, timeout=timeout, poll_interval=poll_interval)
         except Exception as e:
             if attempt < retries - 1:
                 time.sleep(0.5)
@@ -130,7 +130,7 @@ def c64_fe_mul(transport, labels, a, b):
                 src1=labels["fe_tmp1"],
                 src2=labels["fe_tmp2"],
                 dst=labels["fe_tmp3"])
-    robust_jsr(transport, labels["fe_mul"], timeout=120.0)
+    robust_jsr(transport, labels["fe_mul"], timeout=120.0, poll_interval=2.0)
     return read_fe(transport, labels["fe_tmp3"])
 
 
@@ -139,7 +139,7 @@ def c64_fe_sqr(transport, labels, a):
     set_fe_ptrs(transport, labels,
                 src1=labels["fe_tmp1"],
                 dst=labels["fe_tmp3"])
-    robust_jsr(transport, labels["fe_sqr"], timeout=120.0)
+    robust_jsr(transport, labels["fe_sqr"], timeout=120.0, poll_interval=2.0)
     return read_fe(transport, labels["fe_tmp3"])
 
 
@@ -148,7 +148,7 @@ def c64_fe_inv(transport, labels, a):
     set_fe_ptrs(transport, labels,
                 src1=labels["fe_tmp1"],
                 dst=labels["fe_tmp3"])
-    robust_jsr(transport, labels["fe_inv"], timeout=600.0)
+    robust_jsr(transport, labels["fe_inv"], timeout=600.0, poll_interval=10.0)
     return read_fe(transport, labels["fe_tmp3"])
 
 
@@ -157,7 +157,7 @@ def c64_fe_mul_a24(transport, labels, a):
     set_fe_ptrs(transport, labels,
                 src1=labels["fe_tmp1"],
                 dst=labels["fe_tmp3"])
-    robust_jsr(transport, labels["fe_mul_a24"], timeout=60.0)
+    robust_jsr(transport, labels["fe_mul_a24"], timeout=60.0, poll_interval=2.0)
     return read_fe(transport, labels["fe_tmp3"])
 
 
@@ -503,7 +503,7 @@ def bench_fe_mul(transport, labels, a, b, blank=False):
         robust_jsr(transport, labels["vic_blank"])
 
     robust_jsr(transport, labels["bench_start"])
-    robust_jsr(transport, labels["fe_mul"], timeout=120.0)
+    robust_jsr(transport, labels["fe_mul"], timeout=120.0, poll_interval=2.0)
     robust_jsr(transport, labels["bench_stop"])
 
     if blank:

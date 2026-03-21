@@ -54,3 +54,19 @@ mul_cached_a:
         !byte 0                ; cached src1[i] for inlined multiply
 mul_src2_buf:
         !fill 32, 0           ; absolute copy of src2 for fast indexed access
+
+; --- mult66 second quarter-square table ---
+; sqtab2[0] = 0
+; sqtab2[n] = floor((256-n)^2 / 4) - 1  for n=1..255
+; The -1 compensates for carry being clear in the negative-difference path
+sqtab2_lo:
+        !byte 0
+        !for i, 1, 255 {
+                !byte <(((256-i)*(256-i))/4 - 1)
+        }
+
+sqtab2_hi:
+        !byte 0
+        !for i, 1, 255 {
+                !byte >(((256-i)*(256-i))/4 - 1)
+        }

@@ -26,10 +26,11 @@ LABELS_PATH = os.path.join(PROJECT_ROOT, "build", "labels.txt")
 P = (1 << 255) - 19
 
 
-def robust_jsr(transport, addr, timeout=30.0, retries=3):
+def robust_jsr(transport, addr, timeout=10.0, retries=3, poll_interval=0.2):
+    """jsr() with retry for transient VICE connection failures."""
     for attempt in range(retries):
         try:
-            return jsr(transport, addr, timeout=timeout)
+            return jsr(transport, addr, timeout=timeout, poll_interval=poll_interval)
         except Exception as e:
             if attempt < retries - 1:
                 time.sleep(0.5)
@@ -58,7 +59,7 @@ def bench_fe_mul(transport, labels, a, b):
 
     # Start timer, call fe_mul, stop timer
     robust_jsr(transport, labels["bench_start"])
-    robust_jsr(transport, labels["fe_mul"], timeout=120.0)
+    robust_jsr(transport, labels["fe_mul"], timeout=120.0, poll_interval=2.0)
     robust_jsr(transport, labels["bench_stop"])
 
     # Read jiffy ticks (3 bytes, big-endian in memory: MSB at jiffy_clock)
@@ -76,7 +77,7 @@ def bench_fe_sqr(transport, labels, a):
                 bytes([labels["fe_tmp3"] & 0xFF, labels["fe_tmp3"] >> 8]))
 
     robust_jsr(transport, labels["bench_start"])
-    robust_jsr(transport, labels["fe_sqr"], timeout=120.0)
+    robust_jsr(transport, labels["fe_sqr"], timeout=120.0, poll_interval=2.0)
     robust_jsr(transport, labels["bench_stop"])
 
     ticks_data = read_bytes(transport, labels["bench_ticks"], 3)
