@@ -209,7 +209,7 @@ fe_mul:
         dex
         bpl @zero_wide
 
-        ; 2. Copy src2 to absolute buffer (saves 1-2 cycles per inner access)
+        ; 2. Copy src2 to absolute buffer (needed for indexed access)
         ldy #31
 @copy_src2:
         lda (fe_src2),y
@@ -217,99 +217,124 @@ fe_mul:
         dey
         bpl @copy_src2
 
-        ; 3. Schoolbook multiply with inlined mul_8x8
+        ; 3. Set up ZP pointers for mult66 indirect-indexed multiply
+        ;    lmul0 -> sqtab_lo (page set once, low byte patched per multiply)
+        ;    lmul1 -> sqtab_hi (page set once, low byte patched per multiply)
+        lda #>sqtab_lo
+        sta lmul0+1
+        lda #>sqtab_hi
+        sta lmul1+1
+
+        ; 4. Schoolbook multiply with mult66 + self-mod accumulation
         lda #0
         sta fe_mul_i
 @mul_outer:
         ldy fe_mul_i
         lda (fe_src1),y
-        bne @nonzero_i         ; branch if src1[i] != 0
+        bne @nonzero_i
         jmp @skip_zero
 @nonzero_i:
-        sta mul_cached_a       ; cache src1[i] for entire inner loop
+        sta mul_cached_a       ; cache src1[i] for inner loop
+
+        ; Self-mod: patch accumulation addresses to base = fe_wide + i
+        ; This avoids computing i+j every inner iteration
+        lda #<fe_wide
+        clc
+        adc fe_mul_i           ; A = low byte of (fe_wide + i)
+        sta @accum_ld1+1
+        sta @accum_st1+1
+        lda #>fe_wide
+        adc #0                 ; handle page crossing
+        sta @accum_ld1+2
+        sta @accum_st1+2
+        ; For +1 accesses (high byte of product), base is fe_wide + i + 1
+        lda #<(fe_wide+1)
+        clc
+        adc fe_mul_i
+        sta @accum_ld2+1
+        sta @accum_st2+1
+        lda #>(fe_wide+1)
+        adc #0
+        sta @accum_ld2+2
+        sta @accum_st2+2
+
+        ; Set up ZP pointer low byte = src1[i] once per outer loop
+        lda mul_cached_a
+        sta lmul0              ; lmul0 = sqtab_lo + src1[i]
+        sta lmul1              ; lmul1 = sqtab_hi + src1[i]
 
         lda #0
         sta fe_mul_j
 @mul_inner:
         ldx fe_mul_j
-        lda mul_src2_buf,x     ; A = src2[j] (absolute indexed = 4 cycles)
+        ldy mul_src2_buf,x     ; Y = src2[j]
         beq @next_j            ; skip if zero
 
-        ; --- INLINED mul_8x8: mul_cached_a * A -> poly_prod_lo/hi ---
-        sta mul_b              ; save src2[j]
-        tax                    ; X = src2[j] (kept for later)
-
-        ; Compute sum = a + b
-        lda mul_cached_a
-        clc
-        adc mul_b              ; A = a + b (low byte)
-        tay                    ; Y = sum low byte
-        lda #0
-        adc #0                 ; carry -> sum page (0 or 1)
-        sta mul_s_pg
-
-        ; Compute |a - b|
-        lda mul_cached_a
+        ; --- mult66 inline: mul_cached_a * Y ---
+        ; A = Y - X (src2[j] - src1[i])
+        tya                    ; A = src2[j]
         sec
-        sbc mul_b
-        bcs @no_neg
-        eor #$ff
-        adc #1                 ; negate (carry was clear, so ADC adds 1)
-@no_neg:
-        tax                    ; X = |a-b| (always <= 255)
+        sbc mul_cached_a       ; A = src2[j] - src1[i]
+        tax                    ; X = difference (or wrapped if negative)
 
-        ; sqtab[sum] - sqtab[|diff|]
-        lda mul_s_pg
-        beq @sum_pg0
+        ; (lmul0),Y = sqtab_lo[src1[i] + src2[j]] (sum via pointer+Y)
+        lda (lmul0),y
+        bcc @neg_diff          ; branch if src2[j] < src1[i]
 
-        ; sum is in page 1 (256..510)
-        lda sqtab_lo+256,y
-        sec
-        sbc sqtab_lo,x
+        ; Positive difference path (carry SET from SBC):
+        sbc sqtab_lo,x         ; exact subtraction (carry set)
         sta poly_prod_lo
-        lda sqtab_hi+256,y
+        lda (lmul1),y
         sbc sqtab_hi,x
         sta poly_prod_hi
         jmp @accum
 
-@sum_pg0:
-        ; sum is in page 0 (0..255)
-        lda sqtab_lo,y
-        sec
-        sbc sqtab_lo,x
+@neg_diff:
+        ; Negative difference path (carry CLEAR from SBC):
+        ; X = 256 + src2[j] - src1[i] (wrapped byte)
+        ; sqtab2[X] = (src1[i]-src2[j])^2/4 - 1
+        ; SBC with C=0: A - sqtab2[X] - 1 = sqtab[sum] - |diff|^2/4
+        sbc sqtab2_lo,x
         sta poly_prod_lo
-        lda sqtab_hi,y
-        sbc sqtab_hi,x
+        lda (lmul1),y
+        sbc sqtab2_hi,x
         sta poly_prod_hi
-        ; --- END INLINED mul_8x8 ---
+        ; --- END mult66 ---
 
 @accum:
-        ; Add 16-bit product to fe_wide[i+j]
+        ; Add 16-bit product to fe_wide[i+j] using self-modified addresses
+        ldx fe_mul_j
+
+        clc
+@accum_ld1:
+        lda fe_wide,x          ; patched to fe_wide+i base
+        adc poly_prod_lo
+@accum_st1:
+        sta fe_wide,x
+@accum_ld2:
+        lda fe_wide+1,x        ; patched to fe_wide+i+1 base
+        adc poly_prod_hi
+@accum_st2:
+        sta fe_wide+1,x
+        bcc @next_j
+
+        ; Propagate carry through remaining bytes (rare path)
+        ; Compute absolute index: i + j + 2
         lda fe_mul_i
         clc
         adc fe_mul_j
-        tax                    ; X = i+j
-
         clc
-        lda fe_wide,x
-        adc poly_prod_lo
-        sta fe_wide,x
-        inx
-        lda fe_wide,x
-        adc poly_prod_hi
-        sta fe_wide,x
-        bcc @next_j
-
-        ; Propagate carry
+        adc #2
+        tax
 @prop_carry:
-        inx
         cpx #64
         bcs @next_j
-        sec
+        sec                    ; restore carry (cpx clobbers it)
         lda fe_wide,x
-        adc #0
+        adc #0                 ; byte + 1 (propagating carry)
         sta fe_wide,x
-        bcs @prop_carry
+        inx
+        bcs @prop_carry        ; if overflow, continue propagation
 
 @next_j:
         inc fe_mul_j

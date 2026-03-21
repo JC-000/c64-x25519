@@ -51,6 +51,10 @@ x25_bit_ctr     = $2b           ; bit counter
 x25_byte_idx    = $2c           ; byte index in scalar
 x25_bit_mask    = $2d           ; current bit mask
 
+; mult66 indirect-indexed multiply pointers (free in standalone X25519)
+lmul0           = $14           ; 2-byte ZP pointer for sqtab lookup (sum path)
+lmul1           = $16           ; 2-byte ZP pointer for sqtab_hi lookup (sum path)
+
 ; Poly1305 mul_8x8 working variables (reused by fe25519)
 poly_i          = $1a           ; inner loop counter
 poly_j          = $1b           ; outer loop counter
