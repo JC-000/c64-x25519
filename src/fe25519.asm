@@ -171,21 +171,129 @@ fe_reduce_final:
 ;
 ; Input: A = swap mask (0x00 = no swap, 0xFF = swap)
 ; Clobbers: A, X, Y
+;
+; Self-modifying code: patches absolute,Y addresses into the inner loop
+; to replace indirect-indexed (zp),Y loads/stores (4-5 cyc vs 5-6 cyc each).
+; Eliminates redundant re-read of src1 by keeping value in X register.
+; Unrolled 4x to reduce loop overhead (32 bytes / 4 = 8 iterations).
+;
+; Per byte: lda abs,Y(4) + tax(2) + eor abs,Y(4) + and zp(3) + sta zp(3)
+;           + txa(2) + eor zp(3) + sta abs,Y(5) + lda abs,Y(4) + eor zp(3)
+;           + sta abs,Y(5) = 38 cycles/byte
+; Old: 49 cycles/byte (indirect-indexed + redundant re-read)
+; Savings: ~11 cyc/byte * 32 bytes * 512 calls = ~180k cycles
 ; =============================================================================
 fe_cswap:
         sta fe_carry           ; save mask
+
+        ; Patch src1 address into lda/sta abs,Y instructions (8 patches)
+        lda fe_src1
+        sta @ld_a1+1
+        sta @st_a1+1
+        sta @ld_a2+1
+        sta @st_a2+1
+        sta @ld_a3+1
+        sta @st_a3+1
+        sta @ld_a4+1
+        sta @st_a4+1
+        lda fe_src1+1
+        sta @ld_a1+2
+        sta @st_a1+2
+        sta @ld_a2+2
+        sta @st_a2+2
+        sta @ld_a3+2
+        sta @st_a3+2
+        sta @ld_a4+2
+        sta @st_a4+2
+
+        ; Patch src2 address into eor/lda/sta abs,Y instructions (12 patches)
+        lda fe_src2
+        sta @eor_b1+1
+        sta @ld_b1+1
+        sta @st_b1+1
+        sta @eor_b2+1
+        sta @ld_b2+1
+        sta @st_b2+1
+        sta @eor_b3+1
+        sta @ld_b3+1
+        sta @st_b3+1
+        sta @eor_b4+1
+        sta @ld_b4+1
+        sta @st_b4+1
+        lda fe_src2+1
+        sta @eor_b1+2
+        sta @ld_b1+2
+        sta @st_b1+2
+        sta @eor_b2+2
+        sta @ld_b2+2
+        sta @st_b2+2
+        sta @eor_b3+2
+        sta @ld_b3+2
+        sta @st_b3+2
+        sta @eor_b4+2
+        sta @ld_b4+2
+        sta @st_b4+2
+
         ldy #31
 @loop:
-        lda (fe_src1),y
-        eor (fe_src2),y        ; diff = a ^ b
-        and fe_carry           ; mask it
-        sta fe_loop            ; temp
-        lda (fe_src1),y
+        ; --- Byte at Y ---
+@ld_a1: lda $ffff,y            ; a[y]           (patched)
+        tax                    ; X = a[y]
+@eor_b1:eor $ffff,y            ; a[y] ^ b[y]    (patched)
+        and fe_carry           ; diff
+        sta fe_loop            ; save diff
+        txa                    ; A = a[y]
+        eor fe_loop            ; a[y] ^ diff
+@st_a1: sta $ffff,y            ; store new a[y]  (patched)
+@ld_b1: lda $ffff,y            ; b[y]           (patched)
+        eor fe_loop            ; b[y] ^ diff
+@st_b1: sta $ffff,y            ; store new b[y]  (patched)
+
+        dey
+
+        ; --- Byte at Y ---
+@ld_a2: lda $ffff,y
+        tax
+@eor_b2:eor $ffff,y
+        and fe_carry
+        sta fe_loop
+        txa
         eor fe_loop
-        sta (fe_src1),y
-        lda (fe_src2),y
+@st_a2: sta $ffff,y
+@ld_b2: lda $ffff,y
         eor fe_loop
-        sta (fe_src2),y
+@st_b2: sta $ffff,y
+
+        dey
+
+        ; --- Byte at Y ---
+@ld_a3: lda $ffff,y
+        tax
+@eor_b3:eor $ffff,y
+        and fe_carry
+        sta fe_loop
+        txa
+        eor fe_loop
+@st_a3: sta $ffff,y
+@ld_b3: lda $ffff,y
+        eor fe_loop
+@st_b3: sta $ffff,y
+
+        dey
+
+        ; --- Byte at Y ---
+@ld_a4: lda $ffff,y
+        tax
+@eor_b4:eor $ffff,y
+        and fe_carry
+        sta fe_loop
+        txa
+        eor fe_loop
+@st_a4: sta $ffff,y
+@ld_b4: lda $ffff,y
+        eor fe_loop
+@st_b4: sta $ffff,y
+
         dey
         bpl @loop
         rts
@@ -521,11 +629,11 @@ mul38_hi:  !byte 0
 ; fe_sqr - (fe_dst) = (fe_src1)^2 mod p
 ;
 ; Dedicated squaring: exploits symmetry a[i]*a[j] = a[j]*a[i].
-; 1. Cross terms: accumulate a[i]*a[j] for i < j   (496 mul_8x8 calls)
-; 2. Double the 64-byte buffer (shift left 1 bit)
-; 3. Diagonal: add a[i]*a[i] at position 2*i        (32 mul_8x8 calls)
-; 4. Reduce mod p
-; Total: 528 byte-multiplies vs 1024 for schoolbook.
+; Uses mult66 indirect-indexed multiply + self-modifying accumulation
+; (same technique as fe_mul). Cross terms added twice to fuse doubling.
+; 1. Cross terms: accumulate 2*a[i]*a[j] for i < j  (inline mult66)
+; 2. Diagonal: add a[i]^2 at position 2*i            (inline mult66)
+; 3. Reduce mod p
 ;
 ; Clobbers: A, X, Y
 ; =============================================================================
@@ -538,13 +646,64 @@ fe_sqr:
         dex
         bpl @zero_wide
 
-        ; 2. Cross terms: accumulate a[i]*a[j] for all i < j
+        ; 2. Copy src1 to absolute buffer (src1==src2 for squaring)
+        ldy #31
+@copy_src:
+        lda (fe_src1),y
+        sta mul_src2_buf,y
+        dey
+        bpl @copy_src
+
+        ; 3. Set up ZP pointers for mult66 indirect-indexed multiply
+        lda #>sqtab_lo
+        sta lmul0+1
+        lda #>sqtab_hi
+        sta lmul1+1
+
+        ; 4. Cross terms with mult66 + self-mod, added twice (fused doubling)
         lda #0
-        sta fe_mul_i           ; i = 0
+        sta fe_mul_i
 @sqr_outer:
         ldy fe_mul_i
         lda (fe_src1),y
-        beq @sqr_skip_i       ; skip if a[i] == 0
+        bne @sqr_nonzero_i
+        jmp @sqr_skip_i
+@sqr_nonzero_i:
+        sta mul_cached_a       ; cache a[i] for inner loop
+
+        ; Self-mod: patch accumulation addresses to base = fe_wide + i
+        lda #<fe_wide
+        clc
+        adc fe_mul_i           ; A = low byte of (fe_wide + i)
+        sta @sqr_accum_ld1+1
+        sta @sqr_accum_st1+1
+        sta @sqr_accum2_ld1+1
+        sta @sqr_accum2_st1+1
+        lda #>fe_wide
+        adc #0                 ; handle page crossing
+        sta @sqr_accum_ld1+2
+        sta @sqr_accum_st1+2
+        sta @sqr_accum2_ld1+2
+        sta @sqr_accum2_st1+2
+        ; For +1 accesses (high byte of product)
+        lda #<(fe_wide+1)
+        clc
+        adc fe_mul_i
+        sta @sqr_accum_ld2+1
+        sta @sqr_accum_st2+1
+        sta @sqr_accum2_ld2+1
+        sta @sqr_accum2_st2+1
+        lda #>(fe_wide+1)
+        adc #0
+        sta @sqr_accum_ld2+2
+        sta @sqr_accum_st2+2
+        sta @sqr_accum2_ld2+2
+        sta @sqr_accum2_st2+2
+
+        ; Set up ZP pointer low byte = a[i] once per outer loop
+        lda mul_cached_a
+        sta lmul0              ; lmul0 = sqtab_lo + a[i]
+        sta lmul1              ; lmul1 = sqtab_hi + a[i]
 
         ; j starts at i+1
         lda fe_mul_i
@@ -553,54 +712,113 @@ fe_sqr:
         sta fe_mul_j
 
 @sqr_inner:
-        ; Load a[i]
-        ldy fe_mul_i
-        lda (fe_src1),y
-        pha                    ; save a[i]
+        ldx fe_mul_j
+        ldy mul_src2_buf,x     ; Y = a[j]
+        bne @sqr_nonzero_j     ; skip if zero
+        jmp @sqr_next_j
+@sqr_nonzero_j:
 
-        ; Load a[j]
-        ldy fe_mul_j
-        lda (fe_src1),y
-        beq @sqr_skip_j       ; skip if a[j] == 0
-        tax                    ; X = a[j]
-        pla                    ; A = a[i]
-        jsr mul_8x8            ; poly_prod_lo/hi = a[i] * a[j]
+        ; --- mult66 inline: a[i] * a[j] ---
+        tya                    ; A = a[j]
+        sec
+        sbc mul_cached_a       ; A = a[j] - a[i]
+        tax                    ; X = difference (or wrapped)
 
-        ; Add to fe_wide[i+j]
+        ; (lmul0),Y = sqtab_lo[a[i] + a[j]]
+        lda (lmul0),y
+        bcc @sqr_neg_diff      ; branch if a[j] < a[i]
+
+        ; Positive difference path (carry SET):
+        sbc sqtab_lo,x
+        sta poly_prod_lo
+        lda (lmul1),y
+        sbc sqtab_hi,x
+        sta poly_prod_hi
+        jmp @sqr_accum
+
+@sqr_neg_diff:
+        ; Negative difference path (carry CLEAR):
+        sbc sqtab2_lo,x
+        sta poly_prod_lo
+        lda (lmul1),y
+        sbc sqtab2_hi,x
+        sta poly_prod_hi
+        ; --- END mult66 ---
+
+@sqr_accum:
+        ; First addition of product to fe_wide[i+j]
+        ldx fe_mul_j
+
+        clc
+@sqr_accum_ld1:
+        lda fe_wide,x          ; patched to fe_wide+i base
+        adc poly_prod_lo
+@sqr_accum_st1:
+        sta fe_wide,x
+@sqr_accum_ld2:
+        lda fe_wide+1,x        ; patched to fe_wide+i+1 base
+        adc poly_prod_hi
+@sqr_accum_st2:
+        sta fe_wide+1,x
+        bcc @sqr_accum2
+
+        ; Propagate carry from first addition
         lda fe_mul_i
         clc
         adc fe_mul_j
-        tax                    ; X = i+j
+        clc
+        adc #2
+        tax
+@sqr_prop1:
+        cpx #64
+        bcs @sqr_accum2
+        sec
+        lda fe_wide,x
+        adc #0
+        sta fe_wide,x
+        inx
+        bcs @sqr_prop1
+
+@sqr_accum2:
+        ; Second addition of same product (fused doubling)
+        ldx fe_mul_j
 
         clc
-        lda fe_wide,x
+@sqr_accum2_ld1:
+        lda fe_wide,x          ; patched to fe_wide+i base
         adc poly_prod_lo
+@sqr_accum2_st1:
         sta fe_wide,x
-        inx
-        lda fe_wide,x
+@sqr_accum2_ld2:
+        lda fe_wide+1,x        ; patched to fe_wide+i+1 base
         adc poly_prod_hi
-        sta fe_wide,x
+@sqr_accum2_st2:
+        sta fe_wide+1,x
         bcc @sqr_next_j
 
-        ; Propagate carry
-@sqr_prop:
-        inx
+        ; Propagate carry from second addition
+        lda fe_mul_i
+        clc
+        adc fe_mul_j
+        clc
+        adc #2
+        tax
+@sqr_prop2:
         cpx #64
         bcs @sqr_next_j
         sec
         lda fe_wide,x
-        adc #0                 ; carry is set via SEC
+        adc #0
         sta fe_wide,x
-        bcs @sqr_prop
-        jmp @sqr_next_j        ; carry propagation done, skip pla
+        inx
+        bcs @sqr_prop2
 
-@sqr_skip_j:
-        pla                    ; discard a[i]
 @sqr_next_j:
         inc fe_mul_j
         lda fe_mul_j
         cmp #32
-        bcc @sqr_inner
+        bcs @sqr_skip_i
+        jmp @sqr_inner
 
 @sqr_skip_i:
         inc fe_mul_i
@@ -610,29 +828,28 @@ fe_sqr:
         jmp @sqr_outer
 @sqr_cross_done:
 
-        ; 3. Double the entire 64-byte buffer (left shift by 1 bit)
-        ;    Use DEX for loop count (preserves carry) and INY for index.
-        clc
-        ldx #64                ; count down
-        ldy #0                 ; index up
-@double_loop:
-        lda fe_wide,y
-        rol                    ; uses carry from previous byte
-        sta fe_wide,y
-        iny
-        dex                    ; DEX preserves carry!
-        bne @double_loop
-
-        ; 4. Add diagonal terms: a[i]^2 at position 2*i
+        ; 5. Add diagonal terms: a[i]^2 at position 2*i (inline mult66)
+        ;    For self-multiply: diff=0, sqtab[0]=0, so result = sqtab[2*a[i]]
+        ;    With lmul0 = a[i], Y = a[i]: (lmul0),Y = sqtab[2*a[i]]
         lda #0
         sta fe_mul_i
 @diag_outer:
         ldy fe_mul_i
         lda (fe_src1),y
         beq @diag_skip         ; skip if a[i] == 0
-        tax                    ; X = a[i]
-        ; A already = a[i]
-        jsr mul_8x8            ; poly_prod = a[i]^2
+
+        ; Set up mult66 pointers for self-multiply
+        sta lmul0              ; lmul0 low = a[i]
+        sta lmul1              ; lmul1 low = a[i]
+        tay                    ; Y = a[i]
+
+        ; (lmul0),Y = sqtab_lo[a[i] + a[i]] = sqtab_lo[2*a[i]]
+        ; (lmul1),Y = sqtab_hi[a[i] + a[i]] = sqtab_hi[2*a[i]]
+        ; diff = 0, sqtab[0] = 0, no subtraction needed
+        lda (lmul0),y          ; lo byte of a[i]^2
+        sta poly_prod_lo
+        lda (lmul1),y          ; hi byte of a[i]^2
+        sta poly_prod_hi
 
         ; Add to fe_wide[2*i]
         lda fe_mul_i
@@ -656,7 +873,7 @@ fe_sqr:
         bcs @diag_skip
         sec
         lda fe_wide,x
-        adc #0                 ; carry is set via SEC
+        adc #0
         sta fe_wide,x
         bcs @diag_prop
 
@@ -668,7 +885,7 @@ fe_sqr:
         jmp @diag_outer
 
 @sqr_reduce:
-        ; 5. Reduce mod p (same as fe_mul)
+        ; 6. Reduce mod p (same as fe_mul)
         jsr fe_reduce_wide
 
         ; Copy result to (fe_dst)
