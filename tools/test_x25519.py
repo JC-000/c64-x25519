@@ -18,7 +18,7 @@ import os
 import random
 import subprocess
 import sys
-import time
+
 
 from c64_test_harness import (
     Labels, ViceConfig, ViceInstanceManager,
@@ -192,7 +192,6 @@ def test_rfc7748_vectors(transport, labels):
         scalar = clamp_ref(scalar)
 
         print(f"    {vec['desc']}...", end="", flush=True)
-        time.sleep(1.0)
         result = c64_x25519_scalarmult(transport, labels, scalar, u)
 
         if result == expected:
@@ -219,7 +218,6 @@ def test_basepoint(transport, labels):
         expected = bytes.fromhex(vec["expected"])
 
         print(f"    {vec['desc']}...", end="", flush=True)
-        time.sleep(1.0)
         result = c64_x25519_base(transport, labels, scalar)
 
         if result == expected:

@@ -15,7 +15,7 @@ import os
 import random
 import subprocess
 import sys
-import time
+
 
 from c64_test_harness import (
     Labels, ViceConfig, ViceInstanceManager,
@@ -381,7 +381,6 @@ def test_inv(transport, labels, rng):
 
     for i, a in enumerate(cases):
         print(f"    inv test #{i} (a={a:#x})...", end="", flush=True)
-        time.sleep(1.0)
         inv_a = c64_fe_inv(transport, labels, a)
         expected = fe_inv_ref(a)
 
