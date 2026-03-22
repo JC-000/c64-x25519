@@ -13,8 +13,6 @@ import os
 import random
 import subprocess
 import sys
-import time
-
 from c64_test_harness import (
     Labels, ViceConfig, ViceInstanceManager,
     read_bytes, write_bytes, jsr, wait_for_text,
@@ -28,18 +26,6 @@ VERBOSE = False
 
 # p = 2^255 - 19
 P = (1 << 255) - 19
-
-
-def robust_jsr(transport, addr, timeout=10.0, retries=3, poll_interval=0.2):
-    """jsr() with retry for transient VICE connection failures."""
-    for attempt in range(retries):
-        try:
-            return jsr(transport, addr, timeout=timeout, poll_interval=poll_interval)
-        except Exception as e:
-            if attempt < retries - 1:
-                time.sleep(0.5)
-                continue
-            raise
 
 
 # ============================================================================
@@ -97,7 +83,7 @@ def c64_fe_mul(transport, labels, a, b):
                 src1=labels["fe_tmp1"],
                 src2=labels["fe_tmp2"],
                 dst=labels["fe_tmp3"])
-    robust_jsr(transport, labels["fe_mul"], timeout=120.0, poll_interval=2.0)
+    jsr(transport, labels["fe_mul"], timeout=120.0)
     return read_fe(transport, labels["fe_tmp3"])
 
 
@@ -106,7 +92,7 @@ def c64_fe_sqr(transport, labels, a):
     set_fe_ptrs(transport, labels,
                 src1=labels["fe_tmp1"],
                 dst=labels["fe_tmp3"])
-    robust_jsr(transport, labels["fe_sqr"], timeout=120.0, poll_interval=2.0)
+    jsr(transport, labels["fe_sqr"], timeout=120.0)
     return read_fe(transport, labels["fe_tmp3"])
 
 
@@ -115,7 +101,7 @@ def c64_fe_mul_a24(transport, labels, a):
     set_fe_ptrs(transport, labels,
                 src1=labels["fe_tmp1"],
                 dst=labels["fe_tmp3"])
-    robust_jsr(transport, labels["fe_mul_a24"], timeout=60.0, poll_interval=2.0)
+    jsr(transport, labels["fe_mul_a24"], timeout=60.0)
     return read_fe(transport, labels["fe_tmp3"])
 
 
@@ -128,9 +114,9 @@ def bench_fe_mul(transport, labels, a, b):
                 src2=labels["fe_tmp2"],
                 dst=labels["fe_tmp3"])
 
-    robust_jsr(transport, labels["bench_start"])
-    robust_jsr(transport, labels["fe_mul"], timeout=120.0, poll_interval=2.0)
-    robust_jsr(transport, labels["bench_stop"])
+    jsr(transport, labels["bench_start"])
+    jsr(transport, labels["fe_mul"], timeout=120.0)
+    jsr(transport, labels["bench_stop"])
 
     ticks_data = read_bytes(transport, labels["bench_ticks"], 3)
     ticks = (ticks_data[0] << 16) | (ticks_data[1] << 8) | ticks_data[2]

@@ -99,7 +99,7 @@ x25519_scalarmult:
         sta x25_bit_mask
 
 @bit_loop:
-        ; Get current bit k_t
+        ; Get current bit k_t (single extraction)
         ldx x25_byte_idx
         lda x25_scalar,x
         and x25_bit_mask
@@ -107,18 +107,9 @@ x25519_scalarmult:
         lda #1
 @bit_zero:
         ; A = k_t (0 or 1)
-        ; swap = k_t XOR prev_bit
-        eor x25_prev_bit
-        ; Save k_t for next iteration
-        pha
-        ldx x25_byte_idx
-        lda x25_scalar,x
-        and x25_bit_mask
-        beq @save_zero
-        lda #1
-@save_zero:
-        sta x25_prev_bit
-        pla                    ; A = swap flag (0 or 1)
+        tax                    ; X = k_t (save for prev_bit update)
+        eor x25_prev_bit       ; A = swap = k_t XOR old prev_bit
+        stx x25_prev_bit       ; update prev_bit = k_t
 
         ; Convert to mask: 0 → $00, 1 → $FF
         beq @no_swap_mask
@@ -261,14 +252,7 @@ x25519_ladder_step:
         jsr fe_add
 
         ; B = x_2 - z_2 → x25_b
-        lda #<x25_x2
-        sta fe_src1
-        lda #>x25_x2
-        sta fe_src1+1
-        lda #<x25_z2
-        sta fe_src2
-        lda #>x25_z2
-        sta fe_src2+1
+        ; fe_src1=x25_x2, fe_src2=x25_z2 still set from fe_add above
         lda #<x25_b
         sta fe_dst
         lda #>x25_b
@@ -328,14 +312,7 @@ x25519_ladder_step:
         jsr fe_add             ; fe_tmp1 = C
 
         ; D = x_3 - z_3 → fe_tmp2 (temp)
-        lda #<x25_x3
-        sta fe_src1
-        lda #>x25_x3
-        sta fe_src1+1
-        lda #<x25_z3
-        sta fe_src2
-        lda #>x25_z3
-        sta fe_src2+1
+        ; fe_src1=x25_x3, fe_src2=x25_z3 still set from fe_add above
         lda #<fe_tmp2
         sta fe_dst
         lda #>fe_tmp2
@@ -386,14 +363,11 @@ x25519_ladder_step:
         lda #>x25_x3
         sta fe_dst+1
         jsr fe_add             ; x25_x3 = DA + CB
+        ; fe_dst=x25_x3 still set; copy to fe_src1 for squaring
         lda #<x25_x3
         sta fe_src1
         lda #>x25_x3
         sta fe_src1+1
-        lda #<x25_x3
-        sta fe_dst
-        lda #>x25_x3
-        sta fe_dst+1
         jsr fe_sqr             ; x25_x3 = (DA + CB)^2
 
         ; z_3 = x_1 * (DA - CB)^2
@@ -411,16 +385,14 @@ x25519_ladder_step:
         lda #>x25_z3
         sta fe_dst+1
         jsr fe_sub             ; x25_z3 = DA - CB
+        ; fe_dst=x25_z3 still set; copy to fe_src1 for squaring
         lda #<x25_z3
         sta fe_src1
         lda #>x25_z3
         sta fe_src1+1
-        lda #<x25_z3
-        sta fe_dst
-        lda #>x25_z3
-        sta fe_dst+1
         jsr fe_sqr             ; x25_z3 = (DA - CB)^2
         ; Now z_3 = x_1 * (DA-CB)^2
+        ; fe_dst=x25_z3 still set from fe_sqr above
         lda #<x25_u
         sta fe_src1
         lda #>x25_u
@@ -429,10 +401,6 @@ x25519_ladder_step:
         sta fe_src2
         lda #>x25_z3
         sta fe_src2+1
-        lda #<x25_z3
-        sta fe_dst
-        lda #>x25_z3
-        sta fe_dst+1
         jsr fe_mul             ; x25_z3 = x_1 * (DA - CB)^2
 
         ; x_2 = AA * BB
@@ -463,6 +431,7 @@ x25519_ladder_step:
         jsr fe_mul_a24         ; fe_tmp1 = a24 * E
 
         ; AA + a24*E → fe_tmp1
+        ; fe_dst=fe_tmp1 still set from fe_mul_a24 above
         lda #<fe_tmp3
         sta fe_src1
         lda #>fe_tmp3
@@ -471,21 +440,14 @@ x25519_ladder_step:
         sta fe_src2
         lda #>fe_tmp1
         sta fe_src2+1
-        lda #<fe_tmp1
-        sta fe_dst
-        lda #>fe_tmp1
-        sta fe_dst+1
         jsr fe_add             ; fe_tmp1 = AA + a24*E
 
         ; z_2 = E * (AA + a24*E)
+        ; fe_src2=fe_tmp1 still set from fe_add above
         lda #<x25_e
         sta fe_src1
         lda #>x25_e
         sta fe_src1+1
-        lda #<fe_tmp1
-        sta fe_src2
-        lda #>fe_tmp1
-        sta fe_src2+1
         lda #<x25_z2
         sta fe_dst
         lda #>x25_z2

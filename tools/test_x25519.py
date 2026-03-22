@@ -18,7 +18,7 @@ import os
 import random
 import subprocess
 import sys
-import time
+
 
 from c64_test_harness import (
     Labels, ViceConfig, ViceInstanceManager,
@@ -43,18 +43,6 @@ VERBOSE = False
 SLOW = False
 
 
-def robust_jsr(transport, addr, timeout=10.0, retries=3, poll_interval=0.2):
-    """jsr() with retry for transient VICE connection failures."""
-    for attempt in range(retries):
-        try:
-            return jsr(transport, addr, timeout=timeout, poll_interval=poll_interval)
-        except Exception as e:
-            if attempt < retries - 1:
-                time.sleep(0.3)
-                continue
-            raise
-
-
 # ============================================================================
 # C64 helpers
 # ============================================================================
@@ -62,7 +50,7 @@ def robust_jsr(transport, addr, timeout=10.0, retries=3, poll_interval=0.2):
 def c64_x25519_clamp(transport, labels, scalar):
     """Clamp a scalar on C64. Returns clamped scalar bytes."""
     write_bytes(transport, labels["x25_scalar"], scalar)
-    robust_jsr(transport, labels["x25519_clamp"])
+    jsr(transport, labels["x25519_clamp"])
     return read_bytes(transport, labels["x25_scalar"], 32)
 
 
@@ -71,14 +59,14 @@ def c64_x25519_scalarmult(transport, labels, scalar, u):
     write_bytes(transport, labels["x25_scalar"], scalar)
     write_bytes(transport, labels["x25_u"], u)
     # Already clamped by caller or test
-    robust_jsr(transport, labels["x25519_scalarmult"], timeout=7200.0, poll_interval=30.0)
+    jsr(transport, labels["x25519_scalarmult"], timeout=7200.0)
     return read_bytes(transport, labels["x25_result"], 32)
 
 
 def c64_x25519_base(transport, labels, scalar):
     """Compute scalar * basepoint(9) on C64. Returns 32-byte result."""
     write_bytes(transport, labels["x25_scalar"], scalar)
-    robust_jsr(transport, labels["x25519_base"], timeout=7200.0, poll_interval=30.0)
+    jsr(transport, labels["x25519_base"], timeout=7200.0)
     return read_bytes(transport, labels["x25_result"], 32)
 
 
@@ -204,7 +192,6 @@ def test_rfc7748_vectors(transport, labels):
         scalar = clamp_ref(scalar)
 
         print(f"    {vec['desc']}...", end="", flush=True)
-        time.sleep(1.0)
         result = c64_x25519_scalarmult(transport, labels, scalar, u)
 
         if result == expected:
@@ -231,7 +218,6 @@ def test_basepoint(transport, labels):
         expected = bytes.fromhex(vec["expected"])
 
         print(f"    {vec['desc']}...", end="", flush=True)
-        time.sleep(1.0)
         result = c64_x25519_base(transport, labels, scalar)
 
         if result == expected:
