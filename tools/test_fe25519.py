@@ -4,6 +4,9 @@
 Tests fe_add, fe_sub, fe_mul, fe_sqr, fe_inv, fe_cswap, fe_mul_a24,
 fe_copy, fe_zero, fe_one, fe_reduce_final against Python reference.
 
+Uses the binary monitor test harness (BinaryViceTransport) — jsr() is
+event-based via checkpoints, so no polling or retry wrappers are needed.
+
 Usage:
     python3 tools/test_fe25519.py [--seed S] [--verbose]
 """
@@ -28,17 +31,6 @@ VERBOSE = False
 # p = 2^255 - 19
 P = (1 << 255) - 19
 
-
-def robust_jsr(transport, addr, timeout=10.0, retries=3, poll_interval=0.2):
-    """jsr() with retry for transient VICE connection failures."""
-    for attempt in range(retries):
-        try:
-            return jsr(transport, addr, timeout=timeout, poll_interval=poll_interval)
-        except Exception as e:
-            if attempt < retries - 1:
-                time.sleep(0.3)
-                continue
-            raise
 
 
 # ============================================================================
@@ -112,7 +104,7 @@ def c64_fe_add(transport, labels, a, b):
                 src1=labels["fe_tmp1"],
                 src2=labels["fe_tmp2"],
                 dst=labels["fe_tmp3"])
-    robust_jsr(transport, labels["fe_add"])
+    jsr(transport, labels["fe_add"])
     return read_fe(transport, labels["fe_tmp3"])
 
 
@@ -124,7 +116,7 @@ def c64_fe_sub(transport, labels, a, b):
                 src1=labels["fe_tmp1"],
                 src2=labels["fe_tmp2"],
                 dst=labels["fe_tmp3"])
-    robust_jsr(transport, labels["fe_sub"])
+    jsr(transport, labels["fe_sub"])
     return read_fe(transport, labels["fe_tmp3"])
 
 
@@ -136,7 +128,7 @@ def c64_fe_mul(transport, labels, a, b):
                 src1=labels["fe_tmp1"],
                 src2=labels["fe_tmp2"],
                 dst=labels["fe_tmp3"])
-    robust_jsr(transport, labels["fe_mul"], timeout=120.0, poll_interval=2.0)
+    jsr(transport, labels["fe_mul"], timeout=120.0)
     return read_fe(transport, labels["fe_tmp3"])
 
 
@@ -146,7 +138,7 @@ def c64_fe_sqr(transport, labels, a):
     set_fe_ptrs(transport, labels,
                 src1=labels["fe_tmp1"],
                 dst=labels["fe_tmp3"])
-    robust_jsr(transport, labels["fe_sqr"], timeout=120.0, poll_interval=2.0)
+    jsr(transport, labels["fe_sqr"], timeout=120.0)
     return read_fe(transport, labels["fe_tmp3"])
 
 
@@ -157,7 +149,7 @@ def c64_fe_inv(transport, labels, a):
                 src1=labels["fe_tmp1"],
                 dst=labels["fe_tmp3"])
     # fe_inv takes ~253 squarings + 11 muls — very slow
-    robust_jsr(transport, labels["fe_inv"], timeout=600.0, poll_interval=10.0)
+    jsr(transport, labels["fe_inv"], timeout=600.0)
     return read_fe(transport, labels["fe_tmp3"])
 
 
@@ -167,7 +159,7 @@ def c64_fe_mul_a24(transport, labels, a):
     set_fe_ptrs(transport, labels,
                 src1=labels["fe_tmp1"],
                 dst=labels["fe_tmp3"])
-    robust_jsr(transport, labels["fe_mul_a24"], timeout=60.0, poll_interval=2.0)
+    jsr(transport, labels["fe_mul_a24"], timeout=60.0)
     return read_fe(transport, labels["fe_tmp3"])
 
 
@@ -177,7 +169,7 @@ def c64_fe_copy(transport, labels, a):
     set_fe_ptrs(transport, labels,
                 src1=labels["fe_tmp1"],
                 dst=labels["fe_tmp3"])
-    robust_jsr(transport, labels["fe_copy"])
+    jsr(transport, labels["fe_copy"])
     return read_fe(transport, labels["fe_tmp3"])
 
 
@@ -186,7 +178,7 @@ def c64_fe_zero(transport, labels):
     # Write nonzero first to prove it gets zeroed
     write_fe(transport, labels["fe_tmp3"], P - 1)
     set_fe_ptrs(transport, labels, dst=labels["fe_tmp3"])
-    robust_jsr(transport, labels["fe_zero"])
+    jsr(transport, labels["fe_zero"])
     return read_fe(transport, labels["fe_tmp3"])
 
 
@@ -194,7 +186,7 @@ def c64_fe_one(transport, labels):
     """Set a field element to 1 via fe_one."""
     write_fe(transport, labels["fe_tmp3"], P - 1)
     set_fe_ptrs(transport, labels, dst=labels["fe_tmp3"])
-    robust_jsr(transport, labels["fe_one"])
+    jsr(transport, labels["fe_one"])
     return read_fe(transport, labels["fe_tmp3"])
 
 
@@ -427,7 +419,7 @@ def test_cswap(transport, labels, rng):
         0xA9, 0x00,                          # LDA #$00
         0x4C, cswap_addr & 0xFF, cswap_addr >> 8,  # JMP fe_cswap
     ]))
-    robust_jsr(transport, trampoline)
+    jsr(transport, trampoline)
     r_a = read_fe(transport, labels["fe_tmp1"])
     r_b = read_fe(transport, labels["fe_tmp2"])
 
@@ -448,7 +440,7 @@ def test_cswap(transport, labels, rng):
         0xA9, 0xFF,                          # LDA #$FF
         0x4C, cswap_addr & 0xFF, cswap_addr >> 8,  # JMP fe_cswap
     ]))
-    robust_jsr(transport, trampoline)
+    jsr(transport, trampoline)
     r_a = read_fe(transport, labels["fe_tmp1"])
     r_b = read_fe(transport, labels["fe_tmp2"])
 
@@ -479,7 +471,7 @@ def test_reduce_final(transport, labels):
         raw = val.to_bytes(32, "little")
         write_bytes(transport, labels["fe_tmp3"], raw)
         set_fe_ptrs(transport, labels, dst=labels["fe_tmp3"])
-        robust_jsr(transport, labels["fe_reduce_final"])
+        jsr(transport, labels["fe_reduce_final"])
         result = read_fe(transport, labels["fe_tmp3"])
 
         if result == expected:

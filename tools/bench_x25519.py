@@ -4,14 +4,11 @@
 Runs a full x25519_base (scalar * basepoint 9) natively on the C64 and
 measures wall-clock time via the jiffy clock.
 
-Uses jsr_poll() (flag-based completion detection) for reliable long-running
-computation in warp mode — avoids the VICE monitor unresponsiveness that
-occurs with breakpoint-based approaches during heavy computation.
+Uses jsr() with event-based binary monitor checkpoints for reliable
+long-running computation in warp mode.
 
 Usage:
-    python3 tools/bench_x25519.py [--no-verify] [--no-blank] [--poll N]
-
-    --poll N    Poll interval in seconds (default: 30)
+    python3 tools/bench_x25519.py [--no-verify] [--no-blank]
 """
 
 import json
@@ -22,9 +19,8 @@ import time
 
 from c64_test_harness import (
     Labels, ViceConfig, ViceInstanceManager,
-    read_bytes, write_bytes, jsr_poll, wait_for_text,
+    read_bytes, write_bytes, jsr, load_code, wait_for_text,
 )
-from c64_test_harness.execute import load_code
 
 PROJECT_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 PRG_PATH = os.path.join(PROJECT_ROOT, "build", "x25519.prg")
@@ -34,8 +30,7 @@ VECTORS_PATH = os.path.join(PROJECT_ROOT, "test", "rfc7748_vectors.json")
 NTSC_HZ = 60  # jiffy clock tick rate
 NTSC_CYCLES_PER_SEC = 1_022_727
 
-# Benchmark subroutine address — placed after jsr_poll's trampoline
-# (jsr_poll uses $0334-$0344, 17 bytes; our code starts at $0360)
+# Benchmark subroutine address
 BENCH_SUB_ADDR = 0x0360
 
 
@@ -85,7 +80,7 @@ def build_bench_subroutine(labels, blank=True):
         addr = labels["vic_unblank"]
         code += bytes([0x20, addr & 0xFF, (addr >> 8) & 0xFF])  # JSR vic_unblank
 
-    # 6. Return to jsr_poll's trampoline
+    # 6. Return via RTS
     code += bytes([0x60])  # RTS
 
     return bytes(code)
@@ -104,7 +99,6 @@ def main():
 
     verify = True
     blank = True
-    poll_interval = 30.0
 
     args = sys.argv[1:]
     i = 0
@@ -115,9 +109,6 @@ def main():
         elif args[i] == "--no-blank":
             blank = False
             i += 1
-        elif args[i] == "--poll" and i + 1 < len(args):
-            poll_interval = float(args[i + 1])
-            i += 2
         else:
             i += 1
 
@@ -179,19 +170,13 @@ def main():
             print(f"\n{'='*60}")
             print(f"  Full X25519 scalarmult (scalar * basepoint 9)")
             print(f"  VIC-II blanking: {'ON' if blank else 'OFF'}")
-            print(f"  Poll interval:   {poll_interval}s")
-            print(f"  Method:          jsr_poll (flag-based)")
+            print(f"  Method:          jsr (event-based binary monitor)")
             print(f"{'='*60}")
-            print(f"\n  Starting... (polling every {poll_interval}s)")
+            print(f"\n  Starting...")
 
-            # Execute via jsr_poll — flag-based completion, no breakpoints
+            # Execute via jsr — event-based binary monitor checkpoints
             wall_start = time.time()
-            jsr_poll(
-                transport,
-                BENCH_SUB_ADDR,
-                timeout=7200.0,
-                poll_interval=poll_interval,
-            )
+            jsr(transport, BENCH_SUB_ADDR, timeout=7200.0)
             wall_elapsed = time.time() - wall_start
 
             # Read results
