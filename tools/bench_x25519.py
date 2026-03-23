@@ -147,11 +147,7 @@ def main():
     # Launch VICE via managed instance (PID/port tracked, file-locked)
     config = ViceConfig(prg_path=PRG_PATH, warp=True, ntsc=True, sound=False)
 
-    with ViceInstanceManager(
-        config=config,
-        port_range_start=6510,
-        port_range_end=6530,
-    ) as mgr:
+    with ViceInstanceManager(config=config) as mgr:
         with mgr.instance() as inst:
             print(f"VICE PID={inst.pid}, port={inst.port}")
 
