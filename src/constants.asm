@@ -60,3 +60,15 @@ poly_i          = $1a           ; inner loop counter
 poly_j          = $1b           ; outer loop counter
 poly_carry      = $1c           ; carry byte
 poly_tmp        = $1d           ; temp
+
+; --- REU (Ram Expansion Unit) registers ---
+reu_status      = $df00         ; status register
+reu_command     = $df01         ; command register
+reu_c64_lo      = $df02         ; C64 base address low
+reu_c64_hi      = $df03         ; C64 base address high
+reu_reu_lo      = $df04         ; REU base address low
+reu_reu_hi      = $df05         ; REU base address high
+reu_reu_bank    = $df06         ; REU bank
+reu_len_lo      = $df07         ; transfer length low
+reu_len_hi      = $df08         ; transfer length high
+reu_addr_ctrl   = $df0a         ; address control
