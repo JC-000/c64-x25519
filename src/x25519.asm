@@ -68,7 +68,10 @@ x25519_scalarmult:
         sta fe_dst+1
         jsr fe_zero
 
-        ; x_3 = u
+        ; x_3 = u (mask high bit per RFC 7748 decodeUCoordinate)
+        lda x25_u+31
+        and #$7f
+        sta x25_u+31
         lda #<x25_u
         sta fe_src1
         lda #>x25_u
