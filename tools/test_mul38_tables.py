@@ -12,7 +12,8 @@ LABELS_PATH = os.path.join(PROJECT_ROOT, "build", "labels.txt")
 def main():
     os.chdir(PROJECT_ROOT)
     labels = Labels.from_file(LABELS_PATH)
-    config = ViceConfig(prg_path=PRG_PATH, warp=True, ntsc=True, sound=False)
+    config = ViceConfig(prg_path=PRG_PATH, warp=True, ntsc=True, sound=False,
+                        extra_args=["-reu", "-reusize", "512"])
 
     with ViceInstanceManager(config=config) as mgr:
         inst = mgr.acquire()

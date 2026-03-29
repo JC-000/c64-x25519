@@ -281,7 +281,8 @@ def main():
             sys.exit(1)
     print(f"Labels loaded: {len(required)} required labels verified")
 
-    config = ViceConfig(prg_path=PRG_PATH, warp=True, ntsc=True, sound=False)
+    config = ViceConfig(prg_path=PRG_PATH, warp=True, ntsc=True, sound=False,
+                        extra_args=["-reu", "-reusize", "512"])
 
     with ViceInstanceManager(config=config) as mgr:
         inst = mgr.acquire()
