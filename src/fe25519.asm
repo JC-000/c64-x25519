@@ -301,10 +301,10 @@ fe_cswap:
 ; =============================================================================
 ; fe_mul - (fe_dst) = (fe_src1) * (fe_src2) mod p
 ;
-; Optimized schoolbook 32x32->64-byte multiply with inlined quarter-square
-; multiplication. Copies src2 to an absolute buffer to avoid repeated
-; indirect-indexed loads, caches src1[i] per outer iteration, and inlines
-; the mul_8x8 logic to avoid JSR/RTS overhead (~12 cycles saved per multiply).
+; Combined REU DMA table lookup + 2x inner loop unroll.
+; Each outer iteration: DMA fetches 512-byte mul row for src1[i],
+; then inner loop does direct table lookup (mul_dma_lo/hi,Y) instead of
+; mult66 quarter-square. Inner loop unrolled 2x to reduce branch overhead.
 ;
 ; Clobbers: A, X, Y
 ; =============================================================================
@@ -325,15 +325,7 @@ fe_mul:
         dey
         bpl @copy_src2
 
-        ; 3. Set up ZP pointers for mult66 indirect-indexed multiply
-        ;    lmul0 -> sqtab_lo (page set once, low byte patched per multiply)
-        ;    lmul1 -> sqtab_hi (page set once, low byte patched per multiply)
-        lda #>sqtab_lo
-        sta lmul0+1
-        lda #>sqtab_hi
-        sta lmul1+1
-
-        ; 4. Schoolbook multiply with mult66 + self-mod accumulation
+        ; 3. Schoolbook multiply with REU DMA lookup + self-mod accumulation
         lda #0
         sta fe_mul_i
 @mul_outer:
@@ -344,73 +336,59 @@ fe_mul:
 @nonzero_i:
         sta mul_cached_a       ; cache src1[i] for inner loop
 
+        ; DMA the multiplication row for src1[i] from REU
+        jsr reu_fetch_mul_row
+
         ; Self-mod: patch accumulation addresses to base = fe_wide + i
-        ; This avoids computing i+j every inner iteration
+        ; Patch BOTH copies of the unrolled inner loop
         lda #<fe_wide
         clc
         adc fe_mul_i           ; A = low byte of (fe_wide + i)
         sta @accum_ld1+1
         sta @accum_st1+1
+        sta @accum_ld1_b+1
+        sta @accum_st1_b+1
         lda #>fe_wide
         adc #0                 ; handle page crossing
         sta @accum_ld1+2
         sta @accum_st1+2
+        sta @accum_ld1_b+2
+        sta @accum_st1_b+2
         ; For +1 accesses (high byte of product), base is fe_wide + i + 1
         lda #<(fe_wide+1)
         clc
         adc fe_mul_i
         sta @accum_ld2+1
         sta @accum_st2+1
+        sta @accum_ld2_b+1
+        sta @accum_st2_b+1
         lda #>(fe_wide+1)
         adc #0
         sta @accum_ld2+2
         sta @accum_st2+2
-
-        ; Set up ZP pointer low byte = src1[i] once per outer loop
-        lda mul_cached_a
-        sta lmul0              ; lmul0 = sqtab_lo + src1[i]
-        sta lmul1              ; lmul1 = sqtab_hi + src1[i]
+        sta @accum_ld2_b+2
+        sta @accum_st2_b+2
 
         lda #0
         sta fe_mul_j
+
+        ; ===== UNROLLED 2x INNER LOOP =====
+        ; First copy processes j, second copy processes j+1
+        ; Loop exit check only after second copy
+
 @mul_inner:
+        ; --- First copy: process src2[j] ---
         ldx fe_mul_j
         ldy mul_src2_buf,x     ; Y = src2[j]
-        beq @next_j            ; skip if zero
+        beq @next_j_first      ; skip if zero
 
-        ; --- mult66 inline: mul_cached_a * Y ---
-        ; A = Y - X (src2[j] - src1[i])
-        tya                    ; A = src2[j]
-        sec
-        sbc mul_cached_a       ; A = src2[j] - src1[i]
-        tax                    ; X = difference (or wrapped if negative)
-
-        ; (lmul0),Y = sqtab_lo[src1[i] + src2[j]] (sum via pointer+Y)
-        lda (lmul0),y
-        bcc @neg_diff          ; branch if src2[j] < src1[i]
-
-        ; Positive difference path (carry SET from SBC):
-        sbc sqtab_lo,x         ; exact subtraction (carry set)
+        ; --- REU table lookup: mul_cached_a * Y ---
+        lda mul_dma_lo,y       ; lo byte of product  (4 cycles)
         sta poly_prod_lo
-        lda (lmul1),y
-        sbc sqtab_hi,x
+        lda mul_dma_hi,y       ; hi byte of product  (4 cycles)
         sta poly_prod_hi
-        jmp @accum
 
-@neg_diff:
-        ; Negative difference path (carry CLEAR from SBC):
-        ; X = 256 + src2[j] - src1[i] (wrapped byte)
-        ; sqtab2[X] = (src1[i]-src2[j])^2/4 - 1
-        ; SBC with C=0: A - sqtab2[X] - 1 = sqtab[sum] - |diff|^2/4
-        sbc sqtab2_lo,x
-        sta poly_prod_lo
-        lda (lmul1),y
-        sbc sqtab2_hi,x
-        sta poly_prod_hi
-        ; --- END mult66 ---
-
-@accum:
-        ; Add 16-bit product to fe_wide[i+j] using self-modified addresses
+        ; Add 16-bit product to fe_wide[i+j]
         ldx fe_mul_j
 
         clc
@@ -424,25 +402,71 @@ fe_mul:
         adc poly_prod_hi
 @accum_st2:
         sta fe_wide+1,x
-        bcc @next_j
+        bcc @next_j_first
 
-        ; Propagate carry through remaining bytes (rare path)
-        ; Compute absolute index: i + j + 2
+        ; Propagate carry (rare path)
         lda fe_mul_i
         clc
         adc fe_mul_j
         clc
         adc #2
         tax
-@prop_carry:
+@prop_carry_a:
         cpx #64
-        bcs @next_j
-        sec                    ; restore carry (cpx clobbers it)
+        bcs @next_j_first
+        sec
         lda fe_wide,x
-        adc #0                 ; byte + 1 (propagating carry)
+        adc #0
         sta fe_wide,x
         inx
-        bcs @prop_carry        ; if overflow, continue propagation
+        bcs @prop_carry_a
+
+@next_j_first:
+        inc fe_mul_j           ; advance j, no exit check
+
+        ; --- Second copy: process src2[j+1] ---
+        ldx fe_mul_j
+        ldy mul_src2_buf,x     ; Y = src2[j]
+        beq @next_j            ; skip if zero
+
+        ; --- REU table lookup: mul_cached_a * Y ---
+        lda mul_dma_lo,y       ; lo byte of product  (4 cycles)
+        sta poly_prod_lo
+        lda mul_dma_hi,y       ; hi byte of product  (4 cycles)
+        sta poly_prod_hi
+
+        ; Add 16-bit product to fe_wide[i+j]
+        ldx fe_mul_j
+
+        clc
+@accum_ld1_b:
+        lda fe_wide,x          ; patched to fe_wide+i base
+        adc poly_prod_lo
+@accum_st1_b:
+        sta fe_wide,x
+@accum_ld2_b:
+        lda fe_wide+1,x        ; patched to fe_wide+i+1 base
+        adc poly_prod_hi
+@accum_st2_b:
+        sta fe_wide+1,x
+        bcc @next_j
+
+        ; Propagate carry (rare path)
+        lda fe_mul_i
+        clc
+        adc fe_mul_j
+        clc
+        adc #2
+        tax
+@prop_carry_b:
+        cpx #64
+        bcs @next_j
+        sec
+        lda fe_wide,x
+        adc #0
+        sta fe_wide,x
+        inx
+        bcs @prop_carry_b
 
 @next_j:
         inc fe_mul_j
@@ -485,12 +509,14 @@ fe_reduce_wide:
         sta fe_carry
         ldx #0
 @reduce1:
-        lda fe_wide+32,x
+        ldy fe_wide+32,x       ; Y = byte value (table index)
         beq @reduce1_zero
 
-        stx fe_loop            ; save byte index
-        jsr mul_by_38          ; poly_prod_lo/hi = A * 38
-        ldx fe_loop            ; restore byte index
+        ; Table lookup: Y * 38
+        lda mul38_lo_tab,y
+        sta poly_prod_lo
+        lda mul38_hi_tab,y
+        sta poly_prod_hi
 
         ; Add product + running carry to fe_wide[x]
         clc
@@ -531,7 +557,11 @@ fe_reduce_wide:
         ; If carry remains, multiply by 38 and add to bottom
         lda fe_carry
         beq @done
-        jsr mul_by_38
+        tay                    ; Y = carry value
+        lda mul38_lo_tab,y
+        sta poly_prod_lo
+        lda mul38_hi_tab,y
+        sta poly_prod_hi
 
         clc
         lda fe_wide
@@ -631,7 +661,7 @@ mul38_hi:  !byte 0
 ; Dedicated squaring: exploits symmetry a[i]*a[j] = a[j]*a[i].
 ; Uses mult66 indirect-indexed multiply + self-modifying accumulation
 ; (same technique as fe_mul). Cross terms added twice to fuse doubling.
-; 1. Cross terms: accumulate 2*a[i]*a[j] for i < j  (inline mult66)
+; 1. Cross terms: accumulate 2*a[i]*a[j] for i < j  (inline mult66, shift-before-accum)
 ; 2. Diagonal: add a[i]^2 at position 2*i            (inline mult66)
 ; 3. Reduce mod p
 ;
@@ -660,7 +690,7 @@ fe_sqr:
         lda #>sqtab_hi
         sta lmul1+1
 
-        ; 4. Cross terms with mult66 + self-mod, added twice (fused doubling)
+        ; 4. Cross terms with mult66 + self-mod, shift-before-accumulate
         lda #0
         sta fe_mul_i
 @sqr_outer:
@@ -677,28 +707,20 @@ fe_sqr:
         adc fe_mul_i           ; A = low byte of (fe_wide + i)
         sta @sqr_accum_ld1+1
         sta @sqr_accum_st1+1
-        sta @sqr_accum2_ld1+1
-        sta @sqr_accum2_st1+1
         lda #>fe_wide
         adc #0                 ; handle page crossing
         sta @sqr_accum_ld1+2
         sta @sqr_accum_st1+2
-        sta @sqr_accum2_ld1+2
-        sta @sqr_accum2_st1+2
         ; For +1 accesses (high byte of product)
         lda #<(fe_wide+1)
         clc
         adc fe_mul_i
         sta @sqr_accum_ld2+1
         sta @sqr_accum_st2+1
-        sta @sqr_accum2_ld2+1
-        sta @sqr_accum2_st2+1
         lda #>(fe_wide+1)
         adc #0
         sta @sqr_accum_ld2+2
         sta @sqr_accum_st2+2
-        sta @sqr_accum2_ld2+2
-        sta @sqr_accum2_st2+2
 
         ; Set up ZP pointer low byte = a[i] once per outer loop
         lda mul_cached_a
@@ -746,7 +768,14 @@ fe_sqr:
         ; --- END mult66 ---
 
 @sqr_accum:
-        ; First addition of product to fe_wide[i+j]
+        ; Double the product (shift-before-accumulate replaces second addition)
+        asl poly_prod_lo
+        rol poly_prod_hi
+        lda #0
+        adc #0                 ; A = carry from ROL (0 or 1)
+        sta poly_carry         ; save 17th bit
+
+        ; Single addition of doubled product to fe_wide[i+j]
         ldx fe_mul_j
 
         clc
@@ -760,58 +789,36 @@ fe_sqr:
         adc poly_prod_hi
 @sqr_accum_st2:
         sta fe_wide+1,x
-        bcc @sqr_accum2
 
-        ; Propagate carry from first addition
-        lda fe_mul_i
+        ; Capture accumulation carry and combine with shift carry
+        lda #0
+        adc poly_carry         ; A = accum_carry + shift_carry (0, 1, or 2)
+        beq @sqr_next_j        ; if both zero, skip
+
+        ; Add combined carries to fe_wide[i+j+2]
+        ldx fe_mul_i
+        tay                    ; Y = combined carry value
+        txa
         clc
         adc fe_mul_j
         clc
         adc #2
         tax
-@sqr_prop1:
-        cpx #64
-        bcs @sqr_accum2
-        sec
-        lda fe_wide,x
-        adc #0
-        sta fe_wide,x
-        inx
-        bcs @sqr_prop1
-
-@sqr_accum2:
-        ; Second addition of same product (fused doubling)
-        ldx fe_mul_j
-
+        tya                    ; A = combined carry value
         clc
-@sqr_accum2_ld1:
-        lda fe_wide,x          ; patched to fe_wide+i base
-        adc poly_prod_lo
-@sqr_accum2_st1:
+        adc fe_wide,x
         sta fe_wide,x
-@sqr_accum2_ld2:
-        lda fe_wide+1,x        ; patched to fe_wide+i+1 base
-        adc poly_prod_hi
-@sqr_accum2_st2:
-        sta fe_wide+1,x
         bcc @sqr_next_j
-
-        ; Propagate carry from second addition
-        lda fe_mul_i
-        clc
-        adc fe_mul_j
-        clc
-        adc #2
-        tax
-@sqr_prop2:
+        ; Propagate further carries
+@sqr_prop1:
+        inx
         cpx #64
         bcs @sqr_next_j
         sec
         lda fe_wide,x
         adc #0
         sta fe_wide,x
-        inx
-        bcs @sqr_prop2
+        bcs @sqr_prop1
 
 @sqr_next_j:
         inc fe_mul_j

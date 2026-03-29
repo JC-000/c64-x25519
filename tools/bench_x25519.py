@@ -145,7 +145,8 @@ def main():
     print(f"Benchmark subroutine: {len(bench_code)} bytes at ${BENCH_SUB_ADDR:04X}")
 
     # Launch VICE via managed instance (PID/port tracked, file-locked)
-    config = ViceConfig(prg_path=PRG_PATH, warp=True, ntsc=True, sound=False)
+    config = ViceConfig(prg_path=PRG_PATH, warp=True, ntsc=True, sound=False,
+                        extra_args=["-reu", "-reusize", "512"])
 
     with ViceInstanceManager(config=config) as mgr:
         with mgr.instance() as inst:
