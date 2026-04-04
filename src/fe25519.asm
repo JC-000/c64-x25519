@@ -494,7 +494,8 @@ fe_mul:
         dey
         bpl @copy_result
 
-        jsr fe_reduce_final
+        ; NOTE: fe_reduce_final removed from fe_mul — callers that need
+        ; canonical [0,p) output must call fe_reduce_final explicitly.
         rts
 
 ; =============================================================================
@@ -903,7 +904,8 @@ fe_sqr:
         dey
         bpl @copy_result
 
-        jsr fe_reduce_final
+        ; NOTE: fe_reduce_final removed from fe_sqr — callers that need
+        ; canonical [0,p) output must call fe_reduce_final explicitly.
         rts
 
 ; =============================================================================
@@ -1369,6 +1371,7 @@ fe_inv:
         lda fe_inv_dst+1
         sta fe_dst+1
         jsr fe_mul              ; (original fe_dst) = z^(2^255-21) = z^(p-2)
+        jsr fe_reduce_final     ; fe_inv output must be canonical
 
         rts
 
