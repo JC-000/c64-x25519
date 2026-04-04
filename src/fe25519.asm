@@ -369,42 +369,33 @@ fe_mul:
         sta @accum_ld2_b+2
         sta @accum_st2_b+2
 
-        lda #0
-        sta fe_mul_j
+        ldx #0                 ; X = j, kept in register
 
         ; ===== UNROLLED 2x INNER LOOP =====
-        ; First copy processes j, second copy processes j+1
-        ; Loop exit check only after second copy
+        ; X register holds j throughout, avoiding ZP load/store
+        ; Direct DMA table accumulation (no ZP intermediaries)
 
 @mul_inner:
         ; --- First copy: process src2[j] ---
-        ldx fe_mul_j
         ldy mul_src2_buf,x     ; Y = src2[j]
         beq @next_j_first      ; skip if zero
 
-        ; --- REU table lookup: mul_cached_a * Y ---
-        lda mul_dma_lo,y       ; lo byte of product  (4 cycles)
-        sta poly_prod_lo
-        lda mul_dma_hi,y       ; hi byte of product  (4 cycles)
-        sta poly_prod_hi
-
-        ; Add 16-bit product to fe_wide[i+j]
-        ldx fe_mul_j
-
+        ; Add 16-bit product directly to fe_wide[i+j]
         clc
 @accum_ld1:
         lda fe_wide,x          ; patched to fe_wide+i base
-        adc poly_prod_lo
+        adc mul_dma_lo,y       ; add product lo directly
 @accum_st1:
         sta fe_wide,x
 @accum_ld2:
         lda fe_wide+1,x        ; patched to fe_wide+i+1 base
-        adc poly_prod_hi
+        adc mul_dma_hi,y       ; add product hi directly
 @accum_st2:
         sta fe_wide+1,x
         bcc @next_j_first
 
-        ; Propagate carry (rare path)
+        ; Propagate carry (rare path ~2%)
+        stx fe_mul_j           ; save j
         lda fe_mul_i
         clc
         adc fe_mul_j
@@ -413,45 +404,39 @@ fe_mul:
         tax
 @prop_carry_a:
         cpx #64
-        bcs @next_j_first
+        bcs @carry_done_a
         sec
         lda fe_wide,x
         adc #0
         sta fe_wide,x
         inx
         bcs @prop_carry_a
+@carry_done_a:
+        ldx fe_mul_j           ; restore j
 
 @next_j_first:
-        inc fe_mul_j           ; advance j, no exit check
+        inx                    ; advance j (2 cycles vs 8 for inc+ldx)
 
         ; --- Second copy: process src2[j+1] ---
-        ldx fe_mul_j
         ldy mul_src2_buf,x     ; Y = src2[j]
         beq @next_j            ; skip if zero
 
-        ; --- REU table lookup: mul_cached_a * Y ---
-        lda mul_dma_lo,y       ; lo byte of product  (4 cycles)
-        sta poly_prod_lo
-        lda mul_dma_hi,y       ; hi byte of product  (4 cycles)
-        sta poly_prod_hi
-
-        ; Add 16-bit product to fe_wide[i+j]
-        ldx fe_mul_j
-
+        ; Add 16-bit product directly to fe_wide[i+j]
         clc
 @accum_ld1_b:
         lda fe_wide,x          ; patched to fe_wide+i base
-        adc poly_prod_lo
+        adc mul_dma_lo,y       ; add product lo directly
 @accum_st1_b:
         sta fe_wide,x
 @accum_ld2_b:
         lda fe_wide+1,x        ; patched to fe_wide+i+1 base
-        adc poly_prod_hi
+        adc mul_dma_hi,y       ; add product hi directly
 @accum_st2_b:
         sta fe_wide+1,x
         bcc @next_j
 
-        ; Propagate carry (rare path)
+        ; Propagate carry (rare path ~2%)
+        stx fe_mul_j           ; save j
         lda fe_mul_i
         clc
         adc fe_mul_j
@@ -460,18 +445,19 @@ fe_mul:
         tax
 @prop_carry_b:
         cpx #64
-        bcs @next_j
+        bcs @carry_done_b
         sec
         lda fe_wide,x
         adc #0
         sta fe_wide,x
         inx
         bcs @prop_carry_b
+@carry_done_b:
+        ldx fe_mul_j           ; restore j
 
 @next_j:
-        inc fe_mul_j
-        lda fe_mul_j
-        cmp #32
+        inx                    ; advance j
+        cpx #32
         bcs @skip_zero
         jmp @mul_inner
 
