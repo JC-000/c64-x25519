@@ -217,6 +217,7 @@ x25519_scalarmult:
         lda #>x25_result
         sta fe_dst+1
         jsr fe_mul             ; x25_result = x_2 * z_2^(-1) mod p
+        jsr fe_reduce_final    ; Final output must be canonical
 
         rts
 
@@ -272,6 +273,7 @@ x25519_ladder_step:
         lda #>fe_tmp3
         sta fe_dst+1
         jsr fe_sqr             ; fe_tmp3 = AA
+        jsr fe_reduce_final    ; AA feeds into fe_sub/fe_add
 
         ; BB = B^2 → fe_tmp4
         lda #<x25_b
@@ -283,6 +285,7 @@ x25519_ladder_step:
         lda #>fe_tmp4
         sta fe_dst+1
         jsr fe_sqr             ; fe_tmp4 = BB
+        jsr fe_reduce_final    ; BB feeds into fe_sub
 
         ; E = AA - BB → x25_e
         lda #<fe_tmp3
@@ -336,6 +339,7 @@ x25519_ladder_step:
         lda #>x25_da
         sta fe_dst+1
         jsr fe_mul             ; x25_da = D * A
+        jsr fe_reduce_final    ; DA feeds into fe_add/fe_sub
 
         ; CB = C * B → x25_cb
         lda #<fe_tmp1
@@ -351,6 +355,7 @@ x25519_ladder_step:
         lda #>x25_cb
         sta fe_dst+1
         jsr fe_mul             ; x25_cb = C * B
+        jsr fe_reduce_final    ; CB feeds into fe_add/fe_sub
 
         ; x_3 = (DA + CB)^2
         lda #<x25_da
@@ -372,6 +377,7 @@ x25519_ladder_step:
         lda #>x25_x3
         sta fe_src1+1
         jsr fe_sqr             ; x25_x3 = (DA + CB)^2
+        jsr fe_reduce_final    ; x_3 is output, feeds into add in next iteration
 
         ; z_3 = x_1 * (DA - CB)^2
         ; x_1 is the original u-coordinate (x25_u)
@@ -405,6 +411,7 @@ x25519_ladder_step:
         lda #>x25_z3
         sta fe_src2+1
         jsr fe_mul             ; x25_z3 = x_1 * (DA - CB)^2
+        jsr fe_reduce_final    ; z_3 is output, feeds into add/sub in next iteration
 
         ; x_2 = AA * BB
         lda #<fe_tmp3
@@ -420,6 +427,7 @@ x25519_ladder_step:
         lda #>x25_x2
         sta fe_dst+1
         jsr fe_mul             ; x25_x2 = AA * BB
+        jsr fe_reduce_final    ; x_2 is output, feeds into add/sub in next iteration
 
         ; z_2 = E * (AA + a24*E)
         ; First: a24*E → fe_tmp1
@@ -456,6 +464,7 @@ x25519_ladder_step:
         lda #>x25_z2
         sta fe_dst+1
         jsr fe_mul             ; x25_z2 = E * (AA + a24*E)
+        jsr fe_reduce_final    ; z_2 is output, feeds into add/sub in next iteration
 
         rts
 

@@ -69,6 +69,8 @@ def c64_fe_mul(transport, labels, a, b):
                 src2=labels["fe_tmp2"],
                 dst=labels["fe_tmp3"])
     jsr(transport, labels["fe_mul"], timeout=120.0)
+    # fe_mul no longer calls fe_reduce_final internally; canonicalize for test
+    jsr(transport, labels["fe_reduce_final"], timeout=5.0)
     return read_fe(transport, labels["fe_tmp3"])
 
 
@@ -273,7 +275,7 @@ def main():
     labels = Labels.from_file(LABELS_PATH)
     required = [
         "fe_src1", "fe_src2", "fe_dst",
-        "fe_mul", "fe_tmp1", "fe_tmp2", "fe_tmp3",
+        "fe_mul", "fe_reduce_final", "fe_tmp1", "fe_tmp2", "fe_tmp3",
     ]
     for name in required:
         if labels.address(name) is None:

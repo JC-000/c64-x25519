@@ -104,6 +104,7 @@ def c64_fe_mul(transport, labels, a, b):
                 src2=labels["fe_tmp2"],
                 dst=labels["fe_tmp3"])
     jsr(transport, labels["fe_mul"], timeout=120.0)
+    jsr(transport, labels["fe_reduce_final"], timeout=5.0)
     return read_fe(transport, labels["fe_tmp3"])
 
 
@@ -113,6 +114,7 @@ def c64_fe_sqr(transport, labels, a):
                 src1=labels["fe_tmp1"],
                 dst=labels["fe_tmp3"])
     jsr(transport, labels["fe_sqr"], timeout=120.0)
+    jsr(transport, labels["fe_reduce_final"], timeout=5.0)
     return read_fe(transport, labels["fe_tmp3"])
 
 
