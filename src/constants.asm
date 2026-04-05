@@ -50,6 +50,7 @@ x25_prev_bit    = $2a           ; previous k_t for swap
 x25_bit_ctr     = $2b           ; bit counter
 x25_byte_idx    = $2c           ; byte index in scalar
 x25_bit_mask    = $2d           ; current bit mask
+fe_sqr_pairs    = $2e           ; fe_sqr unrolled cross-loop pair counter
 
 ; mult66 indirect-indexed multiply pointers (free in standalone X25519)
 lmul0           = $14           ; 2-byte ZP pointer for sqtab lookup (sum path)
