@@ -489,18 +489,13 @@ fe_reduce_wide:
         ldy fe_wide+32,x       ; Y = byte value (table index)
         beq @reduce1_zero
 
-        ; Table lookup: Y * 38
-        lda mul38_lo_tab,y
-        sta poly_prod_lo
-        lda mul38_hi_tab,y
-        sta poly_prod_hi
-
-        ; Add product + running carry to fe_wide[x]
+        ; Add product (Y*38) + running carry to fe_wide[x]
+        ; Table lookups chained directly to adds (Y preserved across)
         clc
-        lda poly_prod_lo
+        lda mul38_lo_tab,y
         adc fe_carry
         sta fe_carry
-        lda poly_prod_hi
+        lda mul38_hi_tab,y
         adc #0
         sta fe_mul_j           ; high = product_hi + carry overflow
 
@@ -535,17 +530,12 @@ fe_reduce_wide:
         lda fe_carry
         beq @done
         tay                    ; Y = carry value
-        lda mul38_lo_tab,y
-        sta poly_prod_lo
-        lda mul38_hi_tab,y
-        sta poly_prod_hi
-
         clc
         lda fe_wide
-        adc poly_prod_lo
+        adc mul38_lo_tab,y
         sta fe_wide
         lda fe_wide+1
-        adc poly_prod_hi
+        adc mul38_hi_tab,y
         sta fe_wide+1
         bcc @done
         ldx #2
@@ -679,21 +669,25 @@ fe_sqr:
         bcs @sqr_use_mult66
         ; --- DMA path: fetch pre-doubled row for a = src[i] ---
         jsr reu_fetch_doubled_row
-        ; patch trampoline to jump into DMA inner loop
+        ; patch trampoline to jump into DMA inner loop (body A)
         lda #<@sqr_inner_dma
         sta @sqr_inner_tramp+1
         lda #>@sqr_inner_dma
         sta @sqr_inner_tramp+2
-        ; patch DMA inner's self-mod ld/st addresses
+        ; patch DMA inner's self-mod ld/st addresses (single-byte ZP patches)
         lda #<fe_wide
         clc
         adc fe_mul_i
         sta @sqr_dma_ld1+1
         sta @sqr_dma_st1+1
+        sta @sqr_dma_ld1_b+1
+        sta @sqr_dma_st1_b+1
         clc
         adc #1
         sta @sqr_dma_ld2+1
         sta @sqr_dma_st2+1
+        sta @sqr_dma_ld2_b+1
+        sta @sqr_dma_st2_b+1
         jmp @sqr_path_done
 @sqr_use_mult66:
         ; patch trampoline back to mult66 inner loop
@@ -705,16 +699,21 @@ fe_sqr:
 
         ; Self-mod: patch accumulation addresses to base = fe_wide + i
         ; fe_wide in zero page ($40..$7F) — patch only the ZP operand byte.
+        ; Patched for body A and body B — both use same base.
         lda #<fe_wide
         clc
         adc fe_mul_i           ; A = (fe_wide + i) & $ff
         sta @sqr_accum_ld1+1
         sta @sqr_accum_st1+1
+        sta @sqr_accum_ld1_b+1
+        sta @sqr_accum_st1_b+1
         ; For +1 accesses (high byte of product)
         clc
         adc #1
         sta @sqr_accum_ld2+1
         sta @sqr_accum_st2+1
+        sta @sqr_accum_ld2_b+1
+        sta @sqr_accum_st2_b+1
 
         ; Set up ZP pointer low byte = a[i] once per outer loop
         lda mul_cached_a
@@ -727,7 +726,21 @@ fe_sqr:
         adc #1
         sta fe_mul_j
 
+        ; Compute pair count = ceil((31-i)/2) = (32-i)/2.
+        ; When actual length L is odd, the last "pair" does body B on the
+        ; phantom slot j=32; mul_src2_buf[32] is zero-padded so that body B
+        ; takes the Y==0 fast-skip path and performs no work.
+        ; Pair count is always >= 1 for i in 0..30, so no empty-check needed.
+        lda #32
+        sec
+        sbc fe_mul_i           ; A = 32 - i
+        lsr                    ; A = ceil((31-i)/2)
+        sta fe_sqr_pairs       ; pair counter (in ZP)
+
+        jmp @sqr_inner_tramp   ; dispatch to mult66 or DMA unrolled pair loop
+
 @sqr_inner:
+        ; === Body A (mult66) ===
         ldx fe_mul_j
         ldy mul_src2_buf,x     ; Y = a[j]
         bne @sqr_nonzero_j     ; skip if zero
@@ -813,22 +826,101 @@ fe_sqr:
         adc #0
         sta fe_wide,x
         bcs @sqr_prop1
-        jmp @sqr_next_j
-@sqr_inner_tramp:
-        jmp @sqr_inner         ; patched: @sqr_inner OR @sqr_inner_dma
 @sqr_next_j:
         inc fe_mul_j
-        lda fe_mul_j
-        cmp #32
-        bcc @sqr_inner_tramp
+
+        ; === Body B (mult66, second unrolled copy) ===
+        ldx fe_mul_j
+        ldy mul_src2_buf,x     ; Y = a[j]
+        bne @sqr_nonzero_j_b
+        jmp @sqr_next_j_b
+@sqr_nonzero_j_b:
+
+        tya
+        sec
+        sbc mul_cached_a
+        tax
+
+        lda (lmul0),y
+        bcc @sqr_neg_diff_b
+
+        sbc sqtab_lo,x
+        sta poly_prod_lo
+        lda (lmul1),y
+        sbc sqtab_hi,x
+        sta poly_prod_hi
+        jmp @sqr_accum_b
+
+@sqr_neg_diff_b:
+        sbc sqtab2_lo,x
+        sta poly_prod_lo
+        lda (lmul1),y
+        sbc sqtab2_hi,x
+        sta poly_prod_hi
+
+@sqr_accum_b:
+        asl poly_prod_lo
+        rol poly_prod_hi
+        lda #0
+        adc #0
+        sta poly_carry
+
+        ldx fe_mul_j
+
+        clc
+@sqr_accum_ld1_b:
+        lda fe_wide,x
+        adc poly_prod_lo
+@sqr_accum_st1_b:
+        sta fe_wide,x
+@sqr_accum_ld2_b:
+        lda fe_wide+1,x
+        adc poly_prod_hi
+@sqr_accum_st2_b:
+        sta fe_wide+1,x
+
+        lda #0
+        adc poly_carry
+        beq @sqr_next_j_b
+
+        ldx fe_mul_i
+        tay
+        txa
+        clc
+        adc fe_mul_j
+        clc
+        adc #2
+        tax
+        tya
+        clc
+        adc fe_wide,x
+        sta fe_wide,x
+        bcc @sqr_next_j_b
+@sqr_prop1_b:
+        inx
+        cpx #64
+        bcs @sqr_next_j_b
+        sec
+        lda fe_wide,x
+        adc #0
+        sta fe_wide,x
+        bcs @sqr_prop1_b
+@sqr_next_j_b:
+        inc fe_mul_j
+        dec fe_sqr_pairs
+        beq @sqr_pair_loop_exit_mul
+@sqr_inner_tramp:
+        jmp @sqr_inner         ; patched: @sqr_inner OR @sqr_inner_dma
+@sqr_pair_loop_exit_mul:
         jmp @sqr_skip_i
 
-; --- DMA inner loop: pre-doubled product tables in mul_dma_lo/hi/carry ---
+; --- DMA inner loop (2x unrolled): pre-doubled product tables in mul_dma_lo/hi/carry ---
 @sqr_inner_dma:
+        ; === Body A (DMA) ===
         ldx fe_mul_j
         ldy mul_src2_buf,x     ; Y = a[j]
         bne @sqr_nonzero_j_dma
-        jmp @sqr_next_j
+        jmp @sqr_next_j_dma
 @sqr_nonzero_j_dma:
         lda mul_dma_carry,y
         sta poly_carry
@@ -845,7 +937,7 @@ fe_sqr:
         sta fe_wide+1,x
         lda #0
         adc poly_carry         ; combined carry = accum_carry + 17th-bit
-        beq @sqr_next_j
+        beq @sqr_next_j_dma
         ; propagate into fe_wide[i+j+2]
         ldx fe_mul_i
         tay
@@ -859,17 +951,70 @@ fe_sqr:
         clc
         adc fe_wide,x
         sta fe_wide,x
-        bcc @sqr_next_j
+        bcc @sqr_next_j_dma
 @sqr_dma_prop1:
         inx
         cpx #64
-        bcs @sqr_next_j
+        bcs @sqr_next_j_dma
         sec
         lda fe_wide,x
         adc #0
         sta fe_wide,x
         bcs @sqr_dma_prop1
-        jmp @sqr_next_j
+@sqr_next_j_dma:
+        inc fe_mul_j
+
+        ; === Body B (DMA, second unrolled copy) ===
+        ldx fe_mul_j
+        ldy mul_src2_buf,x     ; Y = a[j]
+        bne @sqr_nonzero_j_dma_b
+        jmp @sqr_next_j_dma_b
+@sqr_nonzero_j_dma_b:
+        lda mul_dma_carry,y
+        sta poly_carry
+        clc
+@sqr_dma_ld1_b:
+        lda fe_wide,x
+        adc mul_dma_lo,y
+@sqr_dma_st1_b:
+        sta fe_wide,x
+@sqr_dma_ld2_b:
+        lda fe_wide+1,x
+        adc mul_dma_hi,y
+@sqr_dma_st2_b:
+        sta fe_wide+1,x
+        lda #0
+        adc poly_carry
+        beq @sqr_next_j_dma_b
+        ldx fe_mul_i
+        tay
+        txa
+        clc
+        adc fe_mul_j
+        clc
+        adc #2
+        tax
+        tya
+        clc
+        adc fe_wide,x
+        sta fe_wide,x
+        bcc @sqr_next_j_dma_b
+@sqr_dma_prop1_b:
+        inx
+        cpx #64
+        bcs @sqr_next_j_dma_b
+        sec
+        lda fe_wide,x
+        adc #0
+        sta fe_wide,x
+        bcs @sqr_dma_prop1_b
+@sqr_next_j_dma_b:
+        inc fe_mul_j
+        dec fe_sqr_pairs
+        beq @sqr_pair_loop_exit_dma
+        jmp @sqr_inner_dma
+@sqr_pair_loop_exit_dma:
+        jmp @sqr_skip_i
 
 @sqr_skip_i:
         inc fe_mul_i

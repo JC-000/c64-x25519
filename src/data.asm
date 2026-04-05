@@ -52,7 +52,9 @@ x25_basepoint:
 mul_cached_a:
         !byte 0                ; cached src1[i] for inlined multiply
 mul_src2_buf:
-        !fill 32, 0           ; absolute copy of src2 for fast indexed access
+        !fill 33, 0           ; absolute copy of src2 for fast indexed access
+                              ; (33 bytes: byte 32 is zero-pad for fe_sqr unrolled
+                              ; cross-term loop phantom iteration safety)
 
 ; --- REU DMA target buffers (page-aligned for LDA abs,Y without penalty) ---
         !align 255, 0          ; align to next page boundary
