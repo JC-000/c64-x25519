@@ -103,6 +103,19 @@ mul38_hi_tab:
 ; a24_b1[b] = (121665*b >> 8) & $ff
 ; a24_b2[b] = (121665*b >> 16) & $ff
 ; a24_b3[b] = (121665*b >> 24) & $ff   (always 0 or 1)
+; --- fe_sqr diagonal squaring tables ---
+; sqr_lo[a] = low byte of a*a (since 255*255 = 65025 fits in 16 bits)
+; sqr_hi[a] = high byte of a*a
+        !align 255, 0
+sqr_lo:
+        !for i, 0, 255 {
+                !byte <(i * i)
+        }
+sqr_hi:
+        !for i, 0, 255 {
+                !byte >(i * i)
+        }
+
         !align 255, 0
 a24_b0:
         !for i, 0, 255 {

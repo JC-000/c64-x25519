@@ -1024,9 +1024,7 @@ fe_sqr:
         jmp @sqr_outer
 @sqr_cross_done:
 
-        ; 5. Add diagonal terms: a[i]^2 at position 2*i (inline mult66)
-        ;    For self-multiply: diff=0, sqtab[0]=0, so result = sqtab[2*a[i]]
-        ;    With lmul0 = a[i], Y = a[i]: (lmul0),Y = sqtab[2*a[i]]
+        ; 5. Add diagonal terms: a[i]^2 at position 2*i (precomputed sqr tables)
         lda #0
         sta fe_mul_i
 @diag_outer:
@@ -1034,17 +1032,10 @@ fe_sqr:
         lda (fe_src1),y
         beq @diag_skip         ; skip if a[i] == 0
 
-        ; Set up mult66 pointers for self-multiply
-        sta lmul0              ; lmul0 low = a[i]
-        sta lmul1              ; lmul1 low = a[i]
         tay                    ; Y = a[i]
-
-        ; (lmul0),Y = sqtab_lo[a[i] + a[i]] = sqtab_lo[2*a[i]]
-        ; (lmul1),Y = sqtab_hi[a[i] + a[i]] = sqtab_hi[2*a[i]]
-        ; diff = 0, sqtab[0] = 0, no subtraction needed
-        lda (lmul0),y          ; lo byte of a[i]^2
+        lda sqr_lo,y
         sta poly_prod_lo
-        lda (lmul1),y          ; hi byte of a[i]^2
+        lda sqr_hi,y
         sta poly_prod_hi
 
         ; Add to fe_wide[2*i]
