@@ -223,6 +223,32 @@ reu_mul_init:
         beq @init_done         ; if wrapped to 0, done
         jmp @outer
 @init_done:
+        ; Stash 64 zero bytes to REU bank 2 offset 0 (for fe_wide zeroing via DMA).
+        ; Build zero buffer by overwriting mul_dma_lo[0..63] (will be overwritten
+        ; by next fetch_mul_row, so safe to corrupt now).
+        ldx #63
+        lda #0
+@zbuf:  sta mul_dma_lo,x
+        dex
+        bpl @zbuf
+        ; STASH 64 bytes from mul_dma_lo to REU bank=2, offset=$0000
+        lda #<mul_dma_lo
+        sta reu_c64_lo
+        lda #>mul_dma_lo
+        sta reu_c64_hi
+        lda #0
+        sta reu_reu_lo
+        sta reu_reu_hi
+        lda #2
+        sta reu_reu_bank
+        lda #64
+        sta reu_len_lo
+        lda #0
+        sta reu_len_hi
+        sta reu_addr_ctrl
+        lda #%10110000         ; execute + autoload + STASH (C64->REU)
+        sta reu_command
+
         ; Pre-configure constant REU registers for fetch routine
         lda #<mul_dma_lo
         sta reu_c64_lo
@@ -255,6 +281,38 @@ reu_fetch_mul_row:
         sta reu_reu_bank
         lda #%10110001         ; execute + autoload + FETCH (REU->C64)
         sta reu_command
+        rts
+
+; =============================================================================
+; reu_clear_wide - DMA-zero fe_wide[0..63] ($40..$7F) via REU FETCH from bank 2
+;
+; Fetches 64 pre-stashed zero bytes from REU bank=2, offset=0 to C64 $0040.
+; Then restores REU registers to mul-row FETCH config (c64=mul_dma_lo, len=512).
+; Clobbers: A
+; =============================================================================
+reu_clear_wide:
+        ; Configure DMA: 64 bytes from REU bank 2 / $0000 to C64 $0040
+        lda #$40
+        sta reu_c64_lo
+        lda #0
+        sta reu_c64_hi
+        sta reu_reu_hi         ; (also 0 — autoload may have changed it)
+        sta reu_len_hi
+        lda #2
+        sta reu_reu_bank
+        lda #64
+        sta reu_len_lo
+        lda #%10110001         ; execute + autoload + FETCH (REU->C64)
+        sta reu_command
+        ; Restore mul-row FETCH config (reu_reu_lo / addr_ctrl are still 0 via autoload)
+        lda #<mul_dma_lo
+        sta reu_c64_lo
+        lda #>mul_dma_lo
+        sta reu_c64_hi
+        lda #0
+        sta reu_len_lo
+        lda #2
+        sta reu_len_hi
         rts
 
 ; =============================================================================

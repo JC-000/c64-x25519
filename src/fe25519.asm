@@ -309,13 +309,8 @@ fe_cswap:
 ; Clobbers: A, X, Y
 ; =============================================================================
 fe_mul:
-        ; 1. Zero the 64-byte product buffer
-        ldx #63
-        lda #0
-@zero_wide:
-        sta fe_wide,x
-        dex
-        bpl @zero_wide
+        ; 1. Zero the 64-byte product buffer via REU DMA FETCH from bank 2
+        jsr reu_clear_wide
 
         ; 2. Copy src2 to absolute buffer (needed for indexed access)
         ldy #31
@@ -650,13 +645,8 @@ mul38_hi:  !byte 0
 ; Clobbers: A, X, Y
 ; =============================================================================
 fe_sqr:
-        ; 1. Zero the 64-byte product buffer
-        ldx #63
-        lda #0
-@zero_wide:
-        sta fe_wide,x
-        dex
-        bpl @zero_wide
+        ; 1. Zero the 64-byte product buffer via REU DMA FETCH from bank 2
+        jsr reu_clear_wide
 
         ; 2. Copy src1 to absolute buffer (src1==src2 for squaring)
         ldy #31
