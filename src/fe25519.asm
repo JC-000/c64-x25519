@@ -343,7 +343,7 @@ fe_mul:
 
         ; Self-mod: patch accumulation addresses to base = fe_wide + i
         ; fe_wide is in zero page ($40..$7F) so we only patch the ZP operand byte.
-        ; Patch BOTH copies of the unrolled inner loop.
+        ; Patch ALL FOUR copies of the unrolled inner loop.
         lda #<fe_wide
         clc
         adc fe_mul_i           ; A = (fe_wide + i) & $ff  (stays in $40..$5F)
@@ -351,6 +351,10 @@ fe_mul:
         sta @accum_st1+1
         sta @accum_ld1_b+1
         sta @accum_st1_b+1
+        sta @accum_ld1_c+1
+        sta @accum_st1_c+1
+        sta @accum_ld1_d+1
+        sta @accum_st1_d+1
         ; For +1 accesses (high byte of product), base is fe_wide + i + 1
         clc
         adc #1
@@ -358,34 +362,100 @@ fe_mul:
         sta @accum_st2+1
         sta @accum_ld2_b+1
         sta @accum_st2_b+1
+        sta @accum_ld2_c+1
+        sta @accum_st2_c+1
+        sta @accum_ld2_d+1
+        sta @accum_st2_d+1
 
         ldx #0                 ; X = j, kept in register
 
-        ; ===== UNROLLED 2x INNER LOOP =====
+        ; ===== UNROLLED 4x INNER LOOP =====
         ; X register holds j throughout, avoiding ZP load/store
         ; Direct DMA table accumulation (no ZP intermediaries)
 
 @mul_inner:
-        ; --- First copy: process src2[j] ---
+        ; --- Body A: process src2[j] ---
         ldy mul_src2_buf,x     ; Y = src2[j]
         beq @next_j_first      ; skip if zero
-
-        ; Add 16-bit product directly to fe_wide[i+j]
         clc
 @accum_ld1:
         lda fe_wide,x          ; patched to fe_wide+i base
-        adc mul_dma_lo,y       ; add product lo directly
+        adc mul_dma_lo,y
 @accum_st1:
         sta fe_wide,x
 @accum_ld2:
         lda fe_wide+1,x        ; patched to fe_wide+i+1 base
-        adc mul_dma_hi,y       ; add product hi directly
+        adc mul_dma_hi,y
 @accum_st2:
         sta fe_wide+1,x
-        bcc @next_j_first
+        bcs @do_prop_a
+@next_j_first:
+        inx                    ; advance j
 
-        ; Propagate carry (rare path ~2%)
-        stx fe_mul_j           ; save j
+        ; --- Body B: process src2[j+1] ---
+        ldy mul_src2_buf,x
+        beq @next_j_second
+        clc
+@accum_ld1_b:
+        lda fe_wide,x
+        adc mul_dma_lo,y
+@accum_st1_b:
+        sta fe_wide,x
+@accum_ld2_b:
+        lda fe_wide+1,x
+        adc mul_dma_hi,y
+@accum_st2_b:
+        sta fe_wide+1,x
+        bcs @do_prop_b
+@next_j_second:
+        inx
+
+        ; --- Body C: process src2[j+2] ---
+        ldy mul_src2_buf,x
+        beq @next_j_third
+        clc
+@accum_ld1_c:
+        lda fe_wide,x
+        adc mul_dma_lo,y
+@accum_st1_c:
+        sta fe_wide,x
+@accum_ld2_c:
+        lda fe_wide+1,x
+        adc mul_dma_hi,y
+@accum_st2_c:
+        sta fe_wide+1,x
+        bcs @do_prop_c
+@next_j_third:
+        inx
+
+        ; --- Body D: process src2[j+3] ---
+        ldy mul_src2_buf,x
+        beq @next_j
+        clc
+@accum_ld1_d:
+        lda fe_wide,x
+        adc mul_dma_lo,y
+@accum_st1_d:
+        sta fe_wide,x
+@accum_ld2_d:
+        lda fe_wide+1,x
+        adc mul_dma_hi,y
+@accum_st2_d:
+        sta fe_wide+1,x
+        bcs @do_prop_d
+@next_j:
+        inx
+        cpx #32
+        bcc @mul_inner
+        ; fall through to @skip_zero
+        jmp @skip_zero
+
+        ; --- Carry propagation blocks (rare path ~2%) ---
+        ; Placed outside the tight inner loop so the back-branch remains
+        ; within bcc range. Each block restores X to j and jumps back to
+        ; its corresponding @next_j_X label.
+@do_prop_a:
+        stx fe_mul_j
         lda fe_mul_i
         clc
         adc fe_mul_j
@@ -402,31 +472,11 @@ fe_mul:
         inx
         bcs @prop_carry_a
 @carry_done_a:
-        ldx fe_mul_j           ; restore j
+        ldx fe_mul_j
+        jmp @next_j_first
 
-@next_j_first:
-        inx                    ; advance j (2 cycles vs 8 for inc+ldx)
-
-        ; --- Second copy: process src2[j+1] ---
-        ldy mul_src2_buf,x     ; Y = src2[j]
-        beq @next_j            ; skip if zero
-
-        ; Add 16-bit product directly to fe_wide[i+j]
-        clc
-@accum_ld1_b:
-        lda fe_wide,x          ; patched to fe_wide+i base
-        adc mul_dma_lo,y       ; add product lo directly
-@accum_st1_b:
-        sta fe_wide,x
-@accum_ld2_b:
-        lda fe_wide+1,x        ; patched to fe_wide+i+1 base
-        adc mul_dma_hi,y       ; add product hi directly
-@accum_st2_b:
-        sta fe_wide+1,x
-        bcc @next_j
-
-        ; Propagate carry (rare path ~2%)
-        stx fe_mul_j           ; save j
+@do_prop_b:
+        stx fe_mul_j
         lda fe_mul_i
         clc
         adc fe_mul_j
@@ -443,13 +493,50 @@ fe_mul:
         inx
         bcs @prop_carry_b
 @carry_done_b:
-        ldx fe_mul_j           ; restore j
+        ldx fe_mul_j
+        jmp @next_j_second
 
-@next_j:
-        inx                    ; advance j
-        cpx #32
-        bcc @mul_inner
-        ; fall through to @skip_zero
+@do_prop_c:
+        stx fe_mul_j
+        lda fe_mul_i
+        clc
+        adc fe_mul_j
+        clc
+        adc #2
+        tax
+@prop_carry_c:
+        cpx #64
+        bcs @carry_done_c
+        sec
+        lda fe_wide,x
+        adc #0
+        sta fe_wide,x
+        inx
+        bcs @prop_carry_c
+@carry_done_c:
+        ldx fe_mul_j
+        jmp @next_j_third
+
+@do_prop_d:
+        stx fe_mul_j
+        lda fe_mul_i
+        clc
+        adc fe_mul_j
+        clc
+        adc #2
+        tax
+@prop_carry_d:
+        cpx #64
+        bcs @carry_done_d
+        sec
+        lda fe_wide,x
+        adc #0
+        sta fe_wide,x
+        inx
+        bcs @prop_carry_d
+@carry_done_d:
+        ldx fe_mul_j
+        jmp @next_j
 
 @skip_zero:
         inc fe_mul_i
