@@ -336,8 +336,15 @@ fe_mul:
 @nonzero_i:
         sta mul_cached_a       ; cache src1[i] for inner loop
 
-        ; DMA the multiplication row for src1[i] from REU
-        jsr reu_fetch_mul_row
+        ; DMA the multiplication row for src1[i] from REU (inlined)
+        ; A already contains mul_cached_a from the sta above
+        asl                    ; A = multiplier * 2, carry = bit 7
+        sta reu_reu_hi
+        lda #0
+        adc #0                 ; bank = carry from shift
+        sta reu_reu_bank
+        lda #%10110001         ; execute + autoload + FETCH (REU->C64)
+        sta reu_command
 
         ; Self-mod: patch accumulation addresses to base = fe_wide + i
         ; Patch BOTH copies of the unrolled inner loop
@@ -458,8 +465,8 @@ fe_mul:
 @next_j:
         inx                    ; advance j
         cpx #32
-        bcs @skip_zero
-        jmp @mul_inner
+        bcc @mul_inner
+        ; fall through to @skip_zero
 
 @skip_zero:
         inc fe_mul_i
@@ -806,13 +813,15 @@ fe_sqr:
         adc #0
         sta fe_wide,x
         bcs @sqr_prop1
-
+        jmp @sqr_next_j
+@sqr_inner_tramp:
+        jmp @sqr_inner
 @sqr_next_j:
         inc fe_mul_j
         lda fe_mul_j
         cmp #32
-        bcs @sqr_skip_i
-        jmp @sqr_inner
+        bcc @sqr_inner_tramp
+        ; fall through to @sqr_skip_i
 
 @sqr_skip_i:
         inc fe_mul_i
