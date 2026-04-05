@@ -65,6 +65,9 @@ poly_tmp        = $1d           ; temp
 ; This enables zp,X addressing (2 bytes, 4 cycles) vs abs,X (3 bytes, 5 cycles)
 fe_wide         = $40
 
+; --- fe_sqr hybrid DMA threshold (8f+8g) ---
+SQR_DMA_K        = 14          ; outer i < K uses pre-doubled DMA tables
+
 ; --- REU (Ram Expansion Unit) registers ---
 reu_status      = $df00         ; status register
 reu_command     = $df01         ; command register

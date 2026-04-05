@@ -673,6 +673,36 @@ fe_sqr:
 @sqr_nonzero_i:
         sta mul_cached_a       ; cache a[i] for inner loop
 
+        ; Hybrid path select: if i < SQR_DMA_K, use DMA path; else mult66 path
+        lda fe_mul_i
+        cmp #SQR_DMA_K
+        bcs @sqr_use_mult66
+        ; --- DMA path: fetch pre-doubled row for a = src[i] ---
+        jsr reu_fetch_doubled_row
+        ; patch trampoline to jump into DMA inner loop
+        lda #<@sqr_inner_dma
+        sta @sqr_inner_tramp+1
+        lda #>@sqr_inner_dma
+        sta @sqr_inner_tramp+2
+        ; patch DMA inner's self-mod ld/st addresses
+        lda #<fe_wide
+        clc
+        adc fe_mul_i
+        sta @sqr_dma_ld1+1
+        sta @sqr_dma_st1+1
+        clc
+        adc #1
+        sta @sqr_dma_ld2+1
+        sta @sqr_dma_st2+1
+        jmp @sqr_path_done
+@sqr_use_mult66:
+        ; patch trampoline back to mult66 inner loop
+        lda #<@sqr_inner
+        sta @sqr_inner_tramp+1
+        lda #>@sqr_inner
+        sta @sqr_inner_tramp+2
+@sqr_path_done:
+
         ; Self-mod: patch accumulation addresses to base = fe_wide + i
         ; fe_wide in zero page ($40..$7F) — patch only the ZP operand byte.
         lda #<fe_wide
@@ -785,13 +815,61 @@ fe_sqr:
         bcs @sqr_prop1
         jmp @sqr_next_j
 @sqr_inner_tramp:
-        jmp @sqr_inner
+        jmp @sqr_inner         ; patched: @sqr_inner OR @sqr_inner_dma
 @sqr_next_j:
         inc fe_mul_j
         lda fe_mul_j
         cmp #32
         bcc @sqr_inner_tramp
-        ; fall through to @sqr_skip_i
+        jmp @sqr_skip_i
+
+; --- DMA inner loop: pre-doubled product tables in mul_dma_lo/hi/carry ---
+@sqr_inner_dma:
+        ldx fe_mul_j
+        ldy mul_src2_buf,x     ; Y = a[j]
+        bne @sqr_nonzero_j_dma
+        jmp @sqr_next_j
+@sqr_nonzero_j_dma:
+        lda mul_dma_carry,y
+        sta poly_carry
+        clc
+@sqr_dma_ld1:
+        lda fe_wide,x          ; patched: fe_wide+i, X = fe_mul_j
+        adc mul_dma_lo,y
+@sqr_dma_st1:
+        sta fe_wide,x
+@sqr_dma_ld2:
+        lda fe_wide+1,x        ; patched: fe_wide+i+1
+        adc mul_dma_hi,y
+@sqr_dma_st2:
+        sta fe_wide+1,x
+        lda #0
+        adc poly_carry         ; combined carry = accum_carry + 17th-bit
+        beq @sqr_next_j
+        ; propagate into fe_wide[i+j+2]
+        ldx fe_mul_i
+        tay
+        txa
+        clc
+        adc fe_mul_j
+        clc
+        adc #2
+        tax
+        tya
+        clc
+        adc fe_wide,x
+        sta fe_wide,x
+        bcc @sqr_next_j
+@sqr_dma_prop1:
+        inx
+        cpx #64
+        bcs @sqr_next_j
+        sec
+        lda fe_wide,x
+        adc #0
+        sta fe_wide,x
+        bcs @sqr_dma_prop1
+        jmp @sqr_next_j
 
 @sqr_skip_i:
         inc fe_mul_i

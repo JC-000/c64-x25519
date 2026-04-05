@@ -219,6 +219,91 @@ reu_mul_init:
         lda #%10110000         ; execute + autoload + STASH
         sta reu_command
 
+        ; --- Generate pre-doubled tables for fe_sqr (8f+8g) ---
+        ; Overwrite mul_dma_lo/hi with 2*a*b (17-bit), and fill mul_dma_carry
+        ; with the 17th bit. Regular tables were already stashed above.
+        ldx #0
+@dbl_gen:
+        lda mul_dma_hi,x
+        asl                    ; carry = bit7 of original hi = bit16 of 2*a*b
+        lda #0
+        rol                    ; A = 0/1 carry bit
+        sta mul_dma_carry,x
+        lda mul_dma_lo,x
+        asl                    ; shift lo, carry out = bit7
+        sta mul_dma_lo,x
+        lda mul_dma_hi,x
+        rol                    ; shift hi with carry in
+        sta mul_dma_hi,x
+        inx
+        bne @dbl_gen
+
+        ; Stash doubled lo table to bank (4 + a>>7), offset a*512 mod 65536
+        lda #<mul_dma_lo
+        sta reu_c64_lo
+        lda #>mul_dma_lo
+        sta reu_c64_hi
+        lda #0
+        sta reu_reu_lo
+        lda reu_init_a
+        asl                    ; A = a*2, carry = bit7
+        sta reu_reu_hi
+        lda #4
+        adc #0                 ; bank = 4 + carry
+        sta reu_reu_bank
+        lda #0
+        sta reu_len_lo
+        lda #1
+        sta reu_len_hi
+        sta reu_addr_ctrl
+        lda #0
+        sta reu_addr_ctrl
+        lda #%10110000
+        sta reu_command
+
+        ; Stash doubled hi table to banks 4-5, offset a*512+256
+        lda #<mul_dma_hi
+        sta reu_c64_lo
+        lda #>mul_dma_hi
+        sta reu_c64_hi
+        lda #0
+        sta reu_reu_lo
+        lda reu_init_a
+        asl                    ; a*2
+        lda #4
+        adc #0                 ; bank = 4 + (a>>7)
+        sta reu_reu_bank
+        lda reu_init_a
+        asl
+        ora #1
+        sta reu_reu_hi
+        lda #0
+        sta reu_len_lo
+        lda #1
+        sta reu_len_hi
+        sta reu_addr_ctrl
+        lda #%10110000
+        sta reu_command
+
+        ; Stash carry table (256 bytes) to bank 3, offset a*256
+        lda #<mul_dma_carry
+        sta reu_c64_lo
+        lda #>mul_dma_carry
+        sta reu_c64_hi
+        lda #0
+        sta reu_reu_lo
+        lda reu_init_a
+        sta reu_reu_hi
+        lda #3
+        sta reu_reu_bank
+        lda #0
+        sta reu_len_lo
+        lda #1
+        sta reu_len_hi
+        sta reu_addr_ctrl
+        lda #%10110000
+        sta reu_command
+
         inc reu_init_a
         beq @init_done         ; if wrapped to 0, done
         jmp @outer
@@ -280,6 +365,56 @@ reu_fetch_mul_row:
         adc #0                 ; bank = carry from shift
         sta reu_reu_bank
         lda #%10110001         ; execute + autoload + FETCH (REU->C64)
+        sta reu_command
+        rts
+
+; =============================================================================
+; reu_fetch_doubled_row - DMA pre-doubled multiplication row for fe_sqr
+;
+; Input: A = multiplier value in mul_cached_a
+; Fetches 512 bytes from banks 4-5 to mul_dma_lo/hi (doubled lo+hi),
+; then 256 bytes from bank 3 to mul_dma_carry (17th-bit carry flags).
+; Clobbers: A
+; NOTE: Leaves REU registers in a non-default state; caller must restore
+; if the regular mul-row FETCH config is needed afterward.
+; =============================================================================
+reu_fetch_doubled_row:
+        ; First DMA: 512 bytes to mul_dma_lo from banks 4-5, offset a*512
+        lda #<mul_dma_lo
+        sta reu_c64_lo
+        lda #>mul_dma_lo
+        sta reu_c64_hi
+        lda #0
+        sta reu_reu_lo
+        sta reu_len_lo
+        sta reu_addr_ctrl
+        lda #2
+        sta reu_len_hi         ; 512 bytes
+        lda mul_cached_a
+        asl                    ; A = a*2, carry = bit7
+        sta reu_reu_hi
+        lda #4
+        adc #0                 ; bank = 4 + (a>>7)
+        sta reu_reu_bank
+        lda #%10110001
+        sta reu_command
+
+        ; Second DMA: 256 bytes to mul_dma_carry from bank 3, offset a*256
+        lda #<mul_dma_carry
+        sta reu_c64_lo
+        lda #>mul_dma_carry
+        sta reu_c64_hi
+        lda #0
+        sta reu_reu_lo
+        sta reu_len_lo
+        sta reu_addr_ctrl
+        lda #1
+        sta reu_len_hi         ; 256 bytes
+        lda mul_cached_a
+        sta reu_reu_hi
+        lda #3
+        sta reu_reu_bank
+        lda #%10110001
         sta reu_command
         rts
 
