@@ -3,8 +3,7 @@
 ; =============================================================================
 
 ; --- fe25519 field arithmetic ---
-fe_wide:
-        !fill 64, 0            ; 512-bit product from multiply
+; fe_wide[0..63] is now in zero page at $40..$7F (see constants.asm)
 fe_tmp1:
         !fill 32, 0            ; temporary field element 1
 fe_tmp2:
@@ -63,7 +62,10 @@ mul_dma_lo:
         !fill 256, 0           ; DMA target: lo bytes of a*b for current a
 mul_dma_hi:
         !fill 256, 0           ; DMA target: hi bytes of a*b for current a
+mul_dma_carry:
+        !fill 256, 0           ; DMA target: 17th-bit carry of 2*a*b (0 or 1)
 
+        !align 255, 0          ; realign sqtab2 to page boundary
 ; --- mult66 second quarter-square table ---
 ; sqtab2[0] = 0
 ; sqtab2[n] = floor((256-n)^2 / 4) - 1  for n=1..255
