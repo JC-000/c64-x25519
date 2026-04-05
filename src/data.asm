@@ -96,3 +96,27 @@ mul38_hi_tab:
         !for i, 1, 255 {
                 !byte >(i * 38)
         }
+
+; --- fe_mul_a24 tables: 121665 * b split into 4 bytes (LE) ---
+; For b in 0..255: 121665*b up to 31,024,575 = $01D9E9BF (4 bytes)
+; a24_b0[b] = (121665*b) & $ff
+; a24_b1[b] = (121665*b >> 8) & $ff
+; a24_b2[b] = (121665*b >> 16) & $ff
+; a24_b3[b] = (121665*b >> 24) & $ff   (always 0 or 1)
+        !align 255, 0
+a24_b0:
+        !for i, 0, 255 {
+                !byte <(121665 * i)
+        }
+a24_b1:
+        !for i, 0, 255 {
+                !byte <((121665 * i) >> 8)
+        }
+a24_b2:
+        !for i, 0, 255 {
+                !byte <((121665 * i) >> 16)
+        }
+a24_b3:
+        !for i, 0, 255 {
+                !byte <((121665 * i) >> 24)
+        }

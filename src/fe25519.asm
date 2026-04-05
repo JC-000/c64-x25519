@@ -1118,53 +1118,27 @@ fe_mul_a24:
         ldy fe_mul_i
         lda (fe_src1),y
         beq @skip_zero_a24
+        tay                    ; Y = src1[i] (nonzero)
 
-        ; src1[i] * $41 → add at offset i
-        ldx #$41
-        jsr mul_8x8
+        ; fe_wide[i..i+3] += 121665 * src1[i]  (4-byte product via table)
         ldx fe_mul_i
         clc
         lda fe_wide,x
-        adc poly_prod_lo
+        adc a24_b0,y
         sta fe_wide,x
         lda fe_wide+1,x
-        adc poly_prod_hi
-        sta fe_wide+1,x
-        bcc +
-        inc fe_wide+2,x
-        bne +
-        inc fe_wide+3,x
-+
-        ; src1[i] * $DB → add at offset i+1
-        ldy fe_mul_i
-        lda (fe_src1),y
-        ldx #$db
-        jsr mul_8x8
-        ldx fe_mul_i
-        clc
-        lda fe_wide+1,x
-        adc poly_prod_lo
+        adc a24_b1,y
         sta fe_wide+1,x
         lda fe_wide+2,x
-        adc poly_prod_hi
+        adc a24_b2,y
         sta fe_wide+2,x
-        bcc +
-        inc fe_wide+3,x
-        bne +
+        lda fe_wide+3,x
+        adc a24_b3,y
+        sta fe_wide+3,x
+        bcc @skip_zero_a24
         inc fe_wide+4,x
-+
-        ; src1[i] * $01 → add at offset i+2
-        ldy fe_mul_i
-        lda (fe_src1),y
-        ldx fe_mul_i
-        clc
-        adc fe_wide+2,x
-        sta fe_wide+2,x
-        bcc +
-        inc fe_wide+3,x
-        bne +
-        inc fe_wide+4,x
-+
+        bne @skip_zero_a24
+        inc fe_wide+5,x
 @skip_zero_a24:
         ldx fe_mul_i
         inx
@@ -1172,9 +1146,12 @@ fe_mul_a24:
         bcc @outer
 
         ; Reduce: fe_wide[32..34] * 38 → add to fe_wide[0..31]
-        lda fe_wide+32
+        ldy fe_wide+32
         beq @r_b33
-        jsr mul_by_38
+        lda mul38_lo_tab,y
+        sta poly_prod_lo
+        lda mul38_hi_tab,y
+        sta poly_prod_hi
         clc
         lda fe_wide
         adc poly_prod_lo
@@ -1192,9 +1169,12 @@ fe_mul_a24:
         bcc @prop_b32
 
 @r_b33:
-        lda fe_wide+33
+        ldy fe_wide+33
         beq @r_b34
-        jsr mul_by_38
+        lda mul38_lo_tab,y
+        sta poly_prod_lo
+        lda mul38_hi_tab,y
+        sta poly_prod_hi
         clc
         lda fe_wide+1
         adc poly_prod_lo
@@ -1212,9 +1192,12 @@ fe_mul_a24:
         bcc @prop_b33
 
 @r_b34:
-        lda fe_wide+34
+        ldy fe_wide+34
         beq @r_done_a24
-        jsr mul_by_38
+        lda mul38_lo_tab,y
+        sta poly_prod_lo
+        lda mul38_hi_tab,y
+        sta poly_prod_hi
         clc
         lda fe_wide+2
         adc poly_prod_lo
