@@ -347,34 +347,22 @@ fe_mul:
         sta reu_command
 
         ; Self-mod: patch accumulation addresses to base = fe_wide + i
-        ; Patch BOTH copies of the unrolled inner loop
+        ; fe_wide is in zero page ($40..$7F) so we only patch the ZP operand byte.
+        ; Patch BOTH copies of the unrolled inner loop.
         lda #<fe_wide
         clc
-        adc fe_mul_i           ; A = low byte of (fe_wide + i)
+        adc fe_mul_i           ; A = (fe_wide + i) & $ff  (stays in $40..$5F)
         sta @accum_ld1+1
         sta @accum_st1+1
         sta @accum_ld1_b+1
         sta @accum_st1_b+1
-        lda #>fe_wide
-        adc #0                 ; handle page crossing
-        sta @accum_ld1+2
-        sta @accum_st1+2
-        sta @accum_ld1_b+2
-        sta @accum_st1_b+2
         ; For +1 accesses (high byte of product), base is fe_wide + i + 1
-        lda #<(fe_wide+1)
         clc
-        adc fe_mul_i
+        adc #1
         sta @accum_ld2+1
         sta @accum_st2+1
         sta @accum_ld2_b+1
         sta @accum_st2_b+1
-        lda #>(fe_wide+1)
-        adc #0
-        sta @accum_ld2+2
-        sta @accum_st2+2
-        sta @accum_ld2_b+2
-        sta @accum_st2_b+2
 
         ldx #0                 ; X = j, kept in register
 
@@ -696,25 +684,17 @@ fe_sqr:
         sta mul_cached_a       ; cache a[i] for inner loop
 
         ; Self-mod: patch accumulation addresses to base = fe_wide + i
+        ; fe_wide in zero page ($40..$7F) — patch only the ZP operand byte.
         lda #<fe_wide
         clc
-        adc fe_mul_i           ; A = low byte of (fe_wide + i)
+        adc fe_mul_i           ; A = (fe_wide + i) & $ff
         sta @sqr_accum_ld1+1
         sta @sqr_accum_st1+1
-        lda #>fe_wide
-        adc #0                 ; handle page crossing
-        sta @sqr_accum_ld1+2
-        sta @sqr_accum_st1+2
         ; For +1 accesses (high byte of product)
-        lda #<(fe_wide+1)
         clc
-        adc fe_mul_i
+        adc #1
         sta @sqr_accum_ld2+1
         sta @sqr_accum_st2+1
-        lda #>(fe_wide+1)
-        adc #0
-        sta @sqr_accum_ld2+2
-        sta @sqr_accum_st2+2
 
         ; Set up ZP pointer low byte = a[i] once per outer loop
         lda mul_cached_a

@@ -61,6 +61,10 @@ poly_j          = $1b           ; outer loop counter
 poly_carry      = $1c           ; carry byte
 poly_tmp        = $1d           ; temp
 
+; fe_wide product buffer relocated to zero page ($40..$7F)
+; This enables zp,X addressing (2 bytes, 4 cycles) vs abs,X (3 bytes, 5 cycles)
+fe_wide         = $40
+
 ; --- REU (Ram Expansion Unit) registers ---
 reu_status      = $df00         ; status register
 reu_command     = $df01         ; command register

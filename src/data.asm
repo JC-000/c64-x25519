@@ -3,8 +3,7 @@
 ; =============================================================================
 
 ; --- fe25519 field arithmetic ---
-fe_wide:
-        !fill 64, 0            ; 512-bit product from multiply
+; fe_wide[0..63] is now in zero page at $40..$7F (see constants.asm)
 fe_tmp1:
         !fill 32, 0            ; temporary field element 1
 fe_tmp2:
