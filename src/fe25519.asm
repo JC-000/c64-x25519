@@ -499,18 +499,13 @@ fe_reduce_wide:
         ldy fe_wide+32,x       ; Y = byte value (table index)
         beq @reduce1_zero
 
-        ; Table lookup: Y * 38
-        lda mul38_lo_tab,y
-        sta poly_prod_lo
-        lda mul38_hi_tab,y
-        sta poly_prod_hi
-
-        ; Add product + running carry to fe_wide[x]
+        ; Add product (Y*38) + running carry to fe_wide[x]
+        ; Table lookups chained directly to adds (Y preserved across)
         clc
-        lda poly_prod_lo
+        lda mul38_lo_tab,y
         adc fe_carry
         sta fe_carry
-        lda poly_prod_hi
+        lda mul38_hi_tab,y
         adc #0
         sta fe_mul_j           ; high = product_hi + carry overflow
 
@@ -545,17 +540,12 @@ fe_reduce_wide:
         lda fe_carry
         beq @done
         tay                    ; Y = carry value
-        lda mul38_lo_tab,y
-        sta poly_prod_lo
-        lda mul38_hi_tab,y
-        sta poly_prod_hi
-
         clc
         lda fe_wide
-        adc poly_prod_lo
+        adc mul38_lo_tab,y
         sta fe_wide
         lda fe_wide+1
-        adc poly_prod_hi
+        adc mul38_hi_tab,y
         sta fe_wide+1
         bcc @done
         ldx #2
