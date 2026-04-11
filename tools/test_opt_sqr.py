@@ -134,6 +134,9 @@ def test_sqr_reference(transport, labels, rng):
             print(f"    a        = {a}")
             print(f"    expected = {expected}")
             print(f"    got      = {result}")
+        assert result == expected, (
+            f"sqr ref {name}: a={a} expected={expected} got={result}"
+        )
 
     return passed, failed
 
@@ -156,6 +159,9 @@ def test_sqr_vs_mul(transport, labels, rng):
             print(f"    a          = {a}")
             print(f"    fe_sqr(a)  = {sqr_result}")
             print(f"    fe_mul(a,a)= {mul_result}")
+        assert sqr_result == mul_result, (
+            f"sqr_vs_mul #{i}: a={a} sqr={sqr_result} mul={mul_result}"
+        )
 
     return passed, failed
 
@@ -304,11 +310,11 @@ def main():
         status = "OK" if f == 0 else "FAIL"
         print(f"  {status}: {p}/{p + f} passed")
 
-        # Test 3: Benchmark
-        if total_failed == 0:
-            bench_sqr_vs_mul(transport, labels, rng)
-        else:
-            print("\nSkipping benchmark due to test failures.")
+        # Test 3: Benchmark — run unconditionally. Previously this was gated
+        # on total_failed == 0, which silently suppressed useful timing
+        # information when a test failed. The asserts above will have halted
+        # the run on any real failure, so reaching here implies correctness.
+        bench_sqr_vs_mul(transport, labels, rng)
 
         mgr.release(inst)
 

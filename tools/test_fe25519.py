@@ -210,6 +210,7 @@ def test_copy_zero_one(transport, labels):
     else:
         failed += 1
         print(f"  FAIL fe_zero: got {result}")
+    assert result == 0, f"fe_zero: got {result}"
 
     # fe_one
     result = c64_fe_one(transport, labels)
@@ -219,6 +220,7 @@ def test_copy_zero_one(transport, labels):
     else:
         failed += 1
         print(f"  FAIL fe_one: got {result}")
+    assert result == 1, f"fe_one: got {result}"
 
     # fe_copy
     test_val = 0xDEADBEEF_CAFEBABE_12345678_9ABCDEF0
@@ -229,6 +231,7 @@ def test_copy_zero_one(transport, labels):
     else:
         failed += 1
         print(f"  FAIL fe_copy: expected {test_val:#x}, got {result:#x}")
+    assert result == test_val, f"fe_copy: expected {test_val:#x}, got {result:#x}"
 
     return passed, failed
 
@@ -260,6 +263,9 @@ def test_add(transport, labels, rng):
         else:
             failed += 1
             print(f"  FAIL add {name}: expected {expected}, got {result}")
+        assert result == expected, (
+            f"add {name}: expected {expected}, got {result}"
+        )
 
     return passed, failed
 
@@ -290,6 +296,9 @@ def test_sub(transport, labels, rng):
         else:
             failed += 1
             print(f"  FAIL sub {name}: expected {expected}, got {result}")
+        assert result == expected, (
+            f"sub {name}: expected {expected}, got {result}"
+        )
 
     return passed, failed
 
@@ -324,6 +333,9 @@ def test_mul(transport, labels, rng):
             print(f"    b = {b}")
             print(f"    expected = {expected}")
             print(f"    got      = {result}")
+        assert result == expected, (
+            f"mul {name}: a={a} b={b} expected={expected} got={result}"
+        )
 
     return passed, failed
 
@@ -343,6 +355,9 @@ def test_sqr(transport, labels, rng):
         else:
             failed += 1
             print(f"  FAIL sqr #{i}: a={a}, expected={expected}, got={result}")
+        assert result == expected, (
+            f"sqr #{i}: a={a} expected={expected} got={result}"
+        )
 
     return passed, failed
 
@@ -362,6 +377,9 @@ def test_mul_a24(transport, labels, rng):
         else:
             failed += 1
             print(f"  FAIL mul_a24 #{i}: a={a}, expected={expected}, got={result}")
+        assert result == expected, (
+            f"mul_a24 #{i}: a={a} expected={expected} got={result}"
+        )
 
     return passed, failed
 
@@ -398,6 +416,9 @@ def test_inv(transport, labels, rng):
             print(f"    got inv      = {inv_a}")
             product = (a * inv_a) % P
             print(f"    a * got_inv mod p = {product}")
+        assert inv_a == expected, (
+            f"inv #{i}: a={a} expected={expected} got={inv_a}"
+        )
 
     return passed, failed
 
@@ -432,6 +453,9 @@ def test_cswap(transport, labels, rng):
     else:
         failed += 1
         print(f"  FAIL cswap no-swap: a changed={r_a != a}, b changed={r_b != b}")
+    assert r_a == a and r_b == b, (
+        f"cswap no-swap: a changed={r_a != a}, b changed={r_b != b}"
+    )
 
     # Swap test (mask = $FF)
     write_fe(transport, labels["fe_tmp1"], a)
@@ -453,6 +477,9 @@ def test_cswap(transport, labels, rng):
     else:
         failed += 1
         print(f"  FAIL cswap swap: expected ({b:#x},{a:#x}), got ({r_a:#x},{r_b:#x})")
+    assert r_a == b and r_b == a, (
+        f"cswap swap: expected ({b:#x},{a:#x}), got ({r_a:#x},{r_b:#x})"
+    )
 
     return passed, failed
 
@@ -483,6 +510,9 @@ def test_reduce_final(transport, labels):
         else:
             failed += 1
             print(f"  FAIL reduce_final {name}: expected {expected}, got {result}")
+        assert result == expected, (
+            f"reduce_final {name}: expected {expected}, got {result}"
+        )
 
     return passed, failed
 
@@ -502,6 +532,9 @@ def test_add_sub_inverse(transport, labels, rng):
         else:
             failed += 1
             print(f"  FAIL add_sub_inverse #{i}: expected {a}, got {result}")
+        assert result == a, (
+            f"add_sub_inverse #{i}: expected {a}, got {result}"
+        )
 
     return passed, failed
 
@@ -531,17 +564,13 @@ def run_tests(transport, labels, seed):
 
     for name, test_fn in test_groups:
         print(f"\n--- {name} ---")
-        try:
-            p, f = test_fn()
-            total_passed += p
-            total_failed += f
-            status = "OK" if f == 0 else "FAIL"
-            print(f"  {status}: {p}/{p + f} passed")
-        except Exception as e:
-            total_failed += 1
-            print(f"  ERROR: {e}")
-            import traceback
-            traceback.print_exc()
+        # Do NOT swallow exceptions: assertions from test_fn() must propagate
+        # so failures halt the run instead of being downgraded to a counter.
+        p, f = test_fn()
+        total_passed += p
+        total_failed += f
+        status = "OK" if f == 0 else "FAIL"
+        print(f"  {status}: {p}/{p + f} passed")
 
     return total_passed, total_failed
 

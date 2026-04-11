@@ -240,7 +240,10 @@ def run_ladder_range(transport, labels, data, start, count):
 
         step_elapsed = time.time() - step_t0
 
-        if x2 == ref_x2 and z2 == ref_z2 and x3 == ref_x3 and z3 == ref_z3:
+        step_ok = (
+            x2 == ref_x2 and z2 == ref_z2 and x3 == ref_x3 and z3 == ref_z3
+        )
+        if step_ok:
             passed += 1
             print(f"  Step {step:3d} (bit[{bit_pos}]={bit}): OK  ({step_elapsed:.1f}s)")
         else:
@@ -262,7 +265,9 @@ def run_ladder_range(transport, labels, data, start, count):
                 print(f"    z3 got:      {z3:#066x}")
             # Stop on first failure
             print(f"\n  Stopping at first failure (step {step}).")
-            break
+        assert step_ok, (
+            f"ladder step {step} (bit[{bit_pos}]={bit}) mismatch"
+        )
 
         prev_bit = bit
 

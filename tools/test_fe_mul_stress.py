@@ -17,6 +17,10 @@ from c64_test_harness import (
     read_bytes, write_bytes, jsr, wait_for_text,
 )
 
+# Cryptography-backed strong reference for field arithmetic.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import ref_x25519  # noqa: E402
+
 PROJECT_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 PRG_PATH = os.path.join(PROJECT_ROOT, "build", "x25519.prg")
 LABELS_PATH = os.path.join(PROJECT_ROOT, "build", "labels.txt")
@@ -80,8 +84,19 @@ def bytes_to_int(b):
 
 
 def run_test(transport, labels, name, a, b, passed, failed):
-    """Run a single fe_mul test case with commutativity check."""
+    """Run a single fe_mul test case with commutativity check.
+
+    The expected value is computed two independent ways — once via Python
+    bignum arithmetic mod P, and once via ``ref_x25519.fe_mul`` (also bignum
+    but through the dedicated reference module). They must always agree; if
+    we ever swap in a stronger reference backend, this is the hook point.
+    """
     expected = (a * b) % P
+    ref_expected = ref_x25519.fe_mul(a, b)
+    assert expected == ref_expected, (
+        f"{name}: ref_x25519.fe_mul disagrees with inline Python "
+        f"(a={a:#x} b={b:#x})"
+    )
 
     result_ab = c64_fe_mul(transport, labels, a, b)
     if result_ab == expected:
@@ -97,6 +112,9 @@ def run_test(transport, labels, name, a, b, passed, failed):
         print(f"    got      = 0x{result_ab:064x}")
         diff = (result_ab - expected) % P
         print(f"    diff     = 0x{diff:064x}")
+    assert result_ab == expected, (
+        f"{name}: a*b expected 0x{expected:064x} got 0x{result_ab:064x}"
+    )
 
     # Commutativity: b*a should equal a*b
     if a != b:
@@ -114,6 +132,9 @@ def run_test(transport, labels, name, a, b, passed, failed):
             print(f"    got      = 0x{result_ba:064x}")
             if result_ab != result_ba:
                 print(f"    NOTE: a*b != b*a  (a*b=0x{result_ab:064x})")
+        assert result_ba == expected, (
+            f"{name}: b*a expected 0x{expected:064x} got 0x{result_ba:064x}"
+        )
     else:
         # a == b, skip commutativity (trivially true)
         passed += 1

@@ -75,7 +75,10 @@ def c64_fe_sqr(transport, labels, a):
 
 def check(name, a, sqr_result, mul_result, expected):
     """Check results and print diagnostics on failure.
-    Returns (pass_count, fail_count)."""
+
+    Returns (pass_count, fail_count) for counting purposes but ALSO raises
+    an AssertionError on any mismatch so the script halts loudly.
+    """
     sqr_ok = sqr_result == expected
     mul_ok = mul_result == expected
     cross_ok = sqr_result == mul_result
@@ -90,7 +93,12 @@ def check(name, a, sqr_result, mul_result, expected):
     print(f"    fe_sqr(a)   = 0x{sqr_result:064x}  {'OK' if sqr_ok else 'MISMATCH'}")
     print(f"    fe_mul(a,a) = 0x{mul_result:064x}  {'OK' if mul_ok else 'MISMATCH'}")
     print(f"    sqr==mul    = {cross_ok}")
-    return 0, 1
+    assert sqr_ok and mul_ok and cross_ok, (
+        f"{name}: sqr_ok={sqr_ok} mul_ok={mul_ok} cross_ok={cross_ok} "
+        f"expected=0x{expected:064x} sqr=0x{sqr_result:064x} "
+        f"mul=0x{mul_result:064x}"
+    )
+    return 0, 1  # unreachable, but keep the return shape
 
 
 def build_test_cases(rng):

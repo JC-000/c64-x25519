@@ -190,6 +190,7 @@ def test_vic_labels(labels):
         else:
             failed += 1
             print(f"  FAIL {name} label not found")
+        assert addr is not None, f"{name} label not found"
     return passed, failed
 
 
@@ -210,6 +211,9 @@ def test_vic_blank_unblank(transport, labels):
     else:
         failed += 1
         print(f"  FAIL vic_blank: $d011=${after_blank:02X} (DEN still set)")
+    assert (after_blank & 0x10) == 0, (
+        f"vic_blank: $d011=${after_blank:02X} (DEN still set)"
+    )
 
     # Unblank: should set bit 4
     jsr(transport, labels["vic_unblank"])
@@ -221,6 +225,9 @@ def test_vic_blank_unblank(transport, labels):
     else:
         failed += 1
         print(f"  FAIL vic_unblank: $d011=${after_unblank:02X} (DEN still clear)")
+    assert (after_unblank & 0x10) != 0, (
+        f"vic_unblank: $d011=${after_unblank:02X} (DEN still clear)"
+    )
 
     return passed, failed
 
@@ -234,6 +241,7 @@ def test_copy_zero_one(transport, labels):
     else:
         failed += 1
         print(f"  FAIL fe_zero: got {result}")
+    assert result == 0, f"fe_zero: got {result}"
 
     result = c64_fe_one(transport, labels)
     if result == 1:
@@ -242,6 +250,7 @@ def test_copy_zero_one(transport, labels):
     else:
         failed += 1
         print(f"  FAIL fe_one: got {result}")
+    assert result == 1, f"fe_one: got {result}"
 
     test_val = 0xDEADBEEF_CAFEBABE_12345678_9ABCDEF0
     result = c64_fe_copy(transport, labels, test_val)
@@ -251,6 +260,7 @@ def test_copy_zero_one(transport, labels):
     else:
         failed += 1
         print(f"  FAIL fe_copy: expected {test_val:#x}, got {result:#x}")
+    assert result == test_val, f"fe_copy: expected {test_val:#x} got {result:#x}"
 
     return passed, failed
 
@@ -278,6 +288,9 @@ def test_add(transport, labels, rng):
         else:
             failed += 1
             print(f"  FAIL add {name}: expected {expected}, got {result}")
+        assert result == expected, (
+            f"add {name}: expected {expected} got {result}"
+        )
     return passed, failed
 
 
@@ -304,6 +317,9 @@ def test_sub(transport, labels, rng):
         else:
             failed += 1
             print(f"  FAIL sub {name}: expected {expected}, got {result}")
+        assert result == expected, (
+            f"sub {name}: expected {expected} got {result}"
+        )
     return passed, failed
 
 
@@ -334,6 +350,9 @@ def test_mul(transport, labels, rng):
             print(f"    b = {b}")
             print(f"    expected = {expected}")
             print(f"    got      = {result}")
+        assert result == expected, (
+            f"mul {name}: a={a} b={b} expected={expected} got={result}"
+        )
     return passed, failed
 
 
@@ -349,6 +368,9 @@ def test_sqr(transport, labels, rng):
         else:
             failed += 1
             print(f"  FAIL sqr #{i}: a={a}, expected={expected}, got={result}")
+        assert result == expected, (
+            f"sqr #{i}: a={a} expected={expected} got={result}"
+        )
     return passed, failed
 
 
@@ -364,6 +386,9 @@ def test_mul_a24(transport, labels, rng):
         else:
             failed += 1
             print(f"  FAIL mul_a24 #{i}: a={a}, expected={expected}, got={result}")
+        assert result == expected, (
+            f"mul_a24 #{i}: a={a} expected={expected} got={result}"
+        )
     return passed, failed
 
 
@@ -382,6 +407,9 @@ def test_inv(transport, labels, rng):
             print(f" FAIL")
             print(f"    expected inv = {expected}")
             print(f"    got inv      = {inv_a}")
+        assert inv_a == expected, (
+            f"inv #{i}: a={a} expected={expected} got={inv_a}"
+        )
     return passed, failed
 
 
@@ -411,6 +439,9 @@ def test_cswap(transport, labels, rng):
     else:
         failed += 1
         print(f"  FAIL cswap no-swap")
+    assert r_a == a and r_b == b, (
+        f"cswap no-swap: a_changed={r_a != a} b_changed={r_b != b}"
+    )
 
     # Swap (mask=$FF)
     write_fe(transport, labels["fe_tmp1"], a)
@@ -431,6 +462,9 @@ def test_cswap(transport, labels, rng):
     else:
         failed += 1
         print(f"  FAIL cswap swap")
+    assert r_a == b and r_b == a, (
+        f"cswap swap: expected ({b:#x},{a:#x}), got ({r_a:#x},{r_b:#x})"
+    )
 
     return passed, failed
 
@@ -448,6 +482,9 @@ def test_add_sub_inverse(transport, labels, rng):
         else:
             failed += 1
             print(f"  FAIL add_sub_inverse #{i}: expected {a}, got {result}")
+        assert result == a, (
+            f"add_sub_inverse #{i}: expected {a} got {result}"
+        )
     return passed, failed
 
 
@@ -472,6 +509,9 @@ def test_reduce_final(transport, labels):
         else:
             failed += 1
             print(f"  FAIL reduce_final {name}: expected {expected}, got {result}")
+        assert result == expected, (
+            f"reduce_final {name}: expected {expected} got {result}"
+        )
     return passed, failed
 
 
@@ -529,17 +569,12 @@ def run_tests(transport, labels, seed):
 
     for name, test_fn in test_groups:
         print(f"\n--- {name} ---")
-        try:
-            p, f = test_fn()
-            total_passed += p
-            total_failed += f
-            status = "OK" if f == 0 else "FAIL"
-            print(f"  {status}: {p}/{p + f} passed")
-        except Exception as e:
-            total_failed += 1
-            print(f"  ERROR: {e}")
-            import traceback
-            traceback.print_exc()
+        # Assertion failures must propagate.
+        p, f = test_fn()
+        total_passed += p
+        total_failed += f
+        status = "OK" if f == 0 else "FAIL"
+        print(f"  {status}: {p}/{p + f} passed")
 
     return total_passed, total_failed
 
@@ -659,11 +694,9 @@ def main():
         # Run correctness tests
         passed, failed = run_tests(transport, labels, seed)
 
-        # Run benchmark
-        if failed == 0:
-            run_benchmark(transport, labels)
-        else:
-            print("\nSkipping benchmark due to test failures")
+        # Run benchmark unconditionally: asserts halt on failure, so if we
+        # got here the correctness tests all passed.
+        run_benchmark(transport, labels)
 
         mgr.release(inst)
 

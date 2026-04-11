@@ -43,6 +43,12 @@ def main():
                 failed += 1
             else:
                 passed += 1
+            assert lo_data[i] == expected_lo, (
+                f"mul38_lo_tab[{i}]: expected {expected_lo:#04x}, got {lo_data[i]:#04x}"
+            )
+            assert hi_data[i] == expected_hi, (
+                f"mul38_hi_tab[{i}]: expected {expected_hi:#04x}, got {hi_data[i]:#04x}"
+            )
 
         mgr.release(inst)
 
