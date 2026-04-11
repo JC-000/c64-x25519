@@ -1,0 +1,238 @@
+# c64-x25519 as a library
+
+This document describes how to integrate the X25519 implementation in
+`c64-x25519` into another Commodore 64 project. The machine-readable
+header is `src/x25519.inc`; this file is the human-readable guide.
+
+> Status: the project is currently organized as a single-binary test
+> harness (`make` builds `build/x25519.prg`). "Library state" is a work
+> in progress — see `TODO-LIBRARY.md` at the repository root for the
+> remaining steps (symbol renaming, scoping, relocatable object).
+> Everything documented here is usable **today** by `!source`-including
+> the library's `.asm` files into a host ACME project; the API surface
+> is stable and will be preserved across the rename pass.
+
+## 1. Requirements
+
+- **CPU:** 6502 (stock C64).
+- **Assembler:** ACME (`acme -f cbm`). The library uses ACME syntax
+  (`!source`, `!byte`, `!align`, `!for`). Porting to ca65/KickAssembler
+  is straightforward but not done.
+- **RAM:** BASIC ROM must be banked out (the library's test harness
+  does this at startup by clearing bit 0 of `$01`). The library uses
+  RAM from `$0900` upward for code plus several page-aligned data
+  pages for field buffers and DMA staging, plus `$7800-$7BFF` for the
+  quarter-square table.
+- **REU:** **512 KB REU required** (a Commodore 1750 or equivalent,
+  or any REU/compatible with at least 6 banks of 64 KB). The library
+  pre-computes full 8x8→16 multiplication tables into REU banks 0-5.
+- **Zero page:** the library owns `$14-$2E`, `$40-$7F`, and `$FB-$FE`
+  while running. See `src/x25519.inc` for the full map.
+
+## 2. Building
+
+```
+make              # builds build/x25519.prg (standalone test harness)
+make clean
+```
+
+The test harness (`src/main.asm`) shows the complete initialization
+sequence and a VICE-harness-driven call trampoline. Use it as a
+reference integration.
+
+## 3. Integrating into another project
+
+Currently (pre-rename), the cleanest way to use the library from
+another ACME project is to `!source` the modules directly:
+
+```acme
+!cpu 6502
+!source "constants.asm"          ; ZP / hardware equates
+; ... your application code / BASIC stub ...
+
+; Library code (order matters: data.asm at the end)
+!source "mul_8x8.asm"
+!source "fe25519.asm"
+!source "x25519.asm"
+!source "data.asm"
+```
+
+Then at startup, before any field operation:
+
+```acme
+        jsr sqtab_init           ; build quarter-square table @ $7800
+        jsr reu_mul_init         ; build REU mul tables (takes ~1-2s)
+```
+
+To compute a public key:
+
+```acme
+        ; Fill x25_scalar (32 bytes) with your secret key.
+        ; x25519_base will clamp it in place.
+        jsr vic_blank            ; optional, ~25% speedup
+        jsr x25519_base          ; x25_result = scalar * basepoint
+        jsr vic_unblank
+        ; x25_result now holds the 32-byte public key (little-endian).
+```
+
+To compute a shared secret:
+
+```acme
+        ; Fill x25_scalar with your private key (will be clamped).
+        ; Fill x25_u      with the peer's public key (32 bytes LE).
+        jsr x25519_clamp
+        jsr vic_blank
+        jsr x25519_scalarmult
+        jsr vic_unblank
+        ; x25_result = scalar * peer_public.
+```
+
+## 4. Public API
+
+See `src/x25519.inc` for the full reference with calling conventions
+and clobber lists. Summary:
+
+| Symbol              | What it does                                   |
+| ------------------- | ----------------------------------------------- |
+| `sqtab_init`        | One-time: build quarter-square table            |
+| `reu_mul_init`      | One-time: build REU mul tables (requires sqtab) |
+| `x25519_clamp`      | RFC 7748 scalar clamping (in place)             |
+| `x25519_scalarmult` | `result = scalar * u` on Curve25519             |
+| `x25519_base`       | `result = scalar * basepoint(9)`                |
+| `fe_add`            | Field add mod p                                 |
+| `fe_sub`            | Field sub mod p                                 |
+| `fe_mul`            | Field mul mod p (REU-accelerated)               |
+| `fe_sqr`            | Field square mod p (REU-accelerated)            |
+| `fe_mul_a24`        | `result = 121665 * a mod p`                     |
+| `fe_inv`            | Modular inverse via Fermat's little theorem     |
+| `fe_copy` / `fe_zero` / `fe_one` | trivial helpers                    |
+| `fe_cswap`          | Conditional 32-byte swap                        |
+| `fe_reduce_final`   | Canonicalize a value to `[0, p)`                |
+| `fe_cmp_p`          | Compare `(fe_dst)` with `p`                     |
+| `vic_blank` / `vic_unblank` | Toggle VIC-II display (speed)           |
+| `bench_start` / `bench_stop` | Jiffy-clock timing                     |
+
+All `fe_*` routines take operand pointers in ZP slots `fe_src1` (`$1E`),
+`fe_src2` (`$20`), `fe_dst` (`$22`). Fill those, then `jsr`.
+
+## 5. Buffer alignment contract
+
+**32-byte field buffers MUST be page-aligned to one of the offsets
+`$00, $20, $40, $60, $80, $A0, $C0, $E0` within a 256-byte page.**
+
+This is a hard requirement of the post-Phase-9 optimized routines
+(`fe_add`, `fe_sub`, `fe_cmp_p`, `fe_reduce_final`) which use
+self-modifying `abs,Y` addressing and depend on `Y ∈ [0..31]` never
+crossing a page boundary. Violating this alignment will produce
+silently wrong results (page-cross penalty and, worse, reading the
+next buffer's bytes when `Y >= page-boundary-offset`).
+
+All library-provided buffers (`x25_scalar`, `x25_u`, `x25_result`,
+`fe_tmp1..4`, `x25_a/b/da/cb/e`, `x25_x2/x3`, `x25_z2/z3`) are
+allocated with the correct alignment in `src/data.asm`. If you add
+your own field buffers in a host program, use `!align 255, 0`
+followed by `!fill 32, 0` blocks at the `$00/$20/.../$E0` offsets.
+
+See commit `14920b7` for the alignment change and `src/data.asm` for
+the canonical layout.
+
+## 6. Memory map
+
+```
+$0001           proc_port (BASIC ROM banked out)
+$0014-$007F     ZP slots owned by library while running
+$00A0-$00A2     jiffy clock (read by bench_*)
+$00C6           kbd buffer count (test harness only)
+$00FB-$00FE     zp_ptr1 / zp_ptr2 (general scratch)
+$0801-$08FF     BASIC stub + boot (test harness)
+$0900+          library code (mul_8x8, fe25519, x25519, ...)
+$1800-$1Axx     page-aligned field buffers (fe_tmp*, x25_*)
+$1B00-$1DFF     mul_dma_lo/hi/carry (REU DMA staging)
+$1E00-$1FFF     sqtab2_lo/hi
+$2000-$27FF     lookup tables (mul38, sqr, a24_*)
+$2800+          strings / input buffer (test harness)
+$7800-$7BFF     sqtab_lo / sqtab_hi  (built by sqtab_init)
+$D000-$DFFF     I/O (VIC-II, CIA, SID, REU)
+REU bank 0-1    a*b low/high tables
+REU bank 2      (first 64 bytes) zero block for reu_clear_wide
+REU bank 3      17th-bit carry tables for fe_sqr
+REU bank 4-5    2*a*b low/high tables for fe_sqr
+```
+
+Exact addresses can be read from `build/labels.txt` after a build.
+
+## 7. Performance
+
+Latest master (2026-04, post-Phase-9: table-driven primitives,
+page-aligned buffers, 4x unrolled `fe_mul` inner loop):
+
+| Operation             | Jiffies | Wall-time (PAL) |
+| --------------------- | ------: | --------------: |
+| `x25519_scalarmult`   |   9,818 |        ~163.6 s |
+
+This is ~45.5% faster than the original (un-optimized) baseline.
+Timing is measured with VIC-II **blanked** (`jsr vic_blank` before
+the call); running with the display enabled costs ~25% more cycles
+due to VIC-II DMA badlines.
+
+One scalar multiplication performs roughly 2,550 field multiplies +
+~264 squarings for the inversion step.
+
+## 8. Constraints and caveats
+
+- **Timing is not constant.** `fe_cswap` takes the same time regardless
+  of its mask, and the Montgomery ladder visits every bit, but the
+  per-byte REU fetch routines' timing and the inner loops are data
+  dependent at the microsecond level. This library is not suitable
+  against side-channel adversaries with fine-grained timing or EM
+  access. It **is** suitable against an attacker who only sees the
+  wire output.
+- **No RNG.** Key generation is the caller's job. The library does
+  not seed or consume randomness. `x25519_base` expects the scalar
+  to already be in `x25_scalar`.
+- **No key derivation / HKDF / anything beyond the raw scalar mult.**
+- **REU is mandatory.** There is no fallback to pure-6502 multiply.
+- **Interrupts.** Run with `sei` for consistent timing. NMIs (RESTORE
+  key, CIA2 TimerB) are not masked; if your host sets them up,
+  consider masking them too for the duration of the call.
+- **REU register state.** The library leaves the REU registers in
+  a non-default state (configured for `reu_fetch_mul_row`). If your
+  host also uses the REU, save `$DF02-$DF0A` before calling and
+  restore afterward.
+
+## 9. What is NOT included
+
+- Random number generation (no RNG; caller supplies scalars).
+- Key generation / serialization helpers beyond `x25519_base`.
+- Ed25519 signatures, X448, any hash function.
+- HKDF / KDFs / anything layered on top of X25519.
+- A relocatable / linker-friendly object file. The library is still
+  `!source`-included by the host at assembly time. A future pass
+  will produce a true library object — see `TODO-LIBRARY.md`.
+
+## 10. Testing and correctness
+
+The test suite under `tools/test_*.py` drives the C64 code through a
+VICE harness and cross-checks every result against an independent
+reference — `tools/ref_x25519.py`, which wraps Python's
+`cryptography.hazmat` library (pyca/cryptography). This is a
+deliberate design choice: repo-local Python reimplementations of the
+same algorithm can share bugs with the assembly SUT, so we validate
+against an external, widely-audited source of truth instead.
+
+- `make test` — fast path; runs `ref_x25519` self-test against RFC
+  7748 §5.2 vectors 1 and 2 (no VICE required).
+- `make test-slow` — full VICE-driven suite: clamp, scalarmult, full
+  RFC vectors, per-step ladder checkpoints, random scalars and random
+  u-coords (via `--random N`) cross-checked against the library
+  reference. Runtime is dominated by VICE; each random scalarmult
+  takes ~100 min under warp, so tune `--random` downward for CI.
+- Stress tests for field ops (`test_fe_mul_stress`, `test_fe_sqr_stress`,
+  etc.) use seeded PRNG inputs and assert — not print — on mismatch.
+
+## 11. Version / provenance
+
+- Upstream repository: `c64-x25519`, branch `master`.
+- Recent optimization commits: `50c7b7b`, `14920b7`, `381e3d6`,
+  `8fa953c` (Phase 9 — tables + unroll + alignment).
+- Benchmark baseline: 9,818 jiffies / scalar mult (blanked VIC-II).
