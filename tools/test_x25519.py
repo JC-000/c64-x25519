@@ -41,6 +41,14 @@ VECTORS_PATH = os.path.join(PROJECT_ROOT, "test", "rfc7748_vectors.json")
 
 VERBOSE = False
 SLOW = False
+RANDOM_N = 10  # number of random scalars / u-coords to cross-check
+
+# Make tools/ importable so we can pull in the cryptography-backed reference.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+try:
+    import ref_x25519  # noqa: E402
+except ImportError:
+    ref_x25519 = None
 
 
 # ============================================================================
@@ -172,6 +180,9 @@ def test_clamp(transport, labels):
             print(f"  FAIL clamp #{i}:")
             print(f"    expected: {expected.hex()}")
             print(f"    got:      {result.hex()}")
+        assert result == expected, (
+            f"clamp #{i}: expected {expected.hex()} got {result.hex()}"
+        )
 
     return passed, failed
 
@@ -183,7 +194,8 @@ def test_rfc7748_vectors(transport, labels):
     with open(VECTORS_PATH) as f:
         vectors = json.load(f)
 
-    for vec in vectors["x25519_scalarmult"]:
+    # Defensive: only read the keys we need; ignore extensions added elsewhere.
+    for vec in vectors.get("x25519_scalarmult", []):
         scalar = bytes.fromhex(vec["scalar"])
         u = bytes.fromhex(vec["u_coordinate"])
         expected = bytes.fromhex(vec["expected"])
@@ -202,7 +214,90 @@ def test_rfc7748_vectors(transport, labels):
             print(" FAIL")
             print(f"    expected: {expected.hex()}")
             print(f"    got:      {result.hex()}")
+        assert result == expected, (
+            f"{vec.get('desc', 'rfc7748')}: expected {expected.hex()} "
+            f"got {result.hex()}"
+        )
 
+    return passed, failed
+
+
+def _clamp_scalar_bytes(scalar: bytes) -> bytes:
+    s = bytearray(scalar)
+    s[0] &= 0xF8
+    s[31] = (s[31] & 0x7F) | 0x40
+    return bytes(s)
+
+
+def test_random_scalars(transport, labels, rng, n):
+    """Cross-check n random clamped scalars against cryptography-backed ref.
+
+    Each trial ends in an ``assert`` so any mismatch halts the script.
+    """
+    if ref_x25519 is None:
+        print("  SKIP: ref_x25519 not importable")
+        return 0, 0
+    passed = failed = 0
+    # Fixed u = basepoint (9), well-known nontrivial input.
+    u_bytes = bytes([9]) + bytes(31)
+    u_hex = u_bytes.hex()
+    for i in range(n):
+        scalar = bytes(rng.randint(0, 255) for _ in range(32))
+        scalar = _clamp_scalar_bytes(scalar)
+        expected_hex = ref_x25519.x25519_scalarmult(scalar.hex(), u_hex)
+        expected = bytes.fromhex(expected_hex)
+        got = c64_x25519_scalarmult(transport, labels, scalar, u_bytes)
+        if got == expected:
+            passed += 1
+            if VERBOSE:
+                print(f"  PASS random scalar #{i}")
+        else:
+            failed += 1
+            print(f"  FAIL random scalar #{i}")
+            print(f"    scalar:   {scalar.hex()}")
+            print(f"    expected: {expected.hex()}")
+            print(f"    got:      {got.hex()}")
+        assert got == expected, (
+            f"random scalar #{i} mismatch: scalar={scalar.hex()} "
+            f"expected={expected.hex()} got={got.hex()}"
+        )
+    return passed, failed
+
+
+def test_random_u_coords(transport, labels, rng, n):
+    """Cross-check n random u-coords (fixed scalar) against cryptography ref.
+
+    Each u-coord has the high bit of byte 31 cleared per RFC 7748 §5.
+    Each trial ends in an ``assert`` so any mismatch halts the script.
+    """
+    if ref_x25519 is None:
+        print("  SKIP: ref_x25519 not importable")
+        return 0, 0
+    passed = failed = 0
+    # Fixed (clamped) scalar — RFC 7748 §6.1 vector 1's scalar.
+    scalar_hex = "a546e36bf0527c9d3b16154b82465edd62144c0ac1fc5a18506a2244ba449ac4"
+    scalar = _clamp_scalar_bytes(bytes.fromhex(scalar_hex))
+    for i in range(n):
+        u = bytearray(rng.randint(0, 255) for _ in range(32))
+        u[31] &= 0x7F  # RFC 7748: mask high bit of u
+        u_bytes = bytes(u)
+        expected_hex = ref_x25519.x25519_scalarmult(scalar.hex(), u_bytes.hex())
+        expected = bytes.fromhex(expected_hex)
+        got = c64_x25519_scalarmult(transport, labels, scalar, u_bytes)
+        if got == expected:
+            passed += 1
+            if VERBOSE:
+                print(f"  PASS random u #{i}")
+        else:
+            failed += 1
+            print(f"  FAIL random u #{i}")
+            print(f"    u:        {u_bytes.hex()}")
+            print(f"    expected: {expected.hex()}")
+            print(f"    got:      {got.hex()}")
+        assert got == expected, (
+            f"random u #{i} mismatch: u={u_bytes.hex()} "
+            f"expected={expected.hex()} got={got.hex()}"
+        )
     return passed, failed
 
 
@@ -213,7 +308,7 @@ def test_basepoint(transport, labels):
     with open(VECTORS_PATH) as f:
         vectors = json.load(f)
 
-    for vec in vectors["x25519_basepoint"]:
+    for vec in vectors.get("x25519_basepoint", []):
         scalar = bytes.fromhex(vec["scalar"])
         expected = bytes.fromhex(vec["expected"])
 
@@ -228,6 +323,10 @@ def test_basepoint(transport, labels):
             print(" FAIL")
             print(f"    expected: {expected.hex()}")
             print(f"    got:      {result.hex()}")
+        assert result == expected, (
+            f"basepoint {vec.get('desc', '')}: expected {expected.hex()} "
+            f"got {result.hex()}"
+        )
 
     return passed, failed
 
@@ -250,9 +349,20 @@ def run_tests(transport, labels, seed):
         test_groups += [
             ("RFC 7748 vectors", lambda: test_rfc7748_vectors(transport, labels)),
             ("basepoint multiply", lambda: test_basepoint(transport, labels)),
+            (f"random scalars x{RANDOM_N}",
+             lambda: test_random_scalars(transport, labels, rng, RANDOM_N)),
+            (f"random u-coords x{RANDOM_N}",
+             lambda: test_random_u_coords(transport, labels, rng, RANDOM_N)),
+        ]
+    elif "--random" in sys.argv and RANDOM_N > 0:
+        test_groups += [
+            (f"random scalars x{RANDOM_N}",
+             lambda: test_random_scalars(transport, labels, rng, RANDOM_N)),
+            (f"random u-coords x{RANDOM_N}",
+             lambda: test_random_u_coords(transport, labels, rng, RANDOM_N)),
         ]
     else:
-        print("\n  (scalarmult tests skipped — use --slow to enable, ~2h per test)")
+        print("\n  (scalarmult tests skipped — use --slow or --random N to enable)")
 
 
     for name, test_fn in test_groups:
@@ -273,7 +383,7 @@ def run_tests(transport, labels, seed):
 
 
 def main():
-    global VERBOSE, SLOW
+    global VERBOSE, SLOW, RANDOM_N
     os.chdir(PROJECT_ROOT)
 
     seed = random.randint(0, 2**32 - 1)
@@ -289,6 +399,13 @@ def main():
         elif args[i] == "--slow":
             SLOW = True
             i += 1
+        elif args[i] == "--random":
+            # Optional N argument; defaults to RANDOM_N if next token is a flag.
+            if i + 1 < len(args) and not args[i + 1].startswith("--"):
+                RANDOM_N = int(args[i + 1])
+                i += 2
+            else:
+                i += 1
         else:
             i += 1
 

@@ -178,6 +178,10 @@ def test_fe_mul(transport, labels, rng):
             print(f"    b = {b:#066x}")
             print(f"    expected = {expected:#066x}")
             print(f"    got      = {result:#066x}")
+        assert result == expected, (
+            f"mul {name}: a={a:#x} b={b:#x} expected={expected:#x} "
+            f"got={result:#x}"
+        )
 
     return passed, failed
 
@@ -208,6 +212,9 @@ def test_fe_sqr(transport, labels, rng):
             print(f"    a = {a:#066x}")
             print(f"    expected = {expected:#066x}")
             print(f"    got      = {result:#066x}")
+        assert result == expected, (
+            f"sqr {name}: a={a:#x} expected={expected:#x} got={result:#x}"
+        )
 
     return passed, failed
 
@@ -232,6 +239,9 @@ def test_fe_mul_a24(transport, labels, rng):
             print(f"  FAIL mul_a24 #{i}: a={a:#066x}")
             print(f"    expected = {expected:#066x}")
             print(f"    got      = {result:#066x}")
+        assert result == expected, (
+            f"mul_a24 #{i}: a={a:#x} expected={expected:#x} got={result:#x}"
+        )
 
     return passed, failed
 
@@ -284,17 +294,12 @@ def run_tests(transport, labels, seed):
 
     for name, test_fn in test_groups:
         print(f"\n--- {name} ---")
-        try:
-            p, f = test_fn()
-            total_passed += p
-            total_failed += f
-            status = "OK" if f == 0 else "FAIL"
-            print(f"  {status}: {p}/{p + f} passed")
-        except Exception as e:
-            total_failed += 1
-            print(f"  ERROR: {e}")
-            import traceback
-            traceback.print_exc()
+        # Let assertion failures propagate.
+        p, f = test_fn()
+        total_passed += p
+        total_failed += f
+        status = "OK" if f == 0 else "FAIL"
+        print(f"  {status}: {p}/{p + f} passed")
 
     # Benchmark
     bench_fe_mul(transport, labels, rng)
