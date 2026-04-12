@@ -17,7 +17,7 @@
 .export sqr_lo, sqr_hi
 .export a24_b0, a24_b1, a24_b2, a24_b3
 
-.segment "CODE"
+.segment "DATA"
 
 ; --- fe25519 field arithmetic ---
 ; fe_wide[0..63] is now in zero page at $40..$7F (see constants.s)

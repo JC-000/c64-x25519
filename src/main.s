@@ -28,6 +28,8 @@
 ; These are equates from constants.s; exporting once here makes them
 ; appear in ld65 -Ln output for the Python test harness.
 .exportzp fe25519_src1, fe25519_src2, fe25519_dst
+.exportzp fe_wide
+.export cassette_buf
 
 ; ---------------------------------------------------------------------------
 ; LOADADDR segment: 2-byte PRG header (little-endian start address $0801)
