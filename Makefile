@@ -1,14 +1,26 @@
 ACME = acme
 
+# ca65/ld65 toolchain (cc65 suite)
+CA65 = ca65
+LD65 = ld65
+CC65_CFG = cfg/x25519.cfg
+
 SRC_DIR = src
 BUILD_DIR = build
 
 PRG = $(BUILD_DIR)/x25519.prg
 LABELS = $(BUILD_DIR)/labels.txt
 
-ASM_SRCS = $(wildcard $(SRC_DIR)/*.asm)
+# ca65 build outputs
+CA65_BUILD = $(BUILD_DIR)/ca65
+CA65_PRG = $(CA65_BUILD)/x25519.prg
+CA65_LABELS = $(CA65_BUILD)/labels.txt
 
-.PHONY: all clean test test-slow test-ref
+ASM_SRCS = $(wildcard $(SRC_DIR)/*.asm)
+CA65_SRCS = $(wildcard $(SRC_DIR)/*.s)
+CA65_OBJS = $(patsubst $(SRC_DIR)/%.s,$(CA65_BUILD)/%.o,$(CA65_SRCS))
+
+.PHONY: all clean test test-slow test-ref ca65 compare
 
 all: $(PRG)
 
@@ -46,8 +58,31 @@ test-ref:
 $(PRG): $(ASM_SRCS) | $(BUILD_DIR)
 	cd $(SRC_DIR) && $(ACME) -f cbm -o ../$(PRG) --vicelabels ../$(LABELS) main.asm
 
+# --- ca65 build ----------------------------------------------------------
+
+ca65: $(CA65_PRG)
+
+$(CA65_BUILD)/%.o: $(SRC_DIR)/%.s | $(CA65_BUILD)
+	$(CA65) -o $@ $<
+
+$(CA65_PRG): $(CA65_OBJS) $(CC65_CFG) | $(CA65_BUILD)
+	$(LD65) -C $(CC65_CFG) -o $(CA65_PRG) -Ln $(CA65_LABELS) $(CA65_OBJS)
+
+# --- compare convenience target ------------------------------------------
+
+compare: $(PRG) $(CA65_PRG)
+	@echo "=== ACME PRG ===" && xxd $(PRG) | head -4
+	@echo "=== ca65 PRG ===" && xxd $(CA65_PRG) | head -4
+	@xxd $(PRG) > /tmp/acme_xxd.txt && xxd $(CA65_PRG) > /tmp/ca65_xxd.txt && diff /tmp/acme_xxd.txt /tmp/ca65_xxd.txt || true
+
+# --- directories ----------------------------------------------------------
+
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
 
+$(CA65_BUILD):
+	mkdir -p $(CA65_BUILD)
+
 clean:
 	rm -f $(BUILD_DIR)/x25519.prg $(BUILD_DIR)/labels.txt
+	rm -rf $(CA65_BUILD)
