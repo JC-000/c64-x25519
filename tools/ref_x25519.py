@@ -13,11 +13,11 @@ Public API:
         RFC 7748 X25519: 32-byte scalar (clamping is applied internally) times
         32-byte u-coordinate (high bit masked internally), returned as hex.
 
-    fe_mul(a, b) -> int    # (a * b) mod P
-    fe_sqr(a)    -> int    # (a * a) mod P
-    fe_inv(a)    -> int    # a^(P-2) mod P  (multiplicative inverse)
-    fe_add(a, b) -> int    # (a + b) mod P
-    fe_sub(a, b) -> int    # (a - b) mod P
+    fe25519_mul(a, b) -> int    # (a * b) mod P
+    fe25519_sqr(a)    -> int    # (a * a) mod P
+    fe25519_inv(a)    -> int    # a^(P-2) mod P  (multiplicative inverse)
+    fe25519_add(a, b) -> int    # (a + b) mod P
+    fe25519_sub(a, b) -> int    # (a - b) mod P
 
 Run as a script to execute the RFC 7748 vector self-test.
 """
@@ -42,23 +42,23 @@ except ImportError:  # pragma: no cover
 # Field arithmetic mod P = 2^255 - 19
 # ----------------------------------------------------------------------------
 
-def fe_add(a: int, b: int) -> int:
+def fe25519_add(a: int, b: int) -> int:
     return (a + b) % P
 
 
-def fe_sub(a: int, b: int) -> int:
+def fe25519_sub(a: int, b: int) -> int:
     return (a - b) % P
 
 
-def fe_mul(a: int, b: int) -> int:
+def fe25519_mul(a: int, b: int) -> int:
     return (a * b) % P
 
 
-def fe_sqr(a: int) -> int:
+def fe25519_sqr(a: int) -> int:
     return (a * a) % P
 
 
-def fe_inv(a: int) -> int:
+def fe25519_inv(a: int) -> int:
     """Multiplicative inverse via Fermat's little theorem: a^(P-2) mod P."""
     return pow(a, P - 2, P)
 
@@ -134,11 +134,11 @@ def _selftest() -> int:
             print(f"    got:      {got}")
             failures += 1
 
-    # Smoke-check the field ops: a * a^-1 == 1, fe_add/sub round-trip.
+    # Smoke-check the field ops: a * a^-1 == 1, fe25519_add/sub round-trip.
     a = 0xdeadbeefcafebabe1234567890abcdef0fedcba987654321aabbccddeeff0011
-    assert fe_mul(a % P, fe_inv(a % P)) == 1, "fe_inv self-check failed"
-    assert fe_sub(fe_add(a % P, 12345), 12345) == a % P, "add/sub round-trip"
-    assert fe_sqr(7) == 49
+    assert fe25519_mul(a % P, fe25519_inv(a % P)) == 1, "fe25519_inv self-check failed"
+    assert fe25519_sub(fe25519_add(a % P, 12345), 12345) == a % P, "add/sub round-trip"
+    assert fe25519_sqr(7) == 49
     print("  PASS field arithmetic smoke checks")
     return failures
 

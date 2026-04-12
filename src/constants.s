@@ -1,7 +1,15 @@
 ; =============================================================================
 ; constants.s - System equates, zero page, hardware addresses
 ; Stripped for standalone X25519 performance tuning
+;
+; This file is .include'd by every compilation unit. It defines only
+; assembly-time equates (= expressions), which are invisible to the linker.
+; Symbols that need to appear in the VICE label file are exported once
+; from main.s.
 ; =============================================================================
+
+.ifndef CONSTANTS_S_INCLUDED
+CONSTANTS_S_INCLUDED = 1
 
 ; --- Kernal routines ---
 chrout          = $ffd2         ; output character
@@ -36,9 +44,9 @@ zp_tmp1         = $02           ; temp byte
 zp_tmp2         = $03           ; temp byte
 
 ; fe25519 field arithmetic working variables
-fe_src1         = $1e           ; 2-byte pointer to operand 1
-fe_src2         = $20           ; 2-byte pointer to operand 2
-fe_dst          = $22           ; 2-byte pointer to destination
+fe25519_src1         = $1e           ; 2-byte pointer to operand 1
+fe25519_src2         = $20           ; 2-byte pointer to operand 2
+fe25519_dst          = $22           ; 2-byte pointer to destination
 fe_misc         = $24           ; 2-byte misc pointer
 fe_carry        = $26           ; carry/borrow byte
 fe_loop         = $27           ; loop counter
@@ -50,7 +58,7 @@ x25_prev_bit    = $2a           ; previous k_t for swap
 x25_bit_ctr     = $2b           ; bit counter
 x25_byte_idx    = $2c           ; byte index in scalar
 x25_bit_mask    = $2d           ; current bit mask
-fe_sqr_pairs    = $2e           ; fe_sqr unrolled cross-loop pair counter
+fe_sqr_pairs    = $2e           ; fe25519_sqr unrolled cross-loop pair counter
 
 ; mult66 indirect-indexed multiply pointers (free in standalone X25519)
 lmul0           = $14           ; 2-byte ZP pointer for sqtab lookup (sum path)
@@ -66,7 +74,7 @@ poly_tmp        = $1d           ; temp
 ; This enables zp,X addressing (2 bytes, 4 cycles) vs abs,X (3 bytes, 5 cycles)
 fe_wide         = $40
 
-; --- fe_sqr hybrid DMA threshold (8f+8g) ---
+; --- fe25519_sqr hybrid DMA threshold (8f+8g) ---
 SQR_DMA_K        = 14          ; outer i < K uses pre-doubled DMA tables
 
 ; --- REU (Ram Expansion Unit) registers ---
@@ -80,3 +88,5 @@ reu_reu_bank    = $df06         ; REU bank
 reu_len_lo      = $df07         ; transfer length low
 reu_len_hi      = $df08         ; transfer length high
 reu_addr_ctrl   = $df0a         ; address control
+
+.endif ; CONSTANTS_S_INCLUDED

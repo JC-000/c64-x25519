@@ -1,10 +1,18 @@
 ; =============================================================================
 ; mul_8x8.s - Quarter-square 8x8→16 multiply + table init
 ;
-; Extracted from poly1305.asm for standalone X25519.
+; Extracted from poly1305 for standalone X25519.
 ; Quarter-square table: sqtab_lo/hi at $7800-$7BFF (1024 bytes)
 ; Identity: a*b = floor((a+b)^2/4) - floor((a-b)^2/4)
 ; =============================================================================
+
+.setcpu "6502"
+.include "constants.s"
+
+.export sqtab_init, mul_8x8, poly_prod_lo, poly_prod_hi
+.export sqtab_lo, sqtab_hi
+
+.segment "CODE"
 
 ; Quarter-square table addresses (page-aligned for speed)
 sqtab_lo        = $7800         ; 512 bytes: low bytes of floor(n^2/4)
@@ -12,12 +20,8 @@ sqtab_hi        = $7a00         ; 512 bytes: high bytes of floor(n^2/4)
 
 ; =============================================================================
 ; sqtab_init - Build quarter-square lookup table at $7800-$7BFF
-;
-; Computes floor(i^2/4) for i = 0..511 using recurrence i^2 = (i-1)^2 + 2i - 1
-;
-; Clobbers: A, X, Y
 ; =============================================================================
-sqtab_init:
+.proc sqtab_init
         lda #0
         sta sq_acc              ; accumulator = 0
         sta sq_acc+1
@@ -87,6 +91,7 @@ sqtab_init:
         beq @done
         jmp @loop
 @done:  rts
+.endproc
 
 ; Temporaries for sqtab_init
 sq_acc: .res 3, 0              ; 24-bit accumulator for i^2
@@ -106,7 +111,7 @@ sq_i:   .res 2, 0              ; 16-bit index counter (0..511)
 poly_prod_lo:   .byte 0
 poly_prod_hi:   .byte 0
 
-mul_8x8:
+.proc mul_8x8
         sta mul_a               ; save A
         stx mul_b               ; save X
 
@@ -149,6 +154,7 @@ mul_8x8:
         sbc sqtab_hi,y
         sta poly_prod_hi
         rts
+.endproc
 
 mul_a:          .byte 0
 mul_b:          .byte 0

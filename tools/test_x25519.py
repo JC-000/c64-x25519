@@ -94,19 +94,19 @@ def x25519_ref(scalar, u):
     """X25519 scalar multiplication (pure Python reference)."""
     P = (1 << 255) - 19
 
-    def fe_add(a, b):
+    def fe25519_add(a, b):
         return (a + b) % P
 
-    def fe_sub(a, b):
+    def fe25519_sub(a, b):
         return (a - b) % P
 
-    def fe_mul(a, b):
+    def fe25519_mul(a, b):
         return (a * b) % P
 
-    def fe_sqr(a):
+    def fe25519_sqr(a):
         return (a * a) % P
 
-    def fe_inv(a):
+    def fe25519_inv(a):
         return pow(a, P - 2, P)
 
     def cswap(swap, x_2, x_3):
@@ -133,23 +133,23 @@ def x25519_ref(scalar, u):
         z_2, z_3 = cswap(swap, z_2, z_3)
         swap = k_t
 
-        A = fe_add(x_2, z_2)
-        AA = fe_sqr(A)
-        B = fe_sub(x_2, z_2)
-        BB = fe_sqr(B)
-        E = fe_sub(AA, BB)
-        C = fe_add(x_3, z_3)
-        D = fe_sub(x_3, z_3)
-        DA = fe_mul(D, A)
-        CB = fe_mul(C, B)
-        x_3 = fe_sqr(fe_add(DA, CB))
-        z_3 = fe_mul(u_val, fe_sqr(fe_sub(DA, CB)))
-        x_2 = fe_mul(AA, BB)
-        z_2 = fe_mul(E, fe_add(AA, fe_mul(a24, E)))
+        A = fe25519_add(x_2, z_2)
+        AA = fe25519_sqr(A)
+        B = fe25519_sub(x_2, z_2)
+        BB = fe25519_sqr(B)
+        E = fe25519_sub(AA, BB)
+        C = fe25519_add(x_3, z_3)
+        D = fe25519_sub(x_3, z_3)
+        DA = fe25519_mul(D, A)
+        CB = fe25519_mul(C, B)
+        x_3 = fe25519_sqr(fe25519_add(DA, CB))
+        z_3 = fe25519_mul(u_val, fe25519_sqr(fe25519_sub(DA, CB)))
+        x_2 = fe25519_mul(AA, BB)
+        z_2 = fe25519_mul(E, fe25519_add(AA, fe25519_mul(a24, E)))
 
     x_2, x_3 = cswap(swap, x_2, x_3)
     z_2, z_3 = cswap(swap, z_2, z_3)
-    result = fe_mul(x_2, fe_inv(z_2))
+    result = fe25519_mul(x_2, fe25519_inv(z_2))
     return result.to_bytes(32, 'little')
 
 
@@ -430,7 +430,7 @@ def main():
         "x25_scalar", "x25_u", "x25_result",
         "x25_x2", "x25_z2", "x25_x3", "x25_z3",
         "x25_basepoint",
-        "fe_src1", "fe_src2", "fe_dst",
+        "fe25519_src1", "fe25519_src2", "fe25519_dst",
     ]
     for name in required:
         if labels.address(name) is None:
