@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""test_fe_sqr_stress.py — Stress test fe_sqr for data-dependent carry bugs.
+"""test_fe_sqr_stress.py — Stress test fe25519_sqr for data-dependent carry bugs.
 
-Cross-checks fe_sqr(a) against fe_mul(a, a) and Python reference.
+Cross-checks fe25519_sqr(a) against fe25519_mul(a, a) and Python reference.
 Designed to stress the shift-before-accumulate optimization with inputs
 that produce 17-bit shifted products and carry overflow.
 
@@ -34,11 +34,11 @@ def le32_to_int(data):
 
 def set_fe_ptrs(transport, labels, src1=None, src2=None, dst=None):
     if src1 is not None:
-        write_bytes(transport, labels["fe_src1"], bytes([src1 & 0xFF, src1 >> 8]))
+        write_bytes(transport, labels["fe25519_src1"], bytes([src1 & 0xFF, src1 >> 8]))
     if src2 is not None:
-        write_bytes(transport, labels["fe_src2"], bytes([src2 & 0xFF, src2 >> 8]))
+        write_bytes(transport, labels["fe25519_src2"], bytes([src2 & 0xFF, src2 >> 8]))
     if dst is not None:
-        write_bytes(transport, labels["fe_dst"], bytes([dst & 0xFF, dst >> 8]))
+        write_bytes(transport, labels["fe25519_dst"], bytes([dst & 0xFF, dst >> 8]))
 
 
 def write_fe(transport, addr, val):
@@ -50,27 +50,27 @@ def read_fe(transport, addr):
 
 
 def c64_fe_mul(transport, labels, a, b):
-    write_fe(transport, labels["fe_tmp1"], a)
-    write_fe(transport, labels["fe_tmp2"], b)
+    write_fe(transport, labels["fe25519_tmp1"], a)
+    write_fe(transport, labels["fe25519_tmp2"], b)
     set_fe_ptrs(transport, labels,
-                src1=labels["fe_tmp1"],
-                src2=labels["fe_tmp2"],
-                dst=labels["fe_tmp3"])
-    jsr(transport, labels["fe_mul"], timeout=120.0)
-    # fe_mul no longer calls fe_reduce_final internally; canonicalize for test
-    jsr(transport, labels["fe_reduce_final"], timeout=5.0)
-    return read_fe(transport, labels["fe_tmp3"])
+                src1=labels["fe25519_tmp1"],
+                src2=labels["fe25519_tmp2"],
+                dst=labels["fe25519_tmp3"])
+    jsr(transport, labels["fe25519_mul"], timeout=120.0)
+    # fe25519_mul no longer calls fe25519_reduce_final internally; canonicalize for test
+    jsr(transport, labels["fe25519_reduce_final"], timeout=5.0)
+    return read_fe(transport, labels["fe25519_tmp3"])
 
 
 def c64_fe_sqr(transport, labels, a):
-    write_fe(transport, labels["fe_tmp1"], a)
+    write_fe(transport, labels["fe25519_tmp1"], a)
     set_fe_ptrs(transport, labels,
-                src1=labels["fe_tmp1"],
-                dst=labels["fe_tmp3"])
-    jsr(transport, labels["fe_sqr"], timeout=120.0)
-    # fe_sqr no longer calls fe_reduce_final internally; canonicalize for test
-    jsr(transport, labels["fe_reduce_final"], timeout=5.0)
-    return read_fe(transport, labels["fe_tmp3"])
+                src1=labels["fe25519_tmp1"],
+                dst=labels["fe25519_tmp3"])
+    jsr(transport, labels["fe25519_sqr"], timeout=120.0)
+    # fe25519_sqr no longer calls fe25519_reduce_final internally; canonicalize for test
+    jsr(transport, labels["fe25519_reduce_final"], timeout=5.0)
+    return read_fe(transport, labels["fe25519_tmp3"])
 
 
 def check(name, a, sqr_result, mul_result, expected):
@@ -90,8 +90,8 @@ def check(name, a, sqr_result, mul_result, expected):
     print(f"  FAIL {name}:")
     print(f"    input       = 0x{a:064x}")
     print(f"    expected    = 0x{expected:064x}")
-    print(f"    fe_sqr(a)   = 0x{sqr_result:064x}  {'OK' if sqr_ok else 'MISMATCH'}")
-    print(f"    fe_mul(a,a) = 0x{mul_result:064x}  {'OK' if mul_ok else 'MISMATCH'}")
+    print(f"    fe25519_sqr(a)   = 0x{sqr_result:064x}  {'OK' if sqr_ok else 'MISMATCH'}")
+    print(f"    fe25519_mul(a,a) = 0x{mul_result:064x}  {'OK' if mul_ok else 'MISMATCH'}")
     print(f"    sqr==mul    = {cross_ok}")
     assert sqr_ok and mul_ok and cross_ok, (
         f"{name}: sqr_ok={sqr_ok} mul_ok={mul_ok} cross_ok={cross_ok} "
@@ -199,8 +199,8 @@ def main():
         passed = 0
         failed = 0
 
-        print(f"\n--- fe_sqr stress test: {len(cases)} cases ---")
-        print("Each case: fe_sqr(a) vs Python, fe_mul(a,a) vs Python, fe_sqr vs fe_mul\n")
+        print(f"\n--- fe25519_sqr stress test: {len(cases)} cases ---")
+        print("Each case: fe25519_sqr(a) vs Python, fe25519_mul(a,a) vs Python, fe25519_sqr vs fe25519_mul\n")
 
         for i, (name, a) in enumerate(cases):
             expected = (a * a) % P

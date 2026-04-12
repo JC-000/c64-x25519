@@ -99,21 +99,21 @@ and clobber lists. Summary:
 | `x25519_clamp`      | RFC 7748 scalar clamping (in place)             |
 | `x25519_scalarmult` | `result = scalar * u` on Curve25519             |
 | `x25519_base`       | `result = scalar * basepoint(9)`                |
-| `fe_add`            | Field add mod p                                 |
-| `fe_sub`            | Field sub mod p                                 |
-| `fe_mul`            | Field mul mod p (REU-accelerated)               |
-| `fe_sqr`            | Field square mod p (REU-accelerated)            |
-| `fe_mul_a24`        | `result = 121665 * a mod p`                     |
-| `fe_inv`            | Modular inverse via Fermat's little theorem     |
-| `fe_copy` / `fe_zero` / `fe_one` | trivial helpers                    |
-| `fe_cswap`          | Conditional 32-byte swap                        |
-| `fe_reduce_final`   | Canonicalize a value to `[0, p)`                |
-| `fe_cmp_p`          | Compare `(fe_dst)` with `p`                     |
+| `fe25519_add`            | Field add mod p                                 |
+| `fe25519_sub`            | Field sub mod p                                 |
+| `fe25519_mul`            | Field mul mod p (REU-accelerated)               |
+| `fe25519_sqr`            | Field square mod p (REU-accelerated)            |
+| `fe25519_mul_a24`        | `result = 121665 * a mod p`                     |
+| `fe25519_inv`            | Modular inverse via Fermat's little theorem     |
+| `fe25519_copy` / `fe25519_zero` / `fe25519_one` | trivial helpers                    |
+| `fe25519_cswap`          | Conditional 32-byte swap                        |
+| `fe25519_reduce_final`   | Canonicalize a value to `[0, p)`                |
+| `fe_cmp_p`          | Compare `(fe25519_dst)` with `p`                     |
 | `vic_blank` / `vic_unblank` | Toggle VIC-II display (speed)           |
 | `bench_start` / `bench_stop` | Jiffy-clock timing                     |
 
-All `fe_*` routines take operand pointers in ZP slots `fe_src1` (`$1E`),
-`fe_src2` (`$20`), `fe_dst` (`$22`). Fill those, then `jsr`.
+All `fe_*` routines take operand pointers in ZP slots `fe25519_src1` (`$1E`),
+`fe25519_src2` (`$20`), `fe25519_dst` (`$22`). Fill those, then `jsr`.
 
 ## 5. Buffer alignment contract
 
@@ -121,14 +121,14 @@ All `fe_*` routines take operand pointers in ZP slots `fe_src1` (`$1E`),
 `$00, $20, $40, $60, $80, $A0, $C0, $E0` within a 256-byte page.**
 
 This is a hard requirement of the post-Phase-9 optimized routines
-(`fe_add`, `fe_sub`, `fe_cmp_p`, `fe_reduce_final`) which use
+(`fe25519_add`, `fe25519_sub`, `fe_cmp_p`, `fe25519_reduce_final`) which use
 self-modifying `abs,Y` addressing and depend on `Y ∈ [0..31]` never
 crossing a page boundary. Violating this alignment will produce
 silently wrong results (page-cross penalty and, worse, reading the
 next buffer's bytes when `Y >= page-boundary-offset`).
 
 All library-provided buffers (`x25_scalar`, `x25_u`, `x25_result`,
-`fe_tmp1..4`, `x25_a/b/da/cb/e`, `x25_x2/x3`, `x25_z2/z3`) are
+`fe25519_tmp1..4`, `x25_a/b/da/cb/e`, `x25_x2/x3`, `x25_z2/z3`) are
 allocated with the correct alignment in `src/data.asm`. If you add
 your own field buffers in a host program, use `!align 255, 0`
 followed by `!fill 32, 0` blocks at the `$00/$20/.../$E0` offsets.
@@ -155,8 +155,8 @@ $7800-$7BFF     sqtab_lo / sqtab_hi  (built by sqtab_init)
 $D000-$DFFF     I/O (VIC-II, CIA, SID, REU)
 REU bank 0-1    a*b low/high tables
 REU bank 2      (first 64 bytes) zero block for reu_clear_wide
-REU bank 3      17th-bit carry tables for fe_sqr
-REU bank 4-5    2*a*b low/high tables for fe_sqr
+REU bank 3      17th-bit carry tables for fe25519_sqr
+REU bank 4-5    2*a*b low/high tables for fe25519_sqr
 ```
 
 Exact addresses can be read from `build/labels.txt` after a build.
@@ -164,7 +164,7 @@ Exact addresses can be read from `build/labels.txt` after a build.
 ## 7. Performance
 
 Latest master (2026-04, post-Phase-9: table-driven primitives,
-page-aligned buffers, 4x unrolled `fe_mul` inner loop):
+page-aligned buffers, 4x unrolled `fe25519_mul` inner loop):
 
 | Operation             | Jiffies | Wall-time (PAL) |
 | --------------------- | ------: | --------------: |
@@ -180,7 +180,7 @@ One scalar multiplication performs roughly 2,550 field multiplies +
 
 ## 8. Constraints and caveats
 
-- **Timing is not constant.** `fe_cswap` takes the same time regardless
+- **Timing is not constant.** `fe25519_cswap` takes the same time regardless
   of its mask, and the Montgomery ladder visits every bit, but the
   per-byte REU fetch routines' timing and the inner loops are data
   dependent at the microsecond level. This library is not suitable

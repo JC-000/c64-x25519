@@ -56,38 +56,38 @@ x25519_scalarmult:
         ; Initialize ladder state
         ; x_2 = 1
         lda #<(x25_x2)
-        sta fe_dst
+        sta fe25519_dst
         lda #>(x25_x2)
-        sta fe_dst+1
-        jsr fe_one
+        sta fe25519_dst+1
+        jsr fe25519_one
 
         ; z_2 = 0
         lda #<(x25_z2)
-        sta fe_dst
+        sta fe25519_dst
         lda #>(x25_z2)
-        sta fe_dst+1
-        jsr fe_zero
+        sta fe25519_dst+1
+        jsr fe25519_zero
 
         ; x_3 = u (mask high bit per RFC 7748 decodeUCoordinate)
         lda x25_u+31
         and #$7f
         sta x25_u+31
         lda #<(x25_u)
-        sta fe_src1
+        sta fe25519_src1
         lda #>(x25_u)
-        sta fe_src1+1
+        sta fe25519_src1+1
         lda #<(x25_x3)
-        sta fe_dst
+        sta fe25519_dst
         lda #>(x25_x3)
-        sta fe_dst+1
-        jsr fe_copy
+        sta fe25519_dst+1
+        jsr fe25519_copy
 
         ; z_3 = 1
         lda #<(x25_z3)
-        sta fe_dst
+        sta fe25519_dst
         lda #>(x25_z3)
-        sta fe_dst+1
-        jsr fe_one
+        sta fe25519_dst+1
+        jsr fe25519_one
 
         ; prev_bit = 0
         lda #0
@@ -121,31 +121,31 @@ x25519_scalarmult:
 
         ; cswap(x_2, x_3, swap)
         pha                    ; save mask
-        sta fe_carry           ; fe_cswap reads mask from A
+        sta fe_carry           ; fe25519_cswap reads mask from A
         lda #<(x25_x2)
-        sta fe_src1
+        sta fe25519_src1
         lda #>(x25_x2)
-        sta fe_src1+1
+        sta fe25519_src1+1
         lda #<(x25_x3)
-        sta fe_src2
+        sta fe25519_src2
         lda #>(x25_x3)
-        sta fe_src2+1
+        sta fe25519_src2+1
         lda fe_carry           ; restore mask
-        jsr fe_cswap
+        jsr fe25519_cswap
 
         ; cswap(z_2, z_3, swap)
         pla                    ; restore mask
         sta fe_carry
         lda #<(x25_z2)
-        sta fe_src1
+        sta fe25519_src1
         lda #>(x25_z2)
-        sta fe_src1+1
+        sta fe25519_src1+1
         lda #<(x25_z3)
-        sta fe_src2
+        sta fe25519_src2
         lda #>(x25_z3)
-        sta fe_src2+1
+        sta fe25519_src2+1
         lda fe_carry
-        jsr fe_cswap
+        jsr fe25519_cswap
 
         ; --- Montgomery ladder step ---
         jsr x25519_ladder_step
@@ -168,56 +168,56 @@ x25519_scalarmult:
         pha
         sta fe_carry
         lda #<(x25_x2)
-        sta fe_src1
+        sta fe25519_src1
         lda #>(x25_x2)
-        sta fe_src1+1
+        sta fe25519_src1+1
         lda #<(x25_x3)
-        sta fe_src2
+        sta fe25519_src2
         lda #>(x25_x3)
-        sta fe_src2+1
+        sta fe25519_src2+1
         lda fe_carry
-        jsr fe_cswap
+        jsr fe25519_cswap
 
         pla
         sta fe_carry
         lda #<(x25_z2)
-        sta fe_src1
+        sta fe25519_src1
         lda #>(x25_z2)
-        sta fe_src1+1
+        sta fe25519_src1+1
         lda #<(x25_z3)
-        sta fe_src2
+        sta fe25519_src2
         lda #>(x25_z3)
-        sta fe_src2+1
+        sta fe25519_src2+1
         lda fe_carry
-        jsr fe_cswap
+        jsr fe25519_cswap
 
         ; result = x_2 * z_2^(-1)
-        ; First compute z_2_inv = fe_inv(z_2)
+        ; First compute z_2_inv = fe25519_inv(z_2)
         lda #<(x25_z2)
-        sta fe_src1
+        sta fe25519_src1
         lda #>(x25_z2)
-        sta fe_src1+1
+        sta fe25519_src1+1
         lda #<(x25_result)
-        sta fe_dst
+        sta fe25519_dst
         lda #>(x25_result)
-        sta fe_dst+1
-        jsr fe_inv             ; x25_result = z_2^(-1)
+        sta fe25519_dst+1
+        jsr fe25519_inv             ; x25_result = z_2^(-1)
 
         ; result = x_2 * z_2_inv
         lda #<(x25_x2)
-        sta fe_src1
+        sta fe25519_src1
         lda #>(x25_x2)
-        sta fe_src1+1
+        sta fe25519_src1+1
         lda #<(x25_result)
-        sta fe_src2
+        sta fe25519_src2
         lda #>(x25_result)
-        sta fe_src2+1
+        sta fe25519_src2+1
         lda #<(x25_result)
-        sta fe_dst
+        sta fe25519_dst
         lda #>(x25_result)
-        sta fe_dst+1
-        jsr fe_mul             ; x25_result = x_2 * z_2^(-1) mod p
-        jsr fe_reduce_final    ; Final output must be canonical
+        sta fe25519_dst+1
+        jsr fe25519_mul             ; x25_result = x_2 * z_2^(-1) mod p
+        jsr fe25519_reduce_final    ; Final output must be canonical
 
         rts
 
@@ -242,229 +242,229 @@ x25519_scalarmult:
 x25519_ladder_step:
         ; A = x_2 + z_2 → x25_a
         lda #<(x25_x2)
-        sta fe_src1
+        sta fe25519_src1
         lda #>(x25_x2)
-        sta fe_src1+1
+        sta fe25519_src1+1
         lda #<(x25_z2)
-        sta fe_src2
+        sta fe25519_src2
         lda #>(x25_z2)
-        sta fe_src2+1
+        sta fe25519_src2+1
         lda #<(x25_a)
-        sta fe_dst
+        sta fe25519_dst
         lda #>(x25_a)
-        sta fe_dst+1
-        jsr fe_add
+        sta fe25519_dst+1
+        jsr fe25519_add
 
         ; B = x_2 - z_2 → x25_b
-        ; fe_src1=x25_x2, fe_src2=x25_z2 still set from fe_add above
+        ; fe25519_src1=x25_x2, fe25519_src2=x25_z2 still set from fe25519_add above
         lda #<(x25_b)
-        sta fe_dst
+        sta fe25519_dst
         lda #>(x25_b)
-        sta fe_dst+1
-        jsr fe_sub
+        sta fe25519_dst+1
+        jsr fe25519_sub
 
-        ; AA = A^2 → fe_tmp3
+        ; AA = A^2 → fe25519_tmp3
         lda #<(x25_a)
-        sta fe_src1
+        sta fe25519_src1
         lda #>(x25_a)
-        sta fe_src1+1
-        lda #<(fe_tmp3)
-        sta fe_dst
-        lda #>(fe_tmp3)
-        sta fe_dst+1
-        jsr fe_sqr             ; fe_tmp3 = AA
-        jsr fe_reduce_final    ; AA feeds into fe_sub/fe_add
+        sta fe25519_src1+1
+        lda #<(fe25519_tmp3)
+        sta fe25519_dst
+        lda #>(fe25519_tmp3)
+        sta fe25519_dst+1
+        jsr fe25519_sqr             ; fe25519_tmp3 = AA
+        jsr fe25519_reduce_final    ; AA feeds into fe25519_sub/fe25519_add
 
         ; BB = B^2 → fe_tmp4
         lda #<(x25_b)
-        sta fe_src1
+        sta fe25519_src1
         lda #>(x25_b)
-        sta fe_src1+1
+        sta fe25519_src1+1
         lda #<(fe_tmp4)
-        sta fe_dst
+        sta fe25519_dst
         lda #>(fe_tmp4)
-        sta fe_dst+1
-        jsr fe_sqr             ; fe_tmp4 = BB
-        jsr fe_reduce_final    ; BB feeds into fe_sub
+        sta fe25519_dst+1
+        jsr fe25519_sqr             ; fe_tmp4 = BB
+        jsr fe25519_reduce_final    ; BB feeds into fe25519_sub
 
         ; E = AA - BB → x25_e
-        lda #<(fe_tmp3)
-        sta fe_src1
-        lda #>(fe_tmp3)
-        sta fe_src1+1
+        lda #<(fe25519_tmp3)
+        sta fe25519_src1
+        lda #>(fe25519_tmp3)
+        sta fe25519_src1+1
         lda #<(fe_tmp4)
-        sta fe_src2
+        sta fe25519_src2
         lda #>(fe_tmp4)
-        sta fe_src2+1
+        sta fe25519_src2+1
         lda #<(x25_e)
-        sta fe_dst
+        sta fe25519_dst
         lda #>(x25_e)
-        sta fe_dst+1
-        jsr fe_sub             ; x25_e = E = AA - BB
+        sta fe25519_dst+1
+        jsr fe25519_sub             ; x25_e = E = AA - BB
 
-        ; C = x_3 + z_3 → fe_tmp1 (temp)
+        ; C = x_3 + z_3 → fe25519_tmp1 (temp)
         lda #<(x25_x3)
-        sta fe_src1
+        sta fe25519_src1
         lda #>(x25_x3)
-        sta fe_src1+1
+        sta fe25519_src1+1
         lda #<(x25_z3)
-        sta fe_src2
+        sta fe25519_src2
         lda #>(x25_z3)
-        sta fe_src2+1
-        lda #<(fe_tmp1)
-        sta fe_dst
-        lda #>(fe_tmp1)
-        sta fe_dst+1
-        jsr fe_add             ; fe_tmp1 = C
+        sta fe25519_src2+1
+        lda #<(fe25519_tmp1)
+        sta fe25519_dst
+        lda #>(fe25519_tmp1)
+        sta fe25519_dst+1
+        jsr fe25519_add             ; fe25519_tmp1 = C
 
-        ; D = x_3 - z_3 → fe_tmp2 (temp)
-        ; fe_src1=x25_x3, fe_src2=x25_z3 still set from fe_add above
-        lda #<(fe_tmp2)
-        sta fe_dst
-        lda #>(fe_tmp2)
-        sta fe_dst+1
-        jsr fe_sub             ; fe_tmp2 = D
+        ; D = x_3 - z_3 → fe25519_tmp2 (temp)
+        ; fe25519_src1=x25_x3, fe25519_src2=x25_z3 still set from fe25519_add above
+        lda #<(fe25519_tmp2)
+        sta fe25519_dst
+        lda #>(fe25519_tmp2)
+        sta fe25519_dst+1
+        jsr fe25519_sub             ; fe25519_tmp2 = D
 
         ; DA = D * A → x25_da
-        lda #<(fe_tmp2)
-        sta fe_src1
-        lda #>(fe_tmp2)
-        sta fe_src1+1
+        lda #<(fe25519_tmp2)
+        sta fe25519_src1
+        lda #>(fe25519_tmp2)
+        sta fe25519_src1+1
         lda #<(x25_a)
-        sta fe_src2
+        sta fe25519_src2
         lda #>(x25_a)
-        sta fe_src2+1
+        sta fe25519_src2+1
         lda #<(x25_da)
-        sta fe_dst
+        sta fe25519_dst
         lda #>(x25_da)
-        sta fe_dst+1
-        jsr fe_mul             ; x25_da = D * A
-        jsr fe_reduce_final    ; DA feeds into fe_add/fe_sub
+        sta fe25519_dst+1
+        jsr fe25519_mul             ; x25_da = D * A
+        jsr fe25519_reduce_final    ; DA feeds into fe25519_add/fe25519_sub
 
         ; CB = C * B → x25_cb
-        lda #<(fe_tmp1)
-        sta fe_src1
-        lda #>(fe_tmp1)
-        sta fe_src1+1
+        lda #<(fe25519_tmp1)
+        sta fe25519_src1
+        lda #>(fe25519_tmp1)
+        sta fe25519_src1+1
         lda #<(x25_b)
-        sta fe_src2
+        sta fe25519_src2
         lda #>(x25_b)
-        sta fe_src2+1
+        sta fe25519_src2+1
         lda #<(x25_cb)
-        sta fe_dst
+        sta fe25519_dst
         lda #>(x25_cb)
-        sta fe_dst+1
-        jsr fe_mul             ; x25_cb = C * B
-        jsr fe_reduce_final    ; CB feeds into fe_add/fe_sub
+        sta fe25519_dst+1
+        jsr fe25519_mul             ; x25_cb = C * B
+        jsr fe25519_reduce_final    ; CB feeds into fe25519_add/fe25519_sub
 
         ; x_3 = (DA + CB)^2
         lda #<(x25_da)
-        sta fe_src1
+        sta fe25519_src1
         lda #>(x25_da)
-        sta fe_src1+1
+        sta fe25519_src1+1
         lda #<(x25_cb)
-        sta fe_src2
+        sta fe25519_src2
         lda #>(x25_cb)
-        sta fe_src2+1
+        sta fe25519_src2+1
         lda #<(x25_x3)
-        sta fe_dst
+        sta fe25519_dst
         lda #>(x25_x3)
-        sta fe_dst+1
-        jsr fe_add             ; x25_x3 = DA + CB
-        ; fe_dst=x25_x3 still set; copy to fe_src1 for squaring
+        sta fe25519_dst+1
+        jsr fe25519_add             ; x25_x3 = DA + CB
+        ; fe25519_dst=x25_x3 still set; copy to fe25519_src1 for squaring
         lda #<(x25_x3)
-        sta fe_src1
+        sta fe25519_src1
         lda #>(x25_x3)
-        sta fe_src1+1
-        jsr fe_sqr             ; x25_x3 = (DA + CB)^2
-        jsr fe_reduce_final    ; x_3 is output, feeds into add in next iteration
+        sta fe25519_src1+1
+        jsr fe25519_sqr             ; x25_x3 = (DA + CB)^2
+        jsr fe25519_reduce_final    ; x_3 is output, feeds into add in next iteration
 
         ; z_3 = x_1 * (DA - CB)^2
         ; x_1 is the original u-coordinate (x25_u)
         lda #<(x25_da)
-        sta fe_src1
+        sta fe25519_src1
         lda #>(x25_da)
-        sta fe_src1+1
+        sta fe25519_src1+1
         lda #<(x25_cb)
-        sta fe_src2
+        sta fe25519_src2
         lda #>(x25_cb)
-        sta fe_src2+1
+        sta fe25519_src2+1
         lda #<(x25_z3)
-        sta fe_dst
+        sta fe25519_dst
         lda #>(x25_z3)
-        sta fe_dst+1
-        jsr fe_sub             ; x25_z3 = DA - CB
-        ; fe_dst=x25_z3 still set; copy to fe_src1 for squaring
+        sta fe25519_dst+1
+        jsr fe25519_sub             ; x25_z3 = DA - CB
+        ; fe25519_dst=x25_z3 still set; copy to fe25519_src1 for squaring
         lda #<(x25_z3)
-        sta fe_src1
+        sta fe25519_src1
         lda #>(x25_z3)
-        sta fe_src1+1
-        jsr fe_sqr             ; x25_z3 = (DA - CB)^2
+        sta fe25519_src1+1
+        jsr fe25519_sqr             ; x25_z3 = (DA - CB)^2
         ; Now z_3 = x_1 * (DA-CB)^2
-        ; fe_dst=x25_z3 still set from fe_sqr above
+        ; fe25519_dst=x25_z3 still set from fe25519_sqr above
         lda #<(x25_u)
-        sta fe_src1
+        sta fe25519_src1
         lda #>(x25_u)
-        sta fe_src1+1
+        sta fe25519_src1+1
         lda #<(x25_z3)
-        sta fe_src2
+        sta fe25519_src2
         lda #>(x25_z3)
-        sta fe_src2+1
-        jsr fe_mul             ; x25_z3 = x_1 * (DA - CB)^2
-        jsr fe_reduce_final    ; z_3 is output, feeds into add/sub in next iteration
+        sta fe25519_src2+1
+        jsr fe25519_mul             ; x25_z3 = x_1 * (DA - CB)^2
+        jsr fe25519_reduce_final    ; z_3 is output, feeds into add/sub in next iteration
 
         ; x_2 = AA * BB
-        lda #<(fe_tmp3)
-        sta fe_src1
-        lda #>(fe_tmp3)
-        sta fe_src1+1
+        lda #<(fe25519_tmp3)
+        sta fe25519_src1
+        lda #>(fe25519_tmp3)
+        sta fe25519_src1+1
         lda #<(fe_tmp4)
-        sta fe_src2
+        sta fe25519_src2
         lda #>(fe_tmp4)
-        sta fe_src2+1
+        sta fe25519_src2+1
         lda #<(x25_x2)
-        sta fe_dst
+        sta fe25519_dst
         lda #>(x25_x2)
-        sta fe_dst+1
-        jsr fe_mul             ; x25_x2 = AA * BB
-        jsr fe_reduce_final    ; x_2 is output, feeds into add/sub in next iteration
+        sta fe25519_dst+1
+        jsr fe25519_mul             ; x25_x2 = AA * BB
+        jsr fe25519_reduce_final    ; x_2 is output, feeds into add/sub in next iteration
 
         ; z_2 = E * (AA + a24*E)
-        ; First: a24*E → fe_tmp1
+        ; First: a24*E → fe25519_tmp1
         lda #<(x25_e)
-        sta fe_src1
+        sta fe25519_src1
         lda #>(x25_e)
-        sta fe_src1+1
-        lda #<(fe_tmp1)
-        sta fe_dst
-        lda #>(fe_tmp1)
-        sta fe_dst+1
-        jsr fe_mul_a24         ; fe_tmp1 = a24 * E
+        sta fe25519_src1+1
+        lda #<(fe25519_tmp1)
+        sta fe25519_dst
+        lda #>(fe25519_tmp1)
+        sta fe25519_dst+1
+        jsr fe25519_mul_a24         ; fe25519_tmp1 = a24 * E
 
-        ; AA + a24*E → fe_tmp1
-        ; fe_dst=fe_tmp1 still set from fe_mul_a24 above
-        lda #<(fe_tmp3)
-        sta fe_src1
-        lda #>(fe_tmp3)
-        sta fe_src1+1
-        lda #<(fe_tmp1)
-        sta fe_src2
-        lda #>(fe_tmp1)
-        sta fe_src2+1
-        jsr fe_add             ; fe_tmp1 = AA + a24*E
+        ; AA + a24*E → fe25519_tmp1
+        ; fe25519_dst=fe25519_tmp1 still set from fe25519_mul_a24 above
+        lda #<(fe25519_tmp3)
+        sta fe25519_src1
+        lda #>(fe25519_tmp3)
+        sta fe25519_src1+1
+        lda #<(fe25519_tmp1)
+        sta fe25519_src2
+        lda #>(fe25519_tmp1)
+        sta fe25519_src2+1
+        jsr fe25519_add             ; fe25519_tmp1 = AA + a24*E
 
         ; z_2 = E * (AA + a24*E)
-        ; fe_src2=fe_tmp1 still set from fe_add above
+        ; fe25519_src2=fe25519_tmp1 still set from fe25519_add above
         lda #<(x25_e)
-        sta fe_src1
+        sta fe25519_src1
         lda #>(x25_e)
-        sta fe_src1+1
+        sta fe25519_src1+1
         lda #<(x25_z2)
-        sta fe_dst
+        sta fe25519_dst
         lda #>(x25_z2)
-        sta fe_dst+1
-        jsr fe_mul             ; x25_z2 = E * (AA + a24*E)
-        jsr fe_reduce_final    ; z_2 is output, feeds into add/sub in next iteration
+        sta fe25519_dst+1
+        jsr fe25519_mul             ; x25_z2 = E * (AA + a24*E)
+        jsr fe25519_reduce_final    ; z_2 is output, feeds into add/sub in next iteration
 
         rts
 
@@ -480,14 +480,14 @@ x25519_ladder_step:
 x25519_base:
         ; Copy basepoint (9) to x25_u
         lda #<(x25_basepoint)
-        sta fe_src1
+        sta fe25519_src1
         lda #>(x25_basepoint)
-        sta fe_src1+1
+        sta fe25519_src1+1
         lda #<(x25_u)
-        sta fe_dst
+        sta fe25519_dst
         lda #>(x25_u)
-        sta fe_dst+1
-        jsr fe_copy
+        sta fe25519_dst+1
+        jsr fe25519_copy
 
         ; Clamp scalar
         jsr x25519_clamp

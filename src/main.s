@@ -236,7 +236,7 @@ reu_mul_init:
         lda #%10110000         ; execute + autoload + STASH
         sta reu_command
 
-        ; --- Generate pre-doubled tables for fe_sqr (8f+8g) ---
+        ; --- Generate pre-doubled tables for fe25519_sqr (8f+8g) ---
         ; Overwrite mul_dma_lo/hi with 2*a*b (17-bit), and fill mul_dma_carry
         ; with the 17th bit. Regular tables were already stashed above.
         ldx #0
@@ -386,7 +386,7 @@ reu_fetch_mul_row:
         rts
 
 ; =============================================================================
-; reu_fetch_doubled_row - DMA pre-doubled multiplication row for fe_sqr
+; reu_fetch_doubled_row - DMA pre-doubled multiplication row for fe25519_sqr
 ;
 ; Input: A = multiplier value in mul_cached_a
 ; Fetches 512 bytes from banks 4-5 to mul_dma_lo/hi (doubled lo+hi),
@@ -500,9 +500,9 @@ input_buffer:
 ; These 34 symbols are referenced by the Python test harness.
 ; =============================================================================
 .export x25519_base, x25519_clamp, x25519_scalarmult
-.export fe_add, fe_copy, fe_cswap, fe_dst, fe_inv, fe_mul, fe_mul_a24
-.export fe_one, fe_reduce_final, fe_sqr, fe_src1, fe_src2, fe_sub
-.export fe_tmp1, fe_tmp2, fe_tmp3, fe_zero
+.export fe25519_add, fe25519_copy, fe25519_cswap, fe25519_dst, fe25519_inv, fe25519_mul, fe25519_mul_a24
+.export fe25519_one, fe25519_reduce_final, fe25519_sqr, fe25519_src1, fe25519_src2, fe25519_sub
+.export fe25519_tmp1, fe25519_tmp2, fe25519_tmp3, fe25519_zero
 .export x25_result, x25_scalar, x25_u, x25_x2, x25_x3, x25_z2, x25_z3
 .export mul38_hi_tab, mul38_lo_tab
 .export bench_start, bench_stop, bench_ticks, input_buffer

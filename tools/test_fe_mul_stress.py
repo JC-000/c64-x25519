@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""test_fe_mul_stress.py — Stress test for fe_mul (field multiplication mod 2^255-19).
+"""test_fe_mul_stress.py — Stress test for fe25519_mul (field multiplication mod 2^255-19).
 
 Targets data-dependent carry bugs in the 2x inner loop unroll optimization
 by exercising odd/even j positions, long carry chains, and boundary values.
@@ -42,15 +42,15 @@ def le32_to_int(data):
 
 
 def set_fe_ptrs(transport, labels, src1=None, src2=None, dst=None):
-    """Set fe_src1, fe_src2, fe_dst zero-page pointers."""
+    """Set fe25519_src1, fe25519_src2, fe25519_dst zero-page pointers."""
     if src1 is not None:
-        write_bytes(transport, labels["fe_src1"],
+        write_bytes(transport, labels["fe25519_src1"],
                     bytes([src1 & 0xFF, src1 >> 8]))
     if src2 is not None:
-        write_bytes(transport, labels["fe_src2"],
+        write_bytes(transport, labels["fe25519_src2"],
                     bytes([src2 & 0xFF, src2 >> 8]))
     if dst is not None:
-        write_bytes(transport, labels["fe_dst"],
+        write_bytes(transport, labels["fe25519_dst"],
                     bytes([dst & 0xFF, dst >> 8]))
 
 
@@ -66,16 +66,16 @@ def read_fe(transport, addr):
 
 def c64_fe_mul(transport, labels, a, b):
     """Compute a * b mod p on C64."""
-    write_fe(transport, labels["fe_tmp1"], a)
-    write_fe(transport, labels["fe_tmp2"], b)
+    write_fe(transport, labels["fe25519_tmp1"], a)
+    write_fe(transport, labels["fe25519_tmp2"], b)
     set_fe_ptrs(transport, labels,
-                src1=labels["fe_tmp1"],
-                src2=labels["fe_tmp2"],
-                dst=labels["fe_tmp3"])
-    jsr(transport, labels["fe_mul"], timeout=120.0)
-    # fe_mul no longer calls fe_reduce_final internally; canonicalize for test
-    jsr(transport, labels["fe_reduce_final"], timeout=5.0)
-    return read_fe(transport, labels["fe_tmp3"])
+                src1=labels["fe25519_tmp1"],
+                src2=labels["fe25519_tmp2"],
+                dst=labels["fe25519_tmp3"])
+    jsr(transport, labels["fe25519_mul"], timeout=120.0)
+    # fe25519_mul no longer calls fe25519_reduce_final internally; canonicalize for test
+    jsr(transport, labels["fe25519_reduce_final"], timeout=5.0)
+    return read_fe(transport, labels["fe25519_tmp3"])
 
 
 def bytes_to_int(b):
@@ -84,17 +84,17 @@ def bytes_to_int(b):
 
 
 def run_test(transport, labels, name, a, b, passed, failed):
-    """Run a single fe_mul test case with commutativity check.
+    """Run a single fe25519_mul test case with commutativity check.
 
     The expected value is computed two independent ways — once via Python
-    bignum arithmetic mod P, and once via ``ref_x25519.fe_mul`` (also bignum
+    bignum arithmetic mod P, and once via ``ref_x25519.fe25519_mul`` (also bignum
     but through the dedicated reference module). They must always agree; if
     we ever swap in a stronger reference backend, this is the hook point.
     """
     expected = (a * b) % P
-    ref_expected = ref_x25519.fe_mul(a, b)
+    ref_expected = ref_x25519.fe25519_mul(a, b)
     assert expected == ref_expected, (
-        f"{name}: ref_x25519.fe_mul disagrees with inline Python "
+        f"{name}: ref_x25519.fe25519_mul disagrees with inline Python "
         f"(a={a:#x} b={b:#x})"
     )
 
@@ -145,7 +145,7 @@ def run_test(transport, labels, name, a, b, passed, failed):
 
 
 def run_tests(transport, labels, rng):
-    """Run all fe_mul stress test cases."""
+    """Run all fe25519_mul stress test cases."""
     passed = 0
     failed = 0
 
@@ -295,8 +295,8 @@ def main():
 
     labels = Labels.from_file(LABELS_PATH)
     required = [
-        "fe_src1", "fe_src2", "fe_dst",
-        "fe_mul", "fe_reduce_final", "fe_tmp1", "fe_tmp2", "fe_tmp3",
+        "fe25519_src1", "fe25519_src2", "fe25519_dst",
+        "fe25519_mul", "fe25519_reduce_final", "fe25519_tmp1", "fe25519_tmp2", "fe25519_tmp3",
     ]
     for name in required:
         if labels.address(name) is None:

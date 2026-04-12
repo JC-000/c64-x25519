@@ -3,9 +3,9 @@
 
 Verifies:
 1. vic_blank/vic_unblank labels exist and routines work
-2. Full fe25519 correctness suite (fe_add, fe_sub, fe_mul, fe_sqr,
-   fe_mul_a24, fe_inv(1), fe_cswap, etc.) to ensure mul_by_38 is correct
-3. Benchmarks fe_mul with and without VIC blanking
+2. Full fe25519 correctness suite (fe25519_add, fe25519_sub, fe25519_mul, fe25519_sqr,
+   fe25519_mul_a24, fe25519_inv(1), fe25519_cswap, etc.) to ensure mul_by_38 is correct
+3. Benchmarks fe25519_mul with and without VIC blanking
 
 Usage:
     python3 tools/test_opt_vic_reduce38.py [--seed S] [--verbose]
@@ -71,13 +71,13 @@ def rand_fe(rng):
 
 def set_fe_ptrs(transport, labels, src1=None, src2=None, dst=None):
     if src1 is not None:
-        write_bytes(transport, labels["fe_src1"],
+        write_bytes(transport, labels["fe25519_src1"],
                     bytes([src1 & 0xFF, src1 >> 8]))
     if src2 is not None:
-        write_bytes(transport, labels["fe_src2"],
+        write_bytes(transport, labels["fe25519_src2"],
                     bytes([src2 & 0xFF, src2 >> 8]))
     if dst is not None:
-        write_bytes(transport, labels["fe_dst"],
+        write_bytes(transport, labels["fe25519_dst"],
                     bytes([dst & 0xFF, dst >> 8]))
 
 
@@ -90,88 +90,88 @@ def read_fe(transport, addr):
 
 
 def c64_fe_add(transport, labels, a, b):
-    write_fe(transport, labels["fe_tmp1"], a)
-    write_fe(transport, labels["fe_tmp2"], b)
+    write_fe(transport, labels["fe25519_tmp1"], a)
+    write_fe(transport, labels["fe25519_tmp2"], b)
     set_fe_ptrs(transport, labels,
-                src1=labels["fe_tmp1"],
-                src2=labels["fe_tmp2"],
-                dst=labels["fe_tmp3"])
-    jsr(transport, labels["fe_add"])
-    return read_fe(transport, labels["fe_tmp3"])
+                src1=labels["fe25519_tmp1"],
+                src2=labels["fe25519_tmp2"],
+                dst=labels["fe25519_tmp3"])
+    jsr(transport, labels["fe25519_add"])
+    return read_fe(transport, labels["fe25519_tmp3"])
 
 
 def c64_fe_sub(transport, labels, a, b):
-    write_fe(transport, labels["fe_tmp1"], a)
-    write_fe(transport, labels["fe_tmp2"], b)
+    write_fe(transport, labels["fe25519_tmp1"], a)
+    write_fe(transport, labels["fe25519_tmp2"], b)
     set_fe_ptrs(transport, labels,
-                src1=labels["fe_tmp1"],
-                src2=labels["fe_tmp2"],
-                dst=labels["fe_tmp3"])
-    jsr(transport, labels["fe_sub"])
-    return read_fe(transport, labels["fe_tmp3"])
+                src1=labels["fe25519_tmp1"],
+                src2=labels["fe25519_tmp2"],
+                dst=labels["fe25519_tmp3"])
+    jsr(transport, labels["fe25519_sub"])
+    return read_fe(transport, labels["fe25519_tmp3"])
 
 
 def c64_fe_mul(transport, labels, a, b):
-    write_fe(transport, labels["fe_tmp1"], a)
-    write_fe(transport, labels["fe_tmp2"], b)
+    write_fe(transport, labels["fe25519_tmp1"], a)
+    write_fe(transport, labels["fe25519_tmp2"], b)
     set_fe_ptrs(transport, labels,
-                src1=labels["fe_tmp1"],
-                src2=labels["fe_tmp2"],
-                dst=labels["fe_tmp3"])
-    jsr(transport, labels["fe_mul"], timeout=120.0)
-    jsr(transport, labels["fe_reduce_final"], timeout=5.0)
-    return read_fe(transport, labels["fe_tmp3"])
+                src1=labels["fe25519_tmp1"],
+                src2=labels["fe25519_tmp2"],
+                dst=labels["fe25519_tmp3"])
+    jsr(transport, labels["fe25519_mul"], timeout=120.0)
+    jsr(transport, labels["fe25519_reduce_final"], timeout=5.0)
+    return read_fe(transport, labels["fe25519_tmp3"])
 
 
 def c64_fe_sqr(transport, labels, a):
-    write_fe(transport, labels["fe_tmp1"], a)
+    write_fe(transport, labels["fe25519_tmp1"], a)
     set_fe_ptrs(transport, labels,
-                src1=labels["fe_tmp1"],
-                dst=labels["fe_tmp3"])
-    jsr(transport, labels["fe_sqr"], timeout=120.0)
-    jsr(transport, labels["fe_reduce_final"], timeout=5.0)
-    return read_fe(transport, labels["fe_tmp3"])
+                src1=labels["fe25519_tmp1"],
+                dst=labels["fe25519_tmp3"])
+    jsr(transport, labels["fe25519_sqr"], timeout=120.0)
+    jsr(transport, labels["fe25519_reduce_final"], timeout=5.0)
+    return read_fe(transport, labels["fe25519_tmp3"])
 
 
 def c64_fe_inv(transport, labels, a):
-    write_fe(transport, labels["fe_tmp1"], a)
+    write_fe(transport, labels["fe25519_tmp1"], a)
     set_fe_ptrs(transport, labels,
-                src1=labels["fe_tmp1"],
-                dst=labels["fe_tmp3"])
-    jsr(transport, labels["fe_inv"], timeout=600.0)
-    return read_fe(transport, labels["fe_tmp3"])
+                src1=labels["fe25519_tmp1"],
+                dst=labels["fe25519_tmp3"])
+    jsr(transport, labels["fe25519_inv"], timeout=600.0)
+    return read_fe(transport, labels["fe25519_tmp3"])
 
 
 def c64_fe_mul_a24(transport, labels, a):
-    write_fe(transport, labels["fe_tmp1"], a)
+    write_fe(transport, labels["fe25519_tmp1"], a)
     set_fe_ptrs(transport, labels,
-                src1=labels["fe_tmp1"],
-                dst=labels["fe_tmp3"])
-    jsr(transport, labels["fe_mul_a24"], timeout=60.0)
-    return read_fe(transport, labels["fe_tmp3"])
+                src1=labels["fe25519_tmp1"],
+                dst=labels["fe25519_tmp3"])
+    jsr(transport, labels["fe25519_mul_a24"], timeout=60.0)
+    return read_fe(transport, labels["fe25519_tmp3"])
 
 
 def c64_fe_copy(transport, labels, a):
-    write_fe(transport, labels["fe_tmp1"], a)
+    write_fe(transport, labels["fe25519_tmp1"], a)
     set_fe_ptrs(transport, labels,
-                src1=labels["fe_tmp1"],
-                dst=labels["fe_tmp3"])
-    jsr(transport, labels["fe_copy"])
-    return read_fe(transport, labels["fe_tmp3"])
+                src1=labels["fe25519_tmp1"],
+                dst=labels["fe25519_tmp3"])
+    jsr(transport, labels["fe25519_copy"])
+    return read_fe(transport, labels["fe25519_tmp3"])
 
 
 def c64_fe_zero(transport, labels):
-    write_fe(transport, labels["fe_tmp3"], P - 1)
-    set_fe_ptrs(transport, labels, dst=labels["fe_tmp3"])
-    jsr(transport, labels["fe_zero"])
-    return read_fe(transport, labels["fe_tmp3"])
+    write_fe(transport, labels["fe25519_tmp3"], P - 1)
+    set_fe_ptrs(transport, labels, dst=labels["fe25519_tmp3"])
+    jsr(transport, labels["fe25519_zero"])
+    return read_fe(transport, labels["fe25519_tmp3"])
 
 
 def c64_fe_one(transport, labels):
-    write_fe(transport, labels["fe_tmp3"], P - 1)
-    set_fe_ptrs(transport, labels, dst=labels["fe_tmp3"])
-    jsr(transport, labels["fe_one"])
-    return read_fe(transport, labels["fe_tmp3"])
+    write_fe(transport, labels["fe25519_tmp3"], P - 1)
+    set_fe_ptrs(transport, labels, dst=labels["fe25519_tmp3"])
+    jsr(transport, labels["fe25519_one"])
+    return read_fe(transport, labels["fe25519_tmp3"])
 
 
 # ============================================================================
@@ -237,30 +237,30 @@ def test_copy_zero_one(transport, labels):
     result = c64_fe_zero(transport, labels)
     if result == 0:
         passed += 1
-        if VERBOSE: print("  PASS fe_zero")
+        if VERBOSE: print("  PASS fe25519_zero")
     else:
         failed += 1
-        print(f"  FAIL fe_zero: got {result}")
-    assert result == 0, f"fe_zero: got {result}"
+        print(f"  FAIL fe25519_zero: got {result}")
+    assert result == 0, f"fe25519_zero: got {result}"
 
     result = c64_fe_one(transport, labels)
     if result == 1:
         passed += 1
-        if VERBOSE: print("  PASS fe_one")
+        if VERBOSE: print("  PASS fe25519_one")
     else:
         failed += 1
-        print(f"  FAIL fe_one: got {result}")
-    assert result == 1, f"fe_one: got {result}"
+        print(f"  FAIL fe25519_one: got {result}")
+    assert result == 1, f"fe25519_one: got {result}"
 
     test_val = 0xDEADBEEF_CAFEBABE_12345678_9ABCDEF0
     result = c64_fe_copy(transport, labels, test_val)
     if result == test_val:
         passed += 1
-        if VERBOSE: print("  PASS fe_copy")
+        if VERBOSE: print("  PASS fe25519_copy")
     else:
         failed += 1
-        print(f"  FAIL fe_copy: expected {test_val:#x}, got {result:#x}")
-    assert result == test_val, f"fe_copy: expected {test_val:#x} got {result:#x}"
+        print(f"  FAIL fe25519_copy: expected {test_val:#x}, got {result:#x}")
+    assert result == test_val, f"fe25519_copy: expected {test_val:#x} got {result:#x}"
 
     return passed, failed
 
@@ -417,22 +417,22 @@ def test_cswap(transport, labels, rng):
     passed = failed = 0
     a = rand_fe(rng)
     b = rand_fe(rng)
-    cswap_addr = labels["fe_cswap"]
+    cswap_addr = labels["fe25519_cswap"]
     trampoline = labels["input_buffer"]
 
     # No-swap (mask=$00)
-    write_fe(transport, labels["fe_tmp1"], a)
-    write_fe(transport, labels["fe_tmp2"], b)
+    write_fe(transport, labels["fe25519_tmp1"], a)
+    write_fe(transport, labels["fe25519_tmp2"], b)
     set_fe_ptrs(transport, labels,
-                src1=labels["fe_tmp1"],
-                src2=labels["fe_tmp2"])
+                src1=labels["fe25519_tmp1"],
+                src2=labels["fe25519_tmp2"])
     write_bytes(transport, trampoline, bytes([
         0xA9, 0x00,
         0x4C, cswap_addr & 0xFF, cswap_addr >> 8,
     ]))
     jsr(transport, trampoline)
-    r_a = read_fe(transport, labels["fe_tmp1"])
-    r_b = read_fe(transport, labels["fe_tmp2"])
+    r_a = read_fe(transport, labels["fe25519_tmp1"])
+    r_b = read_fe(transport, labels["fe25519_tmp2"])
     if r_a == a and r_b == b:
         passed += 1
         if VERBOSE: print("  PASS cswap no-swap")
@@ -444,18 +444,18 @@ def test_cswap(transport, labels, rng):
     )
 
     # Swap (mask=$FF)
-    write_fe(transport, labels["fe_tmp1"], a)
-    write_fe(transport, labels["fe_tmp2"], b)
+    write_fe(transport, labels["fe25519_tmp1"], a)
+    write_fe(transport, labels["fe25519_tmp2"], b)
     set_fe_ptrs(transport, labels,
-                src1=labels["fe_tmp1"],
-                src2=labels["fe_tmp2"])
+                src1=labels["fe25519_tmp1"],
+                src2=labels["fe25519_tmp2"])
     write_bytes(transport, trampoline, bytes([
         0xA9, 0xFF,
         0x4C, cswap_addr & 0xFF, cswap_addr >> 8,
     ]))
     jsr(transport, trampoline)
-    r_a = read_fe(transport, labels["fe_tmp1"])
-    r_b = read_fe(transport, labels["fe_tmp2"])
+    r_a = read_fe(transport, labels["fe25519_tmp1"])
+    r_b = read_fe(transport, labels["fe25519_tmp2"])
     if r_a == b and r_b == a:
         passed += 1
         if VERBOSE: print("  PASS cswap swap")
@@ -499,10 +499,10 @@ def test_reduce_final(transport, labels):
     ]
     for name, val, expected in cases:
         raw = val.to_bytes(32, "little")
-        write_bytes(transport, labels["fe_tmp3"], raw)
-        set_fe_ptrs(transport, labels, dst=labels["fe_tmp3"])
-        jsr(transport, labels["fe_reduce_final"])
-        result = read_fe(transport, labels["fe_tmp3"])
+        write_bytes(transport, labels["fe25519_tmp3"], raw)
+        set_fe_ptrs(transport, labels, dst=labels["fe25519_tmp3"])
+        jsr(transport, labels["fe25519_reduce_final"])
+        result = read_fe(transport, labels["fe25519_tmp3"])
         if result == expected:
             passed += 1
             if VERBOSE: print(f"  PASS reduce_final {name}")
@@ -520,19 +520,19 @@ def test_reduce_final(transport, labels):
 # ============================================================================
 
 def bench_fe_mul(transport, labels, a, b, blank=False):
-    """Time a single fe_mul call. If blank=True, blank screen first."""
-    write_fe(transport, labels["fe_tmp1"], a)
-    write_fe(transport, labels["fe_tmp2"], b)
+    """Time a single fe25519_mul call. If blank=True, blank screen first."""
+    write_fe(transport, labels["fe25519_tmp1"], a)
+    write_fe(transport, labels["fe25519_tmp2"], b)
     set_fe_ptrs(transport, labels,
-                src1=labels["fe_tmp1"],
-                src2=labels["fe_tmp2"],
-                dst=labels["fe_tmp3"])
+                src1=labels["fe25519_tmp1"],
+                src2=labels["fe25519_tmp2"],
+                dst=labels["fe25519_tmp3"])
 
     if blank:
         jsr(transport, labels["vic_blank"])
 
     jsr(transport, labels["bench_start"])
-    jsr(transport, labels["fe_mul"], timeout=120.0)
+    jsr(transport, labels["fe25519_mul"], timeout=120.0)
     jsr(transport, labels["bench_stop"])
 
     if blank:
@@ -557,14 +557,14 @@ def run_tests(transport, labels, seed):
         ("vic_blank/unblank function", lambda: test_vic_blank_unblank(transport, labels)),
         ("copy/zero/one", lambda: test_copy_zero_one(transport, labels)),
         ("reduce_final", lambda: test_reduce_final(transport, labels)),
-        ("fe_add", lambda: test_add(transport, labels, rng)),
-        ("fe_sub", lambda: test_sub(transport, labels, rng)),
+        ("fe25519_add", lambda: test_add(transport, labels, rng)),
+        ("fe25519_sub", lambda: test_sub(transport, labels, rng)),
         ("add/sub inverse", lambda: test_add_sub_inverse(transport, labels, rng)),
-        ("fe_mul", lambda: test_mul(transport, labels, rng)),
-        ("fe_sqr", lambda: test_sqr(transport, labels, rng)),
-        ("fe_mul_a24", lambda: test_mul_a24(transport, labels, rng)),
-        ("fe_cswap", lambda: test_cswap(transport, labels, rng)),
-        ("fe_inv", lambda: test_inv(transport, labels, rng)),
+        ("fe25519_mul", lambda: test_mul(transport, labels, rng)),
+        ("fe25519_sqr", lambda: test_sqr(transport, labels, rng)),
+        ("fe25519_mul_a24", lambda: test_mul_a24(transport, labels, rng)),
+        ("fe25519_cswap", lambda: test_cswap(transport, labels, rng)),
+        ("fe25519_inv", lambda: test_inv(transport, labels, rng)),
     ]
 
     for name, test_fn in test_groups:
@@ -580,12 +580,12 @@ def run_tests(transport, labels, seed):
 
 
 def run_benchmark(transport, labels):
-    """Benchmark fe_mul with and without VIC blanking."""
+    """Benchmark fe25519_mul with and without VIC blanking."""
     rng = random.Random(25519)
     iterations = 3
 
     print(f"\n{'='*60}")
-    print("BENCHMARK: fe_mul with VIC blanking comparison")
+    print("BENCHMARK: fe25519_mul with VIC blanking comparison")
     print(f"{'='*60}")
 
     # Generate test values
@@ -593,7 +593,7 @@ def run_benchmark(transport, labels):
                   for _ in range(iterations)]
 
     # Without blanking (screen on)
-    print(f"\n--- fe_mul WITHOUT VIC blanking ({iterations} iterations) ---")
+    print(f"\n--- fe25519_mul WITHOUT VIC blanking ({iterations} iterations) ---")
     normal_ticks = []
     for i, (a, b) in enumerate(test_pairs):
         ticks = bench_fe_mul(transport, labels, a, b, blank=False)
@@ -603,7 +603,7 @@ def run_benchmark(transport, labels):
     avg_normal = sum(normal_ticks) / len(normal_ticks)
 
     # With blanking (screen off)
-    print(f"\n--- fe_mul WITH VIC blanking ({iterations} iterations) ---")
+    print(f"\n--- fe25519_mul WITH VIC blanking ({iterations} iterations) ---")
     blank_ticks = []
     for i, (a, b) in enumerate(test_pairs):
         ticks = bench_fe_mul(transport, labels, a, b, blank=True)
@@ -655,11 +655,11 @@ def main():
     # Load labels
     labels = Labels.from_file(LABELS_PATH)
     required = [
-        "fe_src1", "fe_src2", "fe_dst",
-        "fe_copy", "fe_zero", "fe_one",
-        "fe_add", "fe_sub", "fe_mul", "fe_sqr", "fe_inv",
-        "fe_cswap", "fe_mul_a24", "fe_reduce_final",
-        "fe_tmp1", "fe_tmp2", "fe_tmp3", "fe_tmp4",
+        "fe25519_src1", "fe25519_src2", "fe25519_dst",
+        "fe25519_copy", "fe25519_zero", "fe25519_one",
+        "fe25519_add", "fe25519_sub", "fe25519_mul", "fe25519_sqr", "fe25519_inv",
+        "fe25519_cswap", "fe25519_mul_a24", "fe25519_reduce_final",
+        "fe25519_tmp1", "fe25519_tmp2", "fe25519_tmp3", "fe_tmp4",
         "fe_wide", "fe_p",
         "cassette_buf", "input_buffer",
         "vic_blank", "vic_unblank",

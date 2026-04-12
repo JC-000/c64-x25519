@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""test_opt_sqr.py — Test and benchmark the dedicated fe_sqr routine.
+"""test_opt_sqr.py — Test and benchmark the dedicated fe25519_sqr routine.
 
 Tests:
-  1. fe_sqr against Python reference for: 0, 1, 2, P-1, and 10 random values
-  2. fe_sqr(a) == fe_mul(a, a) cross-check for several random values
-  3. Benchmark fe_sqr vs fe_mul(a,a) to measure speedup
+  1. fe25519_sqr against Python reference for: 0, 1, 2, P-1, and 10 random values
+  2. fe25519_sqr(a) == fe25519_mul(a, a) cross-check for several random values
+  3. Benchmark fe25519_sqr vs fe25519_mul(a,a) to measure speedup
 
 Usage:
     python3 tools/test_opt_sqr.py [--seed S] [--verbose]
@@ -45,15 +45,15 @@ def rand_fe(rng):
 
 
 def set_fe_ptrs(transport, labels, src1=None, src2=None, dst=None):
-    """Set fe_src1, fe_src2, fe_dst zero-page pointers."""
+    """Set fe25519_src1, fe25519_src2, fe25519_dst zero-page pointers."""
     if src1 is not None:
-        write_bytes(transport, labels["fe_src1"],
+        write_bytes(transport, labels["fe25519_src1"],
                     bytes([src1 & 0xFF, src1 >> 8]))
     if src2 is not None:
-        write_bytes(transport, labels["fe_src2"],
+        write_bytes(transport, labels["fe25519_src2"],
                     bytes([src2 & 0xFF, src2 >> 8]))
     if dst is not None:
-        write_bytes(transport, labels["fe_dst"],
+        write_bytes(transport, labels["fe25519_dst"],
                     bytes([dst & 0xFF, dst >> 8]))
 
 
@@ -68,27 +68,27 @@ def read_fe(transport, addr):
 
 
 def c64_fe_sqr(transport, labels, a):
-    """Compute a^2 mod p on C64 via fe_sqr."""
-    write_fe(transport, labels["fe_tmp1"], a)
+    """Compute a^2 mod p on C64 via fe25519_sqr."""
+    write_fe(transport, labels["fe25519_tmp1"], a)
     set_fe_ptrs(transport, labels,
-                src1=labels["fe_tmp1"],
-                dst=labels["fe_tmp3"])
-    jsr(transport, labels["fe_sqr"], timeout=120.0)
-    jsr(transport, labels["fe_reduce_final"], timeout=5.0)
-    return read_fe(transport, labels["fe_tmp3"])
+                src1=labels["fe25519_tmp1"],
+                dst=labels["fe25519_tmp3"])
+    jsr(transport, labels["fe25519_sqr"], timeout=120.0)
+    jsr(transport, labels["fe25519_reduce_final"], timeout=5.0)
+    return read_fe(transport, labels["fe25519_tmp3"])
 
 
 def c64_fe_mul(transport, labels, a, b):
-    """Compute a * b mod p on C64 via fe_mul."""
-    write_fe(transport, labels["fe_tmp1"], a)
-    write_fe(transport, labels["fe_tmp2"], b)
+    """Compute a * b mod p on C64 via fe25519_mul."""
+    write_fe(transport, labels["fe25519_tmp1"], a)
+    write_fe(transport, labels["fe25519_tmp2"], b)
     set_fe_ptrs(transport, labels,
-                src1=labels["fe_tmp1"],
-                src2=labels["fe_tmp2"],
-                dst=labels["fe_tmp3"])
-    jsr(transport, labels["fe_mul"], timeout=120.0)
-    jsr(transport, labels["fe_reduce_final"], timeout=5.0)
-    return read_fe(transport, labels["fe_tmp3"])
+                src1=labels["fe25519_tmp1"],
+                src2=labels["fe25519_tmp2"],
+                dst=labels["fe25519_tmp3"])
+    jsr(transport, labels["fe25519_mul"], timeout=120.0)
+    jsr(transport, labels["fe25519_reduce_final"], timeout=5.0)
+    return read_fe(transport, labels["fe25519_tmp3"])
 
 
 def bench_call(transport, labels, setup_fn, call_label, timeout=120.0):
@@ -107,7 +107,7 @@ def bench_call(transport, labels, setup_fn, call_label, timeout=120.0):
 # ============================================================================
 
 def test_sqr_reference(transport, labels, rng):
-    """Test fe_sqr against Python reference."""
+    """Test fe25519_sqr against Python reference."""
     passed = failed = 0
 
     # Fixed test cases
@@ -142,7 +142,7 @@ def test_sqr_reference(transport, labels, rng):
 
 
 def test_sqr_vs_mul(transport, labels, rng):
-    """Test fe_sqr(a) == fe_mul(a, a) for random values."""
+    """Test fe25519_sqr(a) == fe25519_mul(a, a) for random values."""
     passed = failed = 0
 
     for i in range(5):
@@ -157,8 +157,8 @@ def test_sqr_vs_mul(transport, labels, rng):
             failed += 1
             print(f"  FAIL sqr_vs_mul #{i}:")
             print(f"    a          = {a}")
-            print(f"    fe_sqr(a)  = {sqr_result}")
-            print(f"    fe_mul(a,a)= {mul_result}")
+            print(f"    fe25519_sqr(a)  = {sqr_result}")
+            print(f"    fe25519_mul(a,a)= {mul_result}")
         assert sqr_result == mul_result, (
             f"sqr_vs_mul #{i}: a={a} sqr={sqr_result} mul={mul_result}"
         )
@@ -167,7 +167,7 @@ def test_sqr_vs_mul(transport, labels, rng):
 
 
 def bench_sqr_vs_mul(transport, labels, rng, iterations=5):
-    """Benchmark fe_sqr vs fe_mul(a,a) and report speedup."""
+    """Benchmark fe25519_sqr vs fe25519_mul(a,a) and report speedup."""
     print(f"\n--- Benchmark ({iterations} iterations) ---")
 
     sqr_ticks_list = []
@@ -176,39 +176,39 @@ def bench_sqr_vs_mul(transport, labels, rng, iterations=5):
     for i in range(iterations):
         a = rng.randint(1, P - 1)
 
-        # Benchmark fe_sqr
+        # Benchmark fe25519_sqr
         def setup_sqr():
-            write_fe(transport, labels["fe_tmp1"], a)
+            write_fe(transport, labels["fe25519_tmp1"], a)
             set_fe_ptrs(transport, labels,
-                        src1=labels["fe_tmp1"],
-                        dst=labels["fe_tmp3"])
+                        src1=labels["fe25519_tmp1"],
+                        dst=labels["fe25519_tmp3"])
 
-        sqr_ticks = bench_call(transport, labels, setup_sqr, labels["fe_sqr"])
+        sqr_ticks = bench_call(transport, labels, setup_sqr, labels["fe25519_sqr"])
         sqr_ticks_list.append(sqr_ticks)
 
-        # Benchmark fe_mul(a, a)
+        # Benchmark fe25519_mul(a, a)
         def setup_mul():
-            write_fe(transport, labels["fe_tmp1"], a)
-            write_fe(transport, labels["fe_tmp2"], a)
+            write_fe(transport, labels["fe25519_tmp1"], a)
+            write_fe(transport, labels["fe25519_tmp2"], a)
             set_fe_ptrs(transport, labels,
-                        src1=labels["fe_tmp1"],
-                        src2=labels["fe_tmp2"],
-                        dst=labels["fe_tmp3"])
+                        src1=labels["fe25519_tmp1"],
+                        src2=labels["fe25519_tmp2"],
+                        dst=labels["fe25519_tmp3"])
 
-        mul_ticks = bench_call(transport, labels, setup_mul, labels["fe_mul"])
+        mul_ticks = bench_call(transport, labels, setup_mul, labels["fe25519_mul"])
         mul_ticks_list.append(mul_ticks)
 
         sqr_ms = sqr_ticks * 1000 / 60
         mul_ms = mul_ticks * 1000 / 60
-        print(f"  #{i}: fe_sqr={sqr_ticks} jiffies ({sqr_ms:.0f}ms), "
-              f"fe_mul={mul_ticks} jiffies ({mul_ms:.0f}ms)")
+        print(f"  #{i}: fe25519_sqr={sqr_ticks} jiffies ({sqr_ms:.0f}ms), "
+              f"fe25519_mul={mul_ticks} jiffies ({mul_ms:.0f}ms)")
 
     avg_sqr = sum(sqr_ticks_list) / len(sqr_ticks_list)
     avg_mul = sum(mul_ticks_list) / len(mul_ticks_list)
     speedup = avg_mul / avg_sqr if avg_sqr > 0 else 0
 
-    print(f"\n  Average fe_sqr: {avg_sqr:.1f} jiffies ({avg_sqr * 1000 / 60:.0f}ms)")
-    print(f"  Average fe_mul: {avg_mul:.1f} jiffies ({avg_mul * 1000 / 60:.0f}ms)")
+    print(f"\n  Average fe25519_sqr: {avg_sqr:.1f} jiffies ({avg_sqr * 1000 / 60:.0f}ms)")
+    print(f"  Average fe25519_mul: {avg_mul:.1f} jiffies ({avg_mul * 1000 / 60:.0f}ms)")
     print(f"  Speedup: {speedup:.2f}x")
 
     # Estimate X25519 impact
@@ -260,9 +260,9 @@ def main():
     # Load labels
     labels = Labels.from_file(LABELS_PATH)
     required = [
-        "fe_src1", "fe_src2", "fe_dst",
-        "fe_mul", "fe_sqr",
-        "fe_tmp1", "fe_tmp2", "fe_tmp3",
+        "fe25519_src1", "fe25519_src2", "fe25519_dst",
+        "fe25519_mul", "fe25519_sqr",
+        "fe25519_tmp1", "fe25519_tmp2", "fe25519_tmp3",
         "fe_wide",
         "bench_start", "bench_stop", "bench_ticks",
     ]
@@ -294,16 +294,16 @@ def main():
         total_passed = 0
         total_failed = 0
 
-        # Test 1: fe_sqr vs Python reference
-        print("\n--- fe_sqr vs Python reference ---")
+        # Test 1: fe25519_sqr vs Python reference
+        print("\n--- fe25519_sqr vs Python reference ---")
         p, f = test_sqr_reference(transport, labels, rng)
         total_passed += p
         total_failed += f
         status = "OK" if f == 0 else "FAIL"
         print(f"  {status}: {p}/{p + f} passed")
 
-        # Test 2: fe_sqr vs fe_mul cross-check
-        print("\n--- fe_sqr vs fe_mul(a,a) cross-check ---")
+        # Test 2: fe25519_sqr vs fe25519_mul cross-check
+        print("\n--- fe25519_sqr vs fe25519_mul(a,a) cross-check ---")
         p, f = test_sqr_vs_mul(transport, labels, rng)
         total_passed += p
         total_failed += f

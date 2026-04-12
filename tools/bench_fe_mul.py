@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""bench_fe_mul.py — Benchmark fe_mul timing on C64.
+"""bench_fe_mul.py — Benchmark fe25519_mul timing on C64.
 
-Measures the jiffy clock ticks for fe_mul with random field elements.
+Measures the jiffy clock ticks for fe25519_mul with random field elements.
 Use this to measure the impact of performance optimizations.
 
 Usage:
@@ -34,19 +34,19 @@ def le32_to_int(data):
 
 
 def bench_fe_mul(transport, labels, a, b):
-    """Time a single fe_mul call in jiffy ticks."""
-    write_bytes(transport, labels["fe_tmp1"], int_to_le32(a))
-    write_bytes(transport, labels["fe_tmp2"], int_to_le32(b))
-    write_bytes(transport, labels["fe_src1"],
-                bytes([labels["fe_tmp1"] & 0xFF, labels["fe_tmp1"] >> 8]))
-    write_bytes(transport, labels["fe_src2"],
-                bytes([labels["fe_tmp2"] & 0xFF, labels["fe_tmp2"] >> 8]))
-    write_bytes(transport, labels["fe_dst"],
-                bytes([labels["fe_tmp3"] & 0xFF, labels["fe_tmp3"] >> 8]))
+    """Time a single fe25519_mul call in jiffy ticks."""
+    write_bytes(transport, labels["fe25519_tmp1"], int_to_le32(a))
+    write_bytes(transport, labels["fe25519_tmp2"], int_to_le32(b))
+    write_bytes(transport, labels["fe25519_src1"],
+                bytes([labels["fe25519_tmp1"] & 0xFF, labels["fe25519_tmp1"] >> 8]))
+    write_bytes(transport, labels["fe25519_src2"],
+                bytes([labels["fe25519_tmp2"] & 0xFF, labels["fe25519_tmp2"] >> 8]))
+    write_bytes(transport, labels["fe25519_dst"],
+                bytes([labels["fe25519_tmp3"] & 0xFF, labels["fe25519_tmp3"] >> 8]))
 
-    # Start timer, call fe_mul, stop timer
+    # Start timer, call fe25519_mul, stop timer
     jsr(transport, labels["bench_start"])
-    jsr(transport, labels["fe_mul"], timeout=120.0)
+    jsr(transport, labels["fe25519_mul"], timeout=120.0)
     jsr(transport, labels["bench_stop"])
 
     # Read jiffy ticks (3 bytes, big-endian in memory: MSB at jiffy_clock)
@@ -56,15 +56,15 @@ def bench_fe_mul(transport, labels, a, b):
 
 
 def bench_fe_sqr(transport, labels, a):
-    """Time a single fe_sqr call in jiffy ticks."""
-    write_bytes(transport, labels["fe_tmp1"], int_to_le32(a))
-    write_bytes(transport, labels["fe_src1"],
-                bytes([labels["fe_tmp1"] & 0xFF, labels["fe_tmp1"] >> 8]))
-    write_bytes(transport, labels["fe_dst"],
-                bytes([labels["fe_tmp3"] & 0xFF, labels["fe_tmp3"] >> 8]))
+    """Time a single fe25519_sqr call in jiffy ticks."""
+    write_bytes(transport, labels["fe25519_tmp1"], int_to_le32(a))
+    write_bytes(transport, labels["fe25519_src1"],
+                bytes([labels["fe25519_tmp1"] & 0xFF, labels["fe25519_tmp1"] >> 8]))
+    write_bytes(transport, labels["fe25519_dst"],
+                bytes([labels["fe25519_tmp3"] & 0xFF, labels["fe25519_tmp3"] >> 8]))
 
     jsr(transport, labels["bench_start"])
-    jsr(transport, labels["fe_sqr"], timeout=120.0)
+    jsr(transport, labels["fe25519_sqr"], timeout=120.0)
     jsr(transport, labels["bench_stop"])
 
     ticks_data = read_bytes(transport, labels["bench_ticks"], 3)
@@ -117,7 +117,7 @@ def main():
         # Safety loop
         write_bytes(transport, 0x0339, bytes([0x4C, 0x39, 0x03]))
 
-        print(f"\n--- fe_mul benchmark ({iterations} iterations) ---")
+        print(f"\n--- fe25519_mul benchmark ({iterations} iterations) ---")
         mul_ticks = []
         for i in range(iterations):
             a = rng.randint(1, P - 1)
@@ -125,19 +125,19 @@ def main():
             ticks = bench_fe_mul(transport, labels, a, b)
             mul_ticks.append(ticks)
             ms = ticks * 1000 / 60  # NTSC: 60 Hz jiffy clock
-            print(f"  fe_mul #{i}: {ticks} jiffies ({ms:.0f} ms)")
+            print(f"  fe25519_mul #{i}: {ticks} jiffies ({ms:.0f} ms)")
 
         avg_mul = sum(mul_ticks) / len(mul_ticks)
         print(f"  Average: {avg_mul:.1f} jiffies ({avg_mul * 1000 / 60:.0f} ms)")
 
-        print(f"\n--- fe_sqr benchmark ({iterations} iterations) ---")
+        print(f"\n--- fe25519_sqr benchmark ({iterations} iterations) ---")
         sqr_ticks = []
         for i in range(iterations):
             a = rng.randint(1, P - 1)
             ticks = bench_fe_sqr(transport, labels, a)
             sqr_ticks.append(ticks)
             ms = ticks * 1000 / 60
-            print(f"  fe_sqr #{i}: {ticks} jiffies ({ms:.0f} ms)")
+            print(f"  fe25519_sqr #{i}: {ticks} jiffies ({ms:.0f} ms)")
 
         avg_sqr = sum(sqr_ticks) / len(sqr_ticks)
         print(f"  Average: {avg_sqr:.1f} jiffies ({avg_sqr * 1000 / 60:.0f} ms)")

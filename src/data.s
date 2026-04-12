@@ -8,13 +8,13 @@
 ; Page-aligned 32-byte buffers: each buffer's low byte is one of
 ; {$00, $20, $40, $60, $80, $A0, $C0, $E0}, so Y ∈ [0..31] never
 ; crosses a page boundary. This enables self-mod abs,Y without the
-; page-crossing penalty in fe_add/fe_sub/fe_cmp_p/fe_reduce_final.
+; page-crossing penalty in fe25519_add/fe25519_sub/fe_cmp_p/fe25519_reduce_final.
         .align 256
-fe_tmp1:
+fe25519_tmp1:
         .res 32, 0            ; page+$00
-fe_tmp2:
+fe25519_tmp2:
         .res 32, 0            ; page+$20
-fe_tmp3:
+fe25519_tmp3:
         .res 32, 0            ; page+$40
 fe_tmp4:
         .res 32, 0            ; page+$60
@@ -56,12 +56,12 @@ fe_p:
         .res 30, $ff
         .byte $7f
 
-; --- fe_mul optimization buffers ---
+; --- fe25519_mul optimization buffers ---
 mul_cached_a:
         .byte 0                ; cached src1[i] for inlined multiply
 mul_src2_buf:
         .res 33, 0           ; absolute copy of src2 for fast indexed access
-                              ; (33 bytes: byte 32 is zero-pad for fe_sqr unrolled
+                              ; (33 bytes: byte 32 is zero-pad for fe25519_sqr unrolled
                               ; cross-term loop phantom iteration safety)
 
 ; --- REU DMA target buffers (page-aligned for LDA abs,Y without penalty) ---
@@ -105,13 +105,13 @@ mul38_hi_tab:
                 .byte >((i+1) * 38)
         .endrepeat
 
-; --- fe_mul_a24 tables: 121665 * b split into 4 bytes (LE) ---
+; --- fe25519_mul_a24 tables: 121665 * b split into 4 bytes (LE) ---
 ; For b in 0..255: 121665*b up to 31,024,575 = $01D9E9BF (4 bytes)
 ; a24_b0[b] = (121665*b) & $ff
 ; a24_b1[b] = (121665*b >> 8) & $ff
 ; a24_b2[b] = (121665*b >> 16) & $ff
 ; a24_b3[b] = (121665*b >> 24) & $ff   (always 0 or 1)
-; --- fe_sqr diagonal squaring tables ---
+; --- fe25519_sqr diagonal squaring tables ---
 ; sqr_lo[a] = low byte of a*a (since 255*255 = 65025 fits in 16 bits)
 ; sqr_hi[a] = high byte of a*a
         .align 256

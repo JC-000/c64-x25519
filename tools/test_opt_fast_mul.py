@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""test_opt_fast_mul.py -- Test and benchmark optimized inlined fe_mul.
+"""test_opt_fast_mul.py -- Test and benchmark optimized inlined fe25519_mul.
 
-Tests fe_mul correctness against Python reference for edge cases and random
-inputs. Also verifies fe_sqr and fe_mul_a24 still work (they depend on
-mul_8x8 or fe_mul). Benchmarks fe_mul with jiffy clock timing.
+Tests fe25519_mul correctness against Python reference for edge cases and random
+inputs. Also verifies fe25519_sqr and fe25519_mul_a24 still work (they depend on
+mul_8x8 or fe25519_mul). Benchmarks fe25519_mul with jiffy clock timing.
 
 Usage:
     python3 tools/test_opt_fast_mul.py [--seed S] [--verbose]
@@ -58,13 +58,13 @@ def rand_fe(rng):
 
 def set_fe_ptrs(transport, labels, src1=None, src2=None, dst=None):
     if src1 is not None:
-        write_bytes(transport, labels["fe_src1"],
+        write_bytes(transport, labels["fe25519_src1"],
                     bytes([src1 & 0xFF, src1 >> 8]))
     if src2 is not None:
-        write_bytes(transport, labels["fe_src2"],
+        write_bytes(transport, labels["fe25519_src2"],
                     bytes([src2 & 0xFF, src2 >> 8]))
     if dst is not None:
-        write_bytes(transport, labels["fe_dst"],
+        write_bytes(transport, labels["fe25519_dst"],
                     bytes([dst & 0xFF, dst >> 8]))
 
 
@@ -77,47 +77,47 @@ def read_fe(transport, addr):
 
 
 def c64_fe_mul(transport, labels, a, b):
-    write_fe(transport, labels["fe_tmp1"], a)
-    write_fe(transport, labels["fe_tmp2"], b)
+    write_fe(transport, labels["fe25519_tmp1"], a)
+    write_fe(transport, labels["fe25519_tmp2"], b)
     set_fe_ptrs(transport, labels,
-                src1=labels["fe_tmp1"],
-                src2=labels["fe_tmp2"],
-                dst=labels["fe_tmp3"])
-    jsr(transport, labels["fe_mul"], timeout=120.0)
-    jsr(transport, labels["fe_reduce_final"], timeout=5.0)
-    return read_fe(transport, labels["fe_tmp3"])
+                src1=labels["fe25519_tmp1"],
+                src2=labels["fe25519_tmp2"],
+                dst=labels["fe25519_tmp3"])
+    jsr(transport, labels["fe25519_mul"], timeout=120.0)
+    jsr(transport, labels["fe25519_reduce_final"], timeout=5.0)
+    return read_fe(transport, labels["fe25519_tmp3"])
 
 
 def c64_fe_sqr(transport, labels, a):
-    write_fe(transport, labels["fe_tmp1"], a)
+    write_fe(transport, labels["fe25519_tmp1"], a)
     set_fe_ptrs(transport, labels,
-                src1=labels["fe_tmp1"],
-                dst=labels["fe_tmp3"])
-    jsr(transport, labels["fe_sqr"], timeout=120.0)
-    jsr(transport, labels["fe_reduce_final"], timeout=5.0)
-    return read_fe(transport, labels["fe_tmp3"])
+                src1=labels["fe25519_tmp1"],
+                dst=labels["fe25519_tmp3"])
+    jsr(transport, labels["fe25519_sqr"], timeout=120.0)
+    jsr(transport, labels["fe25519_reduce_final"], timeout=5.0)
+    return read_fe(transport, labels["fe25519_tmp3"])
 
 
 def c64_fe_mul_a24(transport, labels, a):
-    write_fe(transport, labels["fe_tmp1"], a)
+    write_fe(transport, labels["fe25519_tmp1"], a)
     set_fe_ptrs(transport, labels,
-                src1=labels["fe_tmp1"],
-                dst=labels["fe_tmp3"])
-    jsr(transport, labels["fe_mul_a24"], timeout=60.0)
-    return read_fe(transport, labels["fe_tmp3"])
+                src1=labels["fe25519_tmp1"],
+                dst=labels["fe25519_tmp3"])
+    jsr(transport, labels["fe25519_mul_a24"], timeout=60.0)
+    return read_fe(transport, labels["fe25519_tmp3"])
 
 
 def bench_fe_mul(transport, labels, a, b):
-    """Time a single fe_mul call in jiffy ticks."""
-    write_fe(transport, labels["fe_tmp1"], a)
-    write_fe(transport, labels["fe_tmp2"], b)
+    """Time a single fe25519_mul call in jiffy ticks."""
+    write_fe(transport, labels["fe25519_tmp1"], a)
+    write_fe(transport, labels["fe25519_tmp2"], b)
     set_fe_ptrs(transport, labels,
-                src1=labels["fe_tmp1"],
-                src2=labels["fe_tmp2"],
-                dst=labels["fe_tmp3"])
+                src1=labels["fe25519_tmp1"],
+                src2=labels["fe25519_tmp2"],
+                dst=labels["fe25519_tmp3"])
 
     jsr(transport, labels["bench_start"])
-    jsr(transport, labels["fe_mul"], timeout=120.0)
+    jsr(transport, labels["fe25519_mul"], timeout=120.0)
     jsr(transport, labels["bench_stop"])
 
     ticks_data = read_bytes(transport, labels["bench_ticks"], 3)
@@ -130,7 +130,7 @@ def bench_fe_mul(transport, labels, a, b):
 # ============================================================================
 
 def test_fe_mul(transport, labels, rng):
-    """Test fe_mul with edge cases and random inputs."""
+    """Test fe25519_mul with edge cases and random inputs."""
     passed = failed = 0
 
     cases = [
@@ -173,7 +173,7 @@ def test_fe_mul(transport, labels, rng):
 
 
 def test_fe_sqr(transport, labels, rng):
-    """Test fe_sqr still works (calls fe_mul internally)."""
+    """Test fe25519_sqr still works (calls fe25519_mul internally)."""
     passed = failed = 0
 
     cases = [0, 1, 2, P - 1, rand_fe(rng), rand_fe(rng), rand_fe(rng)]
@@ -196,7 +196,7 @@ def test_fe_sqr(transport, labels, rng):
 
 
 def test_fe_mul_a24(transport, labels, rng):
-    """Test fe_mul_a24 still works (calls mul_8x8 directly)."""
+    """Test fe25519_mul_a24 still works (calls mul_8x8 directly)."""
     passed = failed = 0
 
     cases = [0, 1, 2, 121665, P - 1, rand_fe(rng), rand_fe(rng), rand_fe(rng)]
@@ -254,9 +254,9 @@ def main():
 
     labels = Labels.from_file(LABELS_PATH)
     required = [
-        "fe_src1", "fe_src2", "fe_dst",
-        "fe_mul", "fe_sqr", "fe_mul_a24",
-        "fe_tmp1", "fe_tmp2", "fe_tmp3",
+        "fe25519_src1", "fe25519_src2", "fe25519_dst",
+        "fe25519_mul", "fe25519_sqr", "fe25519_mul_a24",
+        "fe25519_tmp1", "fe25519_tmp2", "fe25519_tmp3",
         "bench_start", "bench_stop", "bench_ticks",
     ]
     for name in required:
@@ -289,9 +289,9 @@ def main():
 
         # --- Correctness tests ---
         test_groups = [
-            ("fe_mul", lambda: test_fe_mul(transport, labels, rng)),
-            ("fe_sqr", lambda: test_fe_sqr(transport, labels, rng)),
-            ("fe_mul_a24", lambda: test_fe_mul_a24(transport, labels, rng)),
+            ("fe25519_mul", lambda: test_fe_mul(transport, labels, rng)),
+            ("fe25519_sqr", lambda: test_fe_sqr(transport, labels, rng)),
+            ("fe25519_mul_a24", lambda: test_fe_mul_a24(transport, labels, rng)),
         ]
 
         for name, test_fn in test_groups:
@@ -304,7 +304,7 @@ def main():
             print(f"  {status}: {p}/{p + f} passed")
 
         # --- Benchmark ---
-        print(f"\n--- fe_mul benchmark (5 iterations) ---")
+        print(f"\n--- fe25519_mul benchmark (5 iterations) ---")
         bench_rng = random.Random(25519)
         mul_ticks = []
         for i in range(5):
@@ -313,7 +313,7 @@ def main():
             ticks = bench_fe_mul(transport, labels, a, b)
             mul_ticks.append(ticks)
             ms = ticks * 1000 / 60
-            print(f"  fe_mul #{i}: {ticks} jiffies ({ms:.0f} ms)")
+            print(f"  fe25519_mul #{i}: {ticks} jiffies ({ms:.0f} ms)")
 
         avg_mul = sum(mul_ticks) / len(mul_ticks)
         print(f"  Average: {avg_mul:.1f} jiffies ({avg_mul * 1000 / 60:.0f} ms)")
