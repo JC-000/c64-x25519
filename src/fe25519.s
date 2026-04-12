@@ -19,6 +19,7 @@
 .export fe25519_add, fe25519_sub, fe25519_reduce_final
 .export fe25519_cswap, fe25519_mul, fe25519_sqr
 .export fe25519_mul_a24, fe25519_inv
+.export mul_by_38
 
 ; --- Imports from mul_8x8.s ---
 .import poly_prod_lo, poly_prod_hi
