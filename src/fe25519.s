@@ -190,6 +190,7 @@
 ; Clobbers: A, X, Y
 ; =============================================================================
 .proc fe25519_reduce_final
+@check:
         jsr fe_cmp_p
         bcc @done
 
@@ -203,6 +204,7 @@
         iny
         dex
         bne @sub_p
+        jmp @check
 
 @done:
         rts
