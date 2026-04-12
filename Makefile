@@ -23,7 +23,7 @@ CA65_MAIN = $(SRC_DIR)/main.s
 CA65_SRCS = $(wildcard $(SRC_DIR)/*.s)
 CA65_OBJS = $(CA65_BUILD)/main.o
 
-.PHONY: all clean test test-slow test-ref ca65 compare
+.PHONY: all clean test test-slow test-ref ca65 compare test-ca65
 
 all: $(PRG)
 
@@ -52,6 +52,30 @@ test-slow: $(PRG)
 	python3 tools/test_mul38_tables.py; \
 	python3 tools/test_x25519.py --slow; \
 	python3 tools/test_ladder_checkpoint.py --start 0 --count 255
+
+# ca65 build verification: swap ca65 artifacts into the default build path,
+# run the VICE test suite, then restore the ACME originals.
+# The label format converter turns ld65 "al XXXXXX .name" into the
+# ACME-compatible "al C:XXXX .name" that c64_test_harness expects.
+test-ca65: $(CA65_PRG)
+	@set -e; \
+	echo "=== Backing up ACME artifacts ==="; \
+	cp $(BUILD_DIR)/x25519.prg $(BUILD_DIR)/x25519.prg.acme-bak; \
+	cp $(BUILD_DIR)/labels.txt $(BUILD_DIR)/labels.txt.acme-bak; \
+	restore() { \
+		echo "=== Restoring ACME artifacts ==="; \
+		mv $(BUILD_DIR)/x25519.prg.acme-bak $(BUILD_DIR)/x25519.prg; \
+		mv $(BUILD_DIR)/labels.txt.acme-bak $(BUILD_DIR)/labels.txt; \
+	}; \
+	trap restore EXIT; \
+	echo "=== Installing ca65 artifacts ==="; \
+	cp $(CA65_PRG) $(BUILD_DIR)/x25519.prg; \
+	sed 's/^al \([0-9a-fA-F]\{6\}\) /al C:\1 /' $(CA65_LABELS) > $(BUILD_DIR)/labels.txt; \
+	echo "=== Running VICE tests against ca65 build ==="; \
+	python3 tools/test_mul38_tables.py; \
+	python3 tools/test_fe25519.py; \
+	python3 tools/test_fe_mul_stress.py; \
+	python3 tools/test_fe_sqr_stress.py
 
 # Reference-only self-test (no VICE, no build required).
 test-ref:
