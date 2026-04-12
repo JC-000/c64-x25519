@@ -17,8 +17,11 @@ CA65_PRG = $(CA65_BUILD)/x25519.prg
 CA65_LABELS = $(CA65_BUILD)/labels.txt
 
 ASM_SRCS = $(wildcard $(SRC_DIR)/*.asm)
+# Phase C .include model: main.s includes all other .s files, so only
+# main.s is assembled into a single .o.  (Phase E will split into modules.)
+CA65_MAIN = $(SRC_DIR)/main.s
 CA65_SRCS = $(wildcard $(SRC_DIR)/*.s)
-CA65_OBJS = $(patsubst $(SRC_DIR)/%.s,$(CA65_BUILD)/%.o,$(CA65_SRCS))
+CA65_OBJS = $(CA65_BUILD)/main.o
 
 .PHONY: all clean test test-slow test-ref ca65 compare
 
@@ -62,8 +65,9 @@ $(PRG): $(ASM_SRCS) | $(BUILD_DIR)
 
 ca65: $(CA65_PRG)
 
-$(CA65_BUILD)/%.o: $(SRC_DIR)/%.s | $(CA65_BUILD)
-	$(CA65) -o $@ $<
+# .include model: main.o depends on every .s file (main.s includes the rest)
+$(CA65_BUILD)/main.o: $(CA65_SRCS) | $(CA65_BUILD)
+	$(CA65) -o $@ $(CA65_MAIN)
 
 $(CA65_PRG): $(CA65_OBJS) $(CC65_CFG) | $(CA65_BUILD)
 	$(LD65) -C $(CC65_CFG) -o $(CA65_PRG) -Ln $(CA65_LABELS) $(CA65_OBJS)
