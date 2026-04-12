@@ -1,7 +1,7 @@
 ; =============================================================================
 ; mul_8x8.s - Quarter-square 8x8→16 multiply + table init
 ;
-; Extracted from poly1305.asm for standalone X25519.
+; Extracted from poly1305 for standalone X25519.
 ; Quarter-square table: sqtab_lo/hi at $7800-$7BFF (1024 bytes)
 ; Identity: a*b = floor((a+b)^2/4) - floor((a-b)^2/4)
 ; =============================================================================

@@ -4,20 +4,12 @@ This document describes how to integrate the X25519 implementation in
 `c64-x25519` into another Commodore 64 project. The machine-readable
 header is `src/x25519.inc`; this file is the human-readable guide.
 
-> Status: the project is currently organized as a single-binary test
-> harness (`make` builds `build/x25519.prg`). "Library state" is a work
-> in progress — see `TODO-LIBRARY.md` at the repository root for the
-> remaining steps (symbol renaming, scoping, relocatable object).
-> Everything documented here is usable **today** by `!source`-including
-> the library's `.asm` files into a host ACME project; the API surface
-> is stable and will be preserved across the rename pass.
-
 ## 1. Requirements
 
 - **CPU:** 6502 (stock C64).
-- **Assembler:** ACME (`acme -f cbm`). The library uses ACME syntax
-  (`!source`, `!byte`, `!align`, `!for`). Porting to ca65/KickAssembler
-  is straightforward but not done.
+- **Assembler:** ca65/ld65 (cc65 suite). The library uses ca65 syntax
+  (`.include`, `.byte`, `.align`, `.repeat`). Each source file is
+  assembled into its own `.o` and linked with `ld65`.
 - **RAM:** BASIC ROM must be banked out (the library's test harness
   does this at startup by clearing bit 0 of `$01`). The library uses
   RAM from `$0900` upward for code plus several page-aligned data
@@ -25,7 +17,7 @@ header is `src/x25519.inc`; this file is the human-readable guide.
   quarter-square table.
 - **REU:** **512 KB REU required** (a Commodore 1750 or equivalent,
   or any REU/compatible with at least 6 banks of 64 KB). The library
-  pre-computes full 8x8→16 multiplication tables into REU banks 0-5.
+  pre-computes full 8x8->16 multiplication tables into REU banks 0-5.
 - **Zero page:** the library owns `$14-$2E`, `$40-$7F`, and `$FB-$FE`
   while running. See `src/x25519.inc` for the full map.
 
@@ -36,37 +28,58 @@ make              # builds build/x25519.prg (standalone test harness)
 make clean
 ```
 
-The test harness (`src/main.asm`) shows the complete initialization
-sequence and a VICE-harness-driven call trampoline. Use it as a
-reference integration.
+The build compiles each `.s` file separately and links them with `ld65`.
+Label output is converted to VICE format in `build/labels.txt`.
 
-## 3. Integrating into another project
+## 3. Source file structure
 
-Currently (pre-rename), the cleanest way to use the library from
-another ACME project is to `!source` the modules directly:
+| File | Purpose |
+| --- | --- |
+| `src/main.s` | Test harness: BASIC stub, entry point, screen/timer helpers |
+| `src/x25519_init.s` | Library init: `reu_mul_init`, REU DMA helpers |
+| `src/mul_8x8.s` | Quarter-square 8x8->16 multiply + `sqtab_init` |
+| `src/fe25519.s` | Field arithmetic mod p = 2^255 - 19 |
+| `src/x25519.s` | X25519 Montgomery ladder (RFC 7748) |
+| `src/data.s` | Page-aligned buffers, lookup tables, constants |
+| `src/constants.s` | ZP / hardware equates (`.include`'d, not compiled) |
+| `src/x25519.inc` | Public API documentation header |
+| `cfg/x25519.cfg` | ld65 linker configuration |
 
-```acme
-!cpu 6502
-!source "constants.asm"          ; ZP / hardware equates
-; ... your application code / BASIC stub ...
+## 4. Integrating into another project
 
-; Library code (order matters: data.asm at the end)
-!source "mul_8x8.asm"
-!source "fe25519.asm"
-!source "x25519.asm"
-!source "data.asm"
+To use the library from another ca65 project, compile and link the
+library source files alongside your own:
+
+```
+ca65 -o x25519_init.o  src/x25519_init.s
+ca65 -o mul_8x8.o      src/mul_8x8.s
+ca65 -o fe25519.o      src/fe25519.s
+ca65 -o x25519.o       src/x25519.s
+ca65 -o data.o         src/data.s
+ca65 -o your_app.o     your_app.s
+ld65 -C your_config.cfg -o app.prg \
+    your_app.o x25519_init.o mul_8x8.o fe25519.o x25519.o data.o
+```
+
+In your source, `.import` the symbols you need:
+
+```ca65
+.import sqtab_init, reu_mul_init
+.import x25519_base, x25519_clamp, x25519_scalarmult
+.import x25_scalar, x25_u, x25_result
+.import vic_blank, vic_unblank
 ```
 
 Then at startup, before any field operation:
 
-```acme
+```ca65
         jsr sqtab_init           ; build quarter-square table @ $7800
         jsr reu_mul_init         ; build REU mul tables (takes ~1-2s)
 ```
 
 To compute a public key:
 
-```acme
+```ca65
         ; Fill x25_scalar (32 bytes) with your secret key.
         ; x25519_base will clamp it in place.
         jsr vic_blank            ; optional, ~25% speedup
@@ -77,7 +90,7 @@ To compute a public key:
 
 To compute a shared secret:
 
-```acme
+```ca65
         ; Fill x25_scalar with your private key (will be clamped).
         ; Fill x25_u      with the peer's public key (32 bytes LE).
         jsr x25519_clamp
@@ -87,7 +100,7 @@ To compute a shared secret:
         ; x25_result = scalar * peer_public.
 ```
 
-## 4. Public API
+## 5. Public API
 
 See `src/x25519.inc` for the full reference with calling conventions
 and clobber lists. Summary:
@@ -112,31 +125,26 @@ and clobber lists. Summary:
 | `vic_blank` / `vic_unblank` | Toggle VIC-II display (speed)           |
 | `bench_start` / `bench_stop` | Jiffy-clock timing                     |
 
-All `fe_*` routines take operand pointers in ZP slots `fe25519_src1` (`$1E`),
+All `fe25519_*` routines take operand pointers in ZP slots `fe25519_src1` (`$1E`),
 `fe25519_src2` (`$20`), `fe25519_dst` (`$22`). Fill those, then `jsr`.
 
-## 5. Buffer alignment contract
+## 6. Buffer alignment contract
 
 **32-byte field buffers MUST be page-aligned to one of the offsets
 `$00, $20, $40, $60, $80, $A0, $C0, $E0` within a 256-byte page.**
 
-This is a hard requirement of the post-Phase-9 optimized routines
+This is a hard requirement of the optimized routines
 (`fe25519_add`, `fe25519_sub`, `fe_cmp_p`, `fe25519_reduce_final`) which use
-self-modifying `abs,Y` addressing and depend on `Y ∈ [0..31]` never
+self-modifying `abs,Y` addressing and depend on `Y in [0..31]` never
 crossing a page boundary. Violating this alignment will produce
-silently wrong results (page-cross penalty and, worse, reading the
-next buffer's bytes when `Y >= page-boundary-offset`).
+silently wrong results.
 
 All library-provided buffers (`x25_scalar`, `x25_u`, `x25_result`,
 `fe25519_tmp1..4`, `x25_a/b/da/cb/e`, `x25_x2/x3`, `x25_z2/z3`) are
-allocated with the correct alignment in `src/data.asm`. If you add
-your own field buffers in a host program, use `!align 255, 0`
-followed by `!fill 32, 0` blocks at the `$00/$20/.../$E0` offsets.
+allocated with the correct alignment in `src/data.s`. If you add
+your own field buffers, use `.align 32` followed by `.res 32, 0`.
 
-See commit `14920b7` for the alignment change and `src/data.asm` for
-the canonical layout.
-
-## 6. Memory map
+## 7. Memory map
 
 ```
 $0001           proc_port (BASIC ROM banked out)
@@ -161,9 +169,9 @@ REU bank 4-5    2*a*b low/high tables for fe25519_sqr
 
 Exact addresses can be read from `build/labels.txt` after a build.
 
-## 7. Performance
+## 8. Performance
 
-Latest master (2026-04, post-Phase-9: table-driven primitives,
+Latest (post-Phase-9: table-driven primitives,
 page-aligned buffers, 4x unrolled `fe25519_mul` inner loop):
 
 | Operation             | Jiffies | Wall-time (PAL) |
@@ -178,7 +186,7 @@ due to VIC-II DMA badlines.
 One scalar multiplication performs roughly 2,550 field multiplies +
 ~264 squarings for the inversion step.
 
-## 8. Constraints and caveats
+## 9. Constraints and caveats
 
 - **Timing is not constant.** `fe25519_cswap` takes the same time regardless
   of its mask, and the Montgomery ladder visits every bit, but the
@@ -200,17 +208,14 @@ One scalar multiplication performs roughly 2,550 field multiplies +
   host also uses the REU, save `$DF02-$DF0A` before calling and
   restore afterward.
 
-## 9. What is NOT included
+## 10. What is NOT included
 
 - Random number generation (no RNG; caller supplies scalars).
 - Key generation / serialization helpers beyond `x25519_base`.
 - Ed25519 signatures, X448, any hash function.
 - HKDF / KDFs / anything layered on top of X25519.
-- A relocatable / linker-friendly object file. The library is still
-  `!source`-included by the host at assembly time. A future pass
-  will produce a true library object — see `TODO-LIBRARY.md`.
 
-## 10. Testing and correctness
+## 11. Testing and correctness
 
 The test suite under `tools/test_*.py` drives the C64 code through a
 VICE harness and cross-checks every result against an independent
@@ -227,10 +232,12 @@ against an external, widely-audited source of truth instead.
   u-coords (via `--random N`) cross-checked against the library
   reference. Runtime is dominated by VICE; each random scalarmult
   takes ~100 min under warp, so tune `--random` downward for CI.
+- `make test-vice` — quick VICE sanity check: mul38 tables, field ops,
+  stress tests.
 - Stress tests for field ops (`test_fe_mul_stress`, `test_fe_sqr_stress`,
   etc.) use seeded PRNG inputs and assert — not print — on mismatch.
 
-## 11. Version / provenance
+## 12. Version / provenance
 
 - Upstream repository: `c64-x25519`, branch `master`.
 - Recent optimization commits: `50c7b7b`, `14920b7`, `381e3d6`,

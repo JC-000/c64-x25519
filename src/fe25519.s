@@ -3,7 +3,7 @@
 ;
 ; 32-byte little-endian field elements.
 ; Uses ZP pointers fe25519_src1, fe25519_src2, fe25519_dst for operands.
-; Reuses mul_8x8 and sqtab from mul_8x8.asm for multiplication.
+; Reuses mul_8x8 and sqtab from mul_8x8.s for multiplication.
 ;
 ; Key design:
 ;   - Little-endian throughout (matches 6502 carry propagation and X25519 wire)

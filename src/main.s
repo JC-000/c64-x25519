@@ -53,7 +53,7 @@ basic_end:
 ; =============================================================================
 .segment "CODE"
 
-; Pad to $0810 to match the ACME build entry point.
+; Pad to $0810 so start label lands at $0810 (SYS 2064).
 ; BASIC stub is 12 bytes ($0801-$080C), so CODE starts at $080D.
 ; We need 3 fill bytes to reach $0810.
 .res 3, $00

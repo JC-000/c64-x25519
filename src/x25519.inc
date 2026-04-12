@@ -1,27 +1,26 @@
 ; =============================================================================
 ; x25519.inc - Public interface for the C64 X25519 library
 ;
-; Assembler:  ACME (!cpu 6502, !source style)
+; Assembler:  ca65/ld65 (cc65 suite)
 ; Target:     Commodore 64 + REU (Ram Expansion Unit, >= 512 KB required)
 ;
 ; This file declares the public symbols that downstream projects need
-; in order to call into the X25519 library. The library itself is built
-; from src/main.asm by linking the modules referenced in this header.
-; This .inc file does NOT itself emit code or data — it only documents
-; and (where ACME requires) re-states equates.
+; in order to call into the X25519 library. The library is built from
+; separate .s source files, each compiled to its own .o and linked
+; with ld65. Use .import in your source to pull in the symbols you need.
 ;
-; To use from a downstream project (current single-binary integration):
+; To use from a downstream project:
 ;
-;     !source "x25519.inc"          ; brings in equates / documentation
-;     !source "constants.asm"       ; ZP / hardware equates
-;     ; ... your code ...
-;     ; assemble main.asm-style file that includes
-;     ;   mul_8x8.asm, fe25519.asm, x25519.asm, data.asm
+;     .include "x25519.inc"       ; optional: brings in all .import decls
 ;
-; A future "rename + scope" pass will turn this into a true header
-; (only equates + commented prototypes) once the library is split into
-; a self-contained .o produced by ca65/ld65 or relocatable ACME object.
-; See TODO-LIBRARY.md at repo root.
+;     ; Or selectively import what you need:
+;     .import sqtab_init, reu_mul_init
+;     .import x25519_base, x25519_scalarmult
+;     .import x25_scalar, x25_u, x25_result
+;
+;     ; Link your .o files with the library .o files via ld65.
+;
+; See docs/LIBRARY.md for the full integration guide.
 ;
 ; ----------------------------------------------------------------------------
 ; INITIALIZATION (must be called once before any X25519 / fe25519 op)
@@ -80,12 +79,12 @@
 ; PUBLIC ENTRY POINTS (fe25519 - field arithmetic mod p = 2^255 - 19)
 ; ----------------------------------------------------------------------------
 ;
-; All fe_* routines take operand pointers via the zero-page slots
+; All fe25519_* routines take operand pointers via the zero-page slots
 ; fe25519_src1, fe25519_src2, fe25519_dst (each 2 bytes, little-endian). Operands are
 ; 32-byte little-endian field elements. The destination buffer MUST be
 ; page-aligned to one of the offsets {$00,$20,$40,$60,$80,$A0,$C0,$E0}
 ; within its page (so that 32-byte indexed access never crosses a page
-; boundary). See "Buffer alignment" below.
+; boundary). See "Buffer alignment" in docs/LIBRARY.md.
 ;
 ;   fe25519_copy        (fe25519_dst) <- (fe25519_src1)            32-byte copy.
 ;   fe25519_zero        (fe25519_dst) <- 0
@@ -140,7 +139,7 @@
 ;   $2A-$2D  x25_prev_bit, x25_bit_ctr, x25_byte_idx, x25_bit_mask
 ;   $2E      fe_sqr_pairs   (fe25519_sqr unrolled cross-loop counter)
 ;   $40-$7F  fe_wide        (64-byte product accumulator; ZP for speed)
-;   $FB-$FE  zp_ptr1/zp_ptr2 (general scratch, used by main.asm helpers)
+;   $FB-$FE  zp_ptr1/zp_ptr2 (general scratch, used by main.s helpers)
 ;
 ; The library does NOT preserve any of these across calls. If your host
 ; program uses any of $14-$7F or $FB-$FE, save it before calling and
@@ -152,7 +151,7 @@
 ;
 ;   $7800-$7BFF  sqtab_lo / sqtab_hi    (1024-byte quarter-square table,
 ;                                        built by sqtab_init)
-;   Page-aligned 32-byte field buffers (see data.asm). Two consecutive
+;   Page-aligned 32-byte field buffers (see data.s). Two consecutive
 ;   256-byte pages hold:
 ;     fe25519_tmp1..4, x25_x2, x25_z2, x25_x3, x25_z3,
 ;     x25_a, x25_b, x25_da, x25_cb, x25_e, x25_scalar, x25_u, x25_result
@@ -200,12 +199,12 @@
 ;   The library does NOT mask NMIs and assumes RESTORE is not pressed.
 ;
 ; =============================================================================
-;
-; This .inc is documentation-only at present. All public symbols are
-; defined as plain global labels in their source files (constants.asm,
-; mul_8x8.asm, fe25519.asm, x25519.asm, data.asm, main.asm). ACME has no
-; .import / .export distinction, so name collisions with the host program
-; must be avoided by the host (or by waiting for the rename pass that
-; will prefix every public symbol with x25519_ / fe25519_).
-;
-; =============================================================================
+
+; Imports for downstream use — .include this file to get all public symbols.
+.import sqtab_init, reu_mul_init
+.import x25519_clamp, x25519_scalarmult, x25519_base
+.import fe25519_add, fe25519_sub, fe25519_mul, fe25519_sqr
+.import fe25519_copy, fe25519_zero, fe25519_one, fe25519_cswap
+.import fe25519_inv, fe25519_reduce_final, fe25519_mul_a24
+.import x25_scalar, x25_u, x25_result, x25_basepoint
+.import vic_blank, vic_unblank, bench_start, bench_stop, bench_ticks
