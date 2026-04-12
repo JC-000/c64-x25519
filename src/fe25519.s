@@ -11,11 +11,39 @@
 ;   - Reduction mod p: 2^256 ≡ 38 mod p, so multiply overflow by 38 and add
 ; =============================================================================
 
+.setcpu "6502"
+.include "constants.s"
+
+; --- Exports ---
+.export fe25519_copy, fe25519_zero, fe25519_one
+.export fe25519_add, fe25519_sub, fe25519_reduce_final
+.export fe25519_cswap, fe25519_mul, fe25519_sqr
+.export fe25519_mul_a24, fe25519_inv
+
+; --- Imports from mul_8x8.s ---
+.import poly_prod_lo, poly_prod_hi
+.import sqtab_lo, sqtab_hi
+
+; --- Imports from x25519_init.s ---
+.import reu_clear_wide, reu_fetch_doubled_row
+
+; --- Imports from data.s ---
+.import fe25519_tmp1, fe25519_tmp2, fe25519_tmp3, fe_tmp4
+.import x25_a, x25_b, x25_da, x25_cb
+.import fe_p, mul_cached_a, mul_src2_buf
+.import mul_dma_lo, mul_dma_hi, mul_dma_carry
+.import sqtab2_lo, sqtab2_hi
+.import mul38_lo_tab, mul38_hi_tab
+.import sqr_lo, sqr_hi
+.import a24_b0, a24_b1, a24_b2, a24_b3
+
+.segment "CODE"
+
 ; =============================================================================
 ; fe25519_copy - Copy 32 bytes: (fe25519_dst) = (fe25519_src1)
 ; Clobbers: A, Y
 ; =============================================================================
-fe25519_copy:
+.proc fe25519_copy
         ldy #31
 @loop:
         lda (fe25519_src1),y
@@ -23,12 +51,14 @@ fe25519_copy:
         dey
         bpl @loop
         rts
+.endproc
+
 
 ; =============================================================================
 ; fe25519_zero - Zero 32 bytes at (fe25519_dst)
 ; Clobbers: A, Y
 ; =============================================================================
-fe25519_zero:
+.proc fe25519_zero
         lda #0
         ldy #31
 @loop:
@@ -36,17 +66,21 @@ fe25519_zero:
         dey
         bpl @loop
         rts
+.endproc
+
 
 ; =============================================================================
 ; fe25519_one - Set (fe25519_dst) = 1 (LE: byte 0 = 1, rest 0)
 ; Clobbers: A, Y
 ; =============================================================================
-fe25519_one:
+.proc fe25519_one
         jsr fe25519_zero
         lda #1
         ldy #0
         sta (fe25519_dst),y
         rts
+.endproc
+
 
 ; =============================================================================
 ; fe25519_add - (fe25519_dst) = (fe25519_src1) + (fe25519_src2) mod p
@@ -54,7 +88,7 @@ fe25519_one:
 ; 32-byte addition with carry, then conditional subtract p if >= p.
 ; Clobbers: A, X, Y
 ; =============================================================================
-fe25519_add:
+.proc fe25519_add
         clc
         ldy #0
         ldx #32
@@ -85,6 +119,8 @@ fe25519_add:
 
 @done:
         rts
+.endproc
+
 
 ; =============================================================================
 ; fe25519_sub - (fe25519_dst) = (fe25519_src1) - (fe25519_src2) mod p
@@ -92,7 +128,7 @@ fe25519_add:
 ; 32-byte subtraction. If borrow, add p.
 ; Clobbers: A, X, Y
 ; =============================================================================
-fe25519_sub:
+.proc fe25519_sub
         sec
         ldy #0
         ldx #32
@@ -119,6 +155,8 @@ fe25519_sub:
 
 @done:
         rts
+.endproc
+
 
 ; =============================================================================
 ; fe_cmp_p - Compare (fe25519_dst) with p
@@ -126,7 +164,7 @@ fe25519_sub:
 ; C=1 if (fe25519_dst) >= p, C=0 if < p
 ; Clobbers: A, Y
 ; =============================================================================
-fe_cmp_p:
+.proc fe_cmp_p
         ldy #31
 @cmp_loop:
         lda (fe25519_dst),y
@@ -143,12 +181,14 @@ fe_cmp_p:
 @greater:
         sec
         rts
+.endproc
+
 
 ; =============================================================================
 ; fe25519_reduce_final - Canonical reduction of (fe25519_dst) to [0, p-1]
 ; Clobbers: A, X, Y
 ; =============================================================================
-fe25519_reduce_final:
+.proc fe25519_reduce_final
         jsr fe_cmp_p
         bcc @done
 
@@ -165,6 +205,8 @@ fe25519_reduce_final:
 
 @done:
         rts
+.endproc
+
 
 ; =============================================================================
 ; fe25519_cswap - Constant-time conditional swap of (fe25519_src1) and (fe25519_src2)
@@ -183,7 +225,7 @@ fe25519_reduce_final:
 ; Old: 49 cycles/byte (indirect-indexed + redundant re-read)
 ; Savings: ~11 cyc/byte * 32 bytes * 512 calls = ~180k cycles
 ; =============================================================================
-fe25519_cswap:
+.proc fe25519_cswap
         sta fe_carry           ; save mask
 
         ; Patch src1 address into lda/sta abs,Y instructions (8 patches)
@@ -297,6 +339,8 @@ fe25519_cswap:
         dey
         bpl @loop
         rts
+.endproc
+
 
 ; =============================================================================
 ; fe25519_mul - (fe25519_dst) = (fe25519_src1) * (fe25519_src2) mod p
@@ -308,7 +352,7 @@ fe25519_cswap:
 ;
 ; Clobbers: A, X, Y
 ; =============================================================================
-fe25519_mul:
+.proc fe25519_mul
         ; 1. Zero the 64-byte product buffer via REU DMA FETCH from bank 2
         jsr reu_clear_wide
 
@@ -560,6 +604,8 @@ fe25519_mul:
         ; NOTE: fe25519_reduce_final removed from fe25519_mul — callers that need
         ; canonical [0,p) output must call fe25519_reduce_final explicitly.
         rts
+.endproc
+
 
 ; =============================================================================
 ; fe_reduce_wide - Reduce fe_wide[0..63] mod p into fe_wide[0..31]
@@ -567,7 +613,7 @@ fe25519_mul:
 ; fe_wide[32..63] * 38 + fe_wide[0..31], with second pass for overflow.
 ; Clobbers: A, X, Y
 ; =============================================================================
-fe_reduce_wide:
+.proc fe_reduce_wide
         ; First pass: fe_wide[0..31] += fe_wide[32..63] * 38
         lda #0
         sta fe_carry
@@ -652,6 +698,8 @@ fe_reduce_wide:
 
 @done:
         rts
+.endproc
+
 
 ; =============================================================================
 ; mul_by_38 - Multiply A by 38, result in poly_prod_hi:poly_prod_lo
@@ -662,7 +710,7 @@ fe_reduce_wide:
 ; Clobbers: A, Y
 ; Preserves: X
 ; =============================================================================
-mul_by_38:
+.proc mul_by_38
         sta mul38_in           ; save input
         ; 16-bit shift register starts as A
         lda mul38_in
@@ -708,6 +756,8 @@ mul_by_38:
 mul38_in:  .byte 0
 mul38_lo:  .byte 0
 mul38_hi:  .byte 0
+.endproc
+
 
 ; =============================================================================
 ; fe25519_sqr - (fe25519_dst) = (fe25519_src1)^2 mod p
@@ -721,7 +771,7 @@ mul38_hi:  .byte 0
 ;
 ; Clobbers: A, X, Y
 ; =============================================================================
-fe25519_sqr:
+.proc fe25519_sqr
         ; 1. Zero the 64-byte product buffer via REU DMA FETCH from bank 2
         jsr reu_clear_wide
 
@@ -1173,6 +1223,8 @@ fe25519_sqr:
         ; NOTE: fe25519_reduce_final removed from fe25519_sqr — callers that need
         ; canonical [0,p) output must call fe25519_reduce_final explicitly.
         rts
+.endproc
+
 
 ; =============================================================================
 ; fe25519_mul_a24 - (fe25519_dst) = (fe25519_src1) * 121665 mod p
@@ -1180,7 +1232,7 @@ fe25519_sqr:
 ; 121665 = $01DB41 (3 bytes LE: $41, $DB, $01)
 ; Clobbers: A, X, Y
 ; =============================================================================
-fe25519_mul_a24:
+.proc fe25519_mul_a24
         ; Zero fe_wide[0..34]
         ldx #34
         lda #0
@@ -1303,6 +1355,8 @@ fe25519_mul_a24:
 
         jsr fe25519_reduce_final
         rts
+.endproc
+
 
 ; =============================================================================
 ; fe25519_inv - (fe25519_dst) = (fe25519_src1)^(p-2) mod p  (Fermat's little theorem)
@@ -1323,7 +1377,7 @@ fe25519_mul_a24:
 ;
 ; Clobbers: A, X, Y, all fe_* ZP vars
 ; =============================================================================
-fe25519_inv:
+.proc fe25519_inv
         ; Save original destination pointer
         lda fe25519_dst
         sta fe_inv_dst
@@ -1626,6 +1680,8 @@ fe25519_inv:
 
 ; Saved destination pointer for fe25519_inv
 fe_inv_dst:     .word 0
+.endproc
+
 
 ; =============================================================================
 ; fe_inv_sqrn_tmp2 - Square fe25519_tmp2 in place N times
@@ -1633,7 +1689,7 @@ fe_inv_dst:     .word 0
 ; Input: A = number of squarings
 ; Clobbers: A, X, Y, fe25519_src1, fe25519_src2, fe25519_dst
 ; =============================================================================
-fe_inv_sqrn_tmp2:
+.proc fe_inv_sqrn_tmp2
         sta fe_inv_sqr_cnt
 @loop:
         lda #<(fe25519_tmp2)
@@ -1650,3 +1706,5 @@ fe_inv_sqrn_tmp2:
         rts
 
 fe_inv_sqr_cnt: .byte 0
+
+.endproc

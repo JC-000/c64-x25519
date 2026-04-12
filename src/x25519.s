@@ -15,6 +15,25 @@
 ; Performance: ~2550 field multiplies + ~264 for inversion ≈ ~2 min per op
 ; =============================================================================
 
+.setcpu "6502"
+
+.include "constants.s"
+
+.export x25519_clamp, x25519_scalarmult, x25519_base
+
+; --- Imports from fe25519.s ---
+.import fe25519_add, fe25519_sub, fe25519_mul, fe25519_sqr
+.import fe25519_one, fe25519_zero, fe25519_copy, fe25519_cswap
+.import fe25519_inv, fe25519_reduce_final, fe25519_mul_a24
+
+; --- Imports from data.s ---
+.import fe25519_tmp1, fe25519_tmp2, fe25519_tmp3, fe_tmp4
+.import x25_x2, x25_z2, x25_x3, x25_z3
+.import x25_a, x25_b, x25_da, x25_cb, x25_e
+.import x25_scalar, x25_u, x25_result, x25_basepoint
+
+.segment "CODE"
+
 ; =============================================================================
 ; x25519_clamp - Clamp scalar per RFC 7748 §5
 ;
@@ -25,7 +44,7 @@
 ; Input/Output: x25_scalar (32 bytes, modified in place)
 ; Clobbers: A
 ; =============================================================================
-x25519_clamp:
+.proc x25519_clamp
         lda x25_scalar
         and #$f8               ; clear bits 0,1,2
         sta x25_scalar
@@ -34,6 +53,7 @@ x25519_clamp:
         ora #$40               ; set bit 6
         sta x25_scalar+31
         rts
+.endproc
 
 ; =============================================================================
 ; x25519_scalarmult - Montgomery ladder: x25_result = x25_scalar * x25_u
@@ -52,7 +72,7 @@ x25519_clamp:
 ;
 ; Clobbers: A, X, Y, all fe_* and x25_* ZP vars
 ; =============================================================================
-x25519_scalarmult:
+.proc x25519_scalarmult
         ; Initialize ladder state
         ; x_2 = 1
         lda #<(x25_x2)
@@ -220,6 +240,7 @@ x25519_scalarmult:
         jsr fe25519_reduce_final    ; Final output must be canonical
 
         rts
+.endproc
 
 ; =============================================================================
 ; x25519_ladder_step - One step of the Montgomery ladder
@@ -239,7 +260,7 @@ x25519_scalarmult:
 ;
 ; Clobbers: A, X, Y, all fe_* ZP vars
 ; =============================================================================
-x25519_ladder_step:
+.proc x25519_ladder_step
         ; A = x_2 + z_2 → x25_a
         lda #<(x25_x2)
         sta fe25519_src1
@@ -467,6 +488,7 @@ x25519_ladder_step:
         jsr fe25519_reduce_final    ; z_2 is output, feeds into add/sub in next iteration
 
         rts
+.endproc
 
 ; =============================================================================
 ; x25519_base - Compute x25_result = x25_scalar * basepoint(9)
@@ -477,7 +499,7 @@ x25519_ladder_step:
 ; Output: x25_result (32 bytes)
 ; Clobbers: A, X, Y
 ; =============================================================================
-x25519_base:
+.proc x25519_base
         ; Copy basepoint (9) to x25_u
         lda #<(x25_basepoint)
         sta fe25519_src1
@@ -495,3 +517,4 @@ x25519_base:
         ; Compute
         jsr x25519_scalarmult
         rts
+.endproc

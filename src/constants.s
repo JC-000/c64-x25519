@@ -1,7 +1,15 @@
 ; =============================================================================
 ; constants.s - System equates, zero page, hardware addresses
 ; Stripped for standalone X25519 performance tuning
+;
+; This file is .include'd by every compilation unit. It defines only
+; assembly-time equates (= expressions), which are invisible to the linker.
+; Symbols that need to appear in the VICE label file are exported once
+; from main.s.
 ; =============================================================================
+
+.ifndef CONSTANTS_S_INCLUDED
+CONSTANTS_S_INCLUDED = 1
 
 ; --- Kernal routines ---
 chrout          = $ffd2         ; output character
@@ -80,3 +88,5 @@ reu_reu_bank    = $df06         ; REU bank
 reu_len_lo      = $df07         ; transfer length low
 reu_len_hi      = $df08         ; transfer length high
 reu_addr_ctrl   = $df0a         ; address control
+
+.endif ; CONSTANTS_S_INCLUDED

@@ -2,6 +2,23 @@
 ; data.s - Data buffers for fe25519 and X25519
 ; =============================================================================
 
+.setcpu "6502"
+
+; --- Exported data labels ---
+.export fe25519_tmp1, fe25519_tmp2, fe25519_tmp3, fe_tmp4
+.export x25_x2, x25_z2, x25_x3, x25_z3
+.export x25_a, x25_b, x25_da, x25_cb, x25_e
+.export x25_scalar, x25_u, x25_result
+.export x25_basepoint, fe_p
+.export mul_cached_a, mul_src2_buf
+.export mul_dma_lo, mul_dma_hi, mul_dma_carry
+.export sqtab2_lo, sqtab2_hi
+.export mul38_lo_tab, mul38_hi_tab
+.export sqr_lo, sqr_hi
+.export a24_b0, a24_b1, a24_b2, a24_b3
+
+.segment "CODE"
+
 ; --- fe25519 field arithmetic ---
 ; fe_wide[0..63] is now in zero page at $40..$7F (see constants.s)
 ;
