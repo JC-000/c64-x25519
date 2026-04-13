@@ -359,27 +359,36 @@
         ; 1. Zero the 64-byte product buffer via REU DMA FETCH from bank 2
         jsr reu_clear_wide
 
-        ; 2. Copy src2 to absolute buffer (needed for indexed access)
-        ldy #31
-@copy_src2:
-        lda (fe25519_src2),y
-        sta mul_src2_buf,y
-        dey
-        bpl @copy_src2
+        ; 2. Self-mod patch the four `ldy src2_buf,x` sites in the inner loop
+        ;    and the outer `lda src1_buf,y` site to read directly from src1/2
+        ;    (avoids 32-byte copy and zp-indirect-indexed addressing).
+        lda fe25519_src2
+        sta @ldy_src2_a+1
+        sta @ldy_src2_b+1
+        sta @ldy_src2_c+1
+        sta @ldy_src2_d+1
+        lda fe25519_src2+1
+        sta @ldy_src2_a+2
+        sta @ldy_src2_b+2
+        sta @ldy_src2_c+2
+        sta @ldy_src2_d+2
+        lda fe25519_src1
+        sta @load_src1+1
+        lda fe25519_src1+1
+        sta @load_src1+2
 
         ; 3. Schoolbook multiply with REU DMA lookup + self-mod accumulation
         lda #0
         sta fe_mul_i
 @mul_outer:
         ldy fe_mul_i
-        lda (fe25519_src1),y
+@load_src1:
+        lda mul_src2_buf,y     ; PATCHED at proc entry: abs = src1 base
         bne @nonzero_i
         jmp @skip_zero
 @nonzero_i:
-        sta mul_cached_a       ; cache src1[i] for inner loop
-
-        ; DMA the multiplication row for src1[i] from REU (inlined)
-        ; A already contains mul_cached_a from the sta above
+        ; DMA the multiplication row for src1[i] from REU (inlined).
+        ; A already holds src1[i]; mul_cached_a store removed (dead in fe_mul).
         asl                    ; A = multiplier * 2, carry = bit 7
         sta reu_reu_hi
         lda #0
@@ -420,11 +429,16 @@
         ; X register holds j throughout, avoiding ZP load/store
         ; Direct DMA table accumulation (no ZP intermediaries)
 
+        ; Carry invariant: C=0 on every entry to @mul_inner. The back-branch
+        ; `bcc @mul_inner` keeps C=0; the initial entry falls through from
+        ; `adc #1` which does not overflow (A = fe_wide+i+1 <= $60); and the
+        ; rare carry_done_{a,b,c,d} tails each `clc` before jmp'ing to a
+        ; mid-loop `@next_j_X` label. That lets us drop the per-body clc.
 @mul_inner:
         ; --- Body A: process src2[j] ---
-        ldy mul_src2_buf,x     ; Y = src2[j]
-        beq @next_j_first      ; skip if zero
-        clc
+@ldy_src2_a:
+        ldy mul_src2_buf,x     ; patched to direct src2 addr
+        beq @next_j_first      ; skip if zero (C preserved = 0)
 @accum_ld1:
         lda fe_wide,x          ; patched to fe_wide+i base
         adc mul_dma_lo,y
@@ -440,9 +454,9 @@
         inx                    ; advance j
 
         ; --- Body B: process src2[j+1] ---
+@ldy_src2_b:
         ldy mul_src2_buf,x
         beq @next_j_second
-        clc
 @accum_ld1_b:
         lda fe_wide,x
         adc mul_dma_lo,y
@@ -458,9 +472,9 @@
         inx
 
         ; --- Body C: process src2[j+2] ---
+@ldy_src2_c:
         ldy mul_src2_buf,x
         beq @next_j_third
-        clc
 @accum_ld1_c:
         lda fe_wide,x
         adc mul_dma_lo,y
@@ -476,9 +490,9 @@
         inx
 
         ; --- Body D: process src2[j+3] ---
+@ldy_src2_d:
         ldy mul_src2_buf,x
         beq @next_j
-        clc
 @accum_ld1_d:
         lda fe_wide,x
         adc mul_dma_lo,y
@@ -523,6 +537,7 @@
         bcs @prop_carry_a
 @carry_done_a:
         ldx fe_mul_j
+        clc                    ; restore C=0 invariant for clc-less bodies
         jmp @next_j_first
 
 @do_prop_b:
@@ -545,6 +560,7 @@
         bcs @prop_carry_b
 @carry_done_b:
         ldx fe_mul_j
+        clc                    ; restore C=0 invariant for clc-less bodies
         jmp @next_j_second
 
 @do_prop_c:
@@ -567,6 +583,7 @@
         bcs @prop_carry_c
 @carry_done_c:
         ldx fe_mul_j
+        clc                    ; restore C=0 invariant for clc-less bodies
         jmp @next_j_third
 
 @do_prop_d:
@@ -589,6 +606,7 @@
         bcs @prop_carry_d
 @carry_done_d:
         ldx fe_mul_j
+        clc                    ; restore C=0 invariant for clc-less bodies
         jmp @next_j
 
 @skip_zero:
@@ -1066,18 +1084,19 @@ mul38_hi:  .byte 0
         jmp @sqr_skip_i
 
 ; --- DMA inner loop (2x unrolled): pre-doubled product tables in mul_dma_lo/hi/carry ---
+; X held as j across both bodies; only reloaded from fe_mul_j on entry.
+; Back-branch jumps to @sqr_dma_body_a (after the initial ldx) so X is preserved.
 @sqr_inner_dma:
-        ; === Body A (DMA) ===
         ldx fe_mul_j
+@sqr_dma_body_a:
+        ; === Body A (DMA) ===
         ldy mul_src2_buf,x     ; Y = a[j]
-        bne @sqr_nonzero_j_dma
-        jmp @sqr_next_j_dma
-@sqr_nonzero_j_dma:
+        beq @sqr_dma_skip_a    ; Y==0 fast-skip
         lda mul_dma_carry,y
         sta poly_carry
         clc
 @sqr_dma_ld1:
-        lda fe_wide,x          ; patched: fe_wide+i, X = fe_mul_j
+        lda fe_wide,x          ; patched: fe_wide+i, X = j
         adc mul_dma_lo,y
 @sqr_dma_st1:
         sta fe_wide,x
@@ -1088,39 +1107,13 @@ mul38_hi:  .byte 0
         sta fe_wide+1,x
         lda #0
         adc poly_carry         ; combined carry = accum_carry + 17th-bit
-        beq @sqr_next_j_dma
-        ; propagate into fe_wide[i+j+2]
-        ldx fe_mul_i
-        tay
-        txa
-        clc
-        adc fe_mul_j
-        clc
-        adc #2
-        tax
-        tya
-        clc
-        adc fe_wide,x
-        sta fe_wide,x
-        bcc @sqr_next_j_dma
-@sqr_dma_prop1:
-        inx
-        cpx #64
-        bcs @sqr_next_j_dma
-        sec
-        lda fe_wide,x
-        adc #0
-        sta fe_wide,x
-        bcs @sqr_dma_prop1
-@sqr_next_j_dma:
-        inc fe_mul_j
+        bne @sqr_dma_prop_a    ; rare: propagate carry
+@sqr_dma_skip_a:
+        inx                    ; advance j (X-register)
 
         ; === Body B (DMA, second unrolled copy) ===
-        ldx fe_mul_j
         ldy mul_src2_buf,x     ; Y = a[j]
-        bne @sqr_nonzero_j_dma_b
-        jmp @sqr_next_j_dma_b
-@sqr_nonzero_j_dma_b:
+        beq @sqr_dma_skip_b    ; Y==0 fast-skip
         lda mul_dma_carry,y
         sta poly_carry
         clc
@@ -1136,12 +1129,49 @@ mul38_hi:  .byte 0
         sta fe_wide+1,x
         lda #0
         adc poly_carry
-        beq @sqr_next_j_dma_b
-        ldx fe_mul_i
-        tay
+        bne @sqr_dma_prop_b
+@sqr_dma_skip_b:
+        inx                    ; advance j
+        dec fe_sqr_pairs
+        bne @sqr_dma_body_a    ; preserves X across iterations
+        jmp @sqr_skip_i        ; fe_mul_j not needed beyond inner loop
+
+        ; --- Carry propagation blocks (rare ~1-2%) ---
+        ; Save X=j to fe_mul_j, compute (i+j+2) into X, propagate, restore X.
+@sqr_dma_prop_a:
+        tay                    ; Y = combined carry value
+        stx fe_mul_j           ; save j
         txa
         clc
-        adc fe_mul_j
+        adc fe_mul_i
+        clc
+        adc #2
+        tax                    ; X = i+j+2
+        tya
+        clc
+        adc fe_wide,x
+        sta fe_wide,x
+        bcc @sqr_dma_prop_a_done
+        ; Load-bearing sec — see @prop_carry_a comment in fe25519_mul.
+@sqr_dma_prop_a_loop:
+        inx
+        cpx #64
+        bcs @sqr_dma_prop_a_done
+        sec
+        lda fe_wide,x
+        adc #0
+        sta fe_wide,x
+        bcs @sqr_dma_prop_a_loop
+@sqr_dma_prop_a_done:
+        ldx fe_mul_j           ; restore j
+        jmp @sqr_dma_skip_a
+
+@sqr_dma_prop_b:
+        tay
+        stx fe_mul_j
+        txa
+        clc
+        adc fe_mul_i
         clc
         adc #2
         tax
@@ -1149,23 +1179,20 @@ mul38_hi:  .byte 0
         clc
         adc fe_wide,x
         sta fe_wide,x
-        bcc @sqr_next_j_dma_b
-@sqr_dma_prop1_b:
+        bcc @sqr_dma_prop_b_done
+        ; Load-bearing sec — see @prop_carry_a comment in fe25519_mul.
+@sqr_dma_prop_b_loop:
         inx
         cpx #64
-        bcs @sqr_next_j_dma_b
+        bcs @sqr_dma_prop_b_done
         sec
         lda fe_wide,x
         adc #0
         sta fe_wide,x
-        bcs @sqr_dma_prop1_b
-@sqr_next_j_dma_b:
-        inc fe_mul_j
-        dec fe_sqr_pairs
-        beq @sqr_pair_loop_exit_dma
-        jmp @sqr_inner_dma
-@sqr_pair_loop_exit_dma:
-        jmp @sqr_skip_i
+        bcs @sqr_dma_prop_b_loop
+@sqr_dma_prop_b_done:
+        ldx fe_mul_j
+        jmp @sqr_dma_skip_b
 
 @sqr_skip_i:
         inc fe_mul_i
