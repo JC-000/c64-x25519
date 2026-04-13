@@ -509,6 +509,9 @@
         clc
         adc #2
         tax
+        ; NOTE: `sec` below is load-bearing. cpx clobbers C, so we
+        ; re-establish C=1 each iteration to make `adc #0` = +1.
+        ; See feedback_6502_cpx_clobbers_carry. Do NOT remove.
 @prop_carry_a:
         cpx #64
         bcs @carry_done_a
@@ -530,6 +533,7 @@
         clc
         adc #2
         tax
+        ; Load-bearing sec — see @prop_carry_a comment above.
 @prop_carry_b:
         cpx #64
         bcs @carry_done_b
@@ -551,6 +555,7 @@
         clc
         adc #2
         tax
+        ; Load-bearing sec — see @prop_carry_a comment above.
 @prop_carry_c:
         cpx #64
         bcs @carry_done_c
@@ -572,6 +577,7 @@
         clc
         adc #2
         tax
+        ; Load-bearing sec — see @prop_carry_a comment above.
 @prop_carry_d:
         cpx #64
         bcs @carry_done_d
@@ -676,10 +682,13 @@
         bcc @done
         ldx #2
 @prop2:
-        lda fe_wide,x
-        adc #0
-        sta fe_wide,x
-        bcc @done
+        ; Propagate a single +1 using inc/bne so the carry from adc need
+        ; not survive the cpx #32 loop bound check. Prior `adc #0` version
+        ; lost the carry through cpx on the second-and-later bytes, which
+        ; produced off-by-one results on specific inputs (byte k == $FF
+        ; followed by byte k+1 != $FF mid-propagation).
+        inc fe_wide,x
+        bne @done
         inx
         cpx #32
         bcc @prop2
@@ -689,12 +698,11 @@
         lda fe_wide
         adc #38
         sta fe_wide
+        bcc @done
         ldx #1
 @prop3:
-        lda fe_wide,x
-        adc #0
-        sta fe_wide,x
-        bcc @done
+        inc fe_wide,x
+        bne @done
         inx
         cpx #32
         bcc @prop3
@@ -956,7 +964,9 @@ mul38_hi:  .byte 0
         adc fe_wide,x
         sta fe_wide,x
         bcc @sqr_next_j
-        ; Propagate further carries
+        ; Propagate further carries.
+        ; NOTE: `sec` below is load-bearing. cpx clobbers C, so sec
+        ; restores C=1 each iteration — see feedback_6502_cpx_clobbers_carry.
 @sqr_prop1:
         inx
         cpx #64
@@ -1036,6 +1046,7 @@ mul38_hi:  .byte 0
         adc fe_wide,x
         sta fe_wide,x
         bcc @sqr_next_j_b
+        ; Load-bearing sec — see @sqr_prop1 comment above.
 @sqr_prop1_b:
         inx
         cpx #64
@@ -1193,7 +1204,8 @@ mul38_hi:  .byte 0
         sta fe_wide,x
         bcc @diag_skip
 
-        ; Propagate carry
+        ; Propagate carry.
+        ; Load-bearing sec — see @sqr_prop1 comment above.
 @diag_prop:
         inx
         cpx #64

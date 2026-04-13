@@ -21,6 +21,14 @@
 
 .export x25519_clamp, x25519_scalarmult, x25519_base
 
+; DEBUG-ONLY export — NOT part of the stable v0.1.0 public API.
+; x25519_ladder_step is exposed so differential-testing harnesses can drive
+; the ladder one step at a time and compare intermediate field elements
+; against a Python reference (see tools/diff_ladder_bug.py ancestors).
+; Downstream consumers of this library MUST NOT depend on this symbol; it
+; may be renamed, reshaped, or removed in any release without notice.
+.export x25519_ladder_step
+
 ; --- Imports from fe25519.s ---
 .import fe25519_add, fe25519_sub, fe25519_mul, fe25519_sqr
 .import fe25519_one, fe25519_zero, fe25519_copy, fe25519_cswap
