@@ -73,6 +73,36 @@ fe_p:
         .res 30, $ff
         .byte $7f
 
+; =============================================================================
+; Compile-time alignment enforcement for 32-byte field buffers
+; =============================================================================
+; The optimized fe25519_add / fe25519_sub / fe25519_cmp_p /
+; fe25519_reduce_final routines use self-modifying abs,Y addressing with
+; Y in [0..31]. Each buffer's address must therefore be 32-byte aligned
+; (offset within page is one of $00, $20, $40, $60, $80, $A0, $C0, $E0)
+; so Y never crosses a page boundary. Misalignment would produce silent
+; corruption — these link-time assertions catch it at build time instead.
+; See docs/LIBRARY.md §6 (Buffer alignment contract).
+
+.assert (fe25519_tmp1 & $1F) = 0, lderror, "fe25519_tmp1 must be 32-byte aligned"
+.assert (fe25519_tmp2 & $1F) = 0, lderror, "fe25519_tmp2 must be 32-byte aligned"
+.assert (fe25519_tmp3 & $1F) = 0, lderror, "fe25519_tmp3 must be 32-byte aligned"
+.assert (fe_tmp4      & $1F) = 0, lderror, "fe_tmp4 must be 32-byte aligned"
+.assert (x25_x2       & $1F) = 0, lderror, "x25_x2 must be 32-byte aligned"
+.assert (x25_z2       & $1F) = 0, lderror, "x25_z2 must be 32-byte aligned"
+.assert (x25_x3       & $1F) = 0, lderror, "x25_x3 must be 32-byte aligned"
+.assert (x25_z3       & $1F) = 0, lderror, "x25_z3 must be 32-byte aligned"
+.assert (x25_a        & $1F) = 0, lderror, "x25_a must be 32-byte aligned"
+.assert (x25_b        & $1F) = 0, lderror, "x25_b must be 32-byte aligned"
+.assert (x25_da       & $1F) = 0, lderror, "x25_da must be 32-byte aligned"
+.assert (x25_cb       & $1F) = 0, lderror, "x25_cb must be 32-byte aligned"
+.assert (x25_e        & $1F) = 0, lderror, "x25_e must be 32-byte aligned"
+.assert (x25_scalar   & $1F) = 0, lderror, "x25_scalar must be 32-byte aligned"
+.assert (x25_u        & $1F) = 0, lderror, "x25_u must be 32-byte aligned"
+.assert (x25_result   & $1F) = 0, lderror, "x25_result must be 32-byte aligned"
+.assert (x25_basepoint & $1F) = 0, lderror, "x25_basepoint must be 32-byte aligned"
+.assert (fe_p         & $1F) = 0, lderror, "fe_p must be 32-byte aligned"
+
 ; --- fe25519_mul optimization buffers ---
 mul_cached_a:
         .byte 0                ; cached src1[i] for inlined multiply
