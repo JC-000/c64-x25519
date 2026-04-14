@@ -102,7 +102,6 @@
 ;   fe25519_reduce_final  Final canonicalization: ensure (fe25519_dst) < p.
 ;                    Caller must run this on any value that will be sent
 ;                    on the wire or compared.
-;   fe_cmp_p       Compare (fe25519_dst) against p. Carry set if >= p.
 ;
 ;   All clobber: A, X, Y and the fe_* scratch ZP slots.
 ;

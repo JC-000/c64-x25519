@@ -1,0 +1,37 @@
+c64-x25519 — vendored library provenance
+==========================================
+
+upstream:       https://github.com/JC-000/c64-x25519
+version:        v0.1.0
+commit:         <SHA from `git rev-parse HEAD` at release tag>
+tag:            v0.1.0
+tarball_sha256: <sha256sum of the release tarball>
+date_imported:  <ISO 8601 date the downstream consumer imported this>
+
+license:        MIT
+license_file:   LICENSE
+release_notes:  https://github.com/JC-000/c64-x25519/releases/tag/v0.1.0
+
+local_modifications: none
+    (if patched, list patches as "patches/000N-description.patch" below)
+
+build_toolchain:
+    ca65:       cc65 v2.x or newer (cc65.github.io)
+    ld65:       cc65 v2.x or newer
+    ar65:       cc65 v2.x or newer
+    vice:       required only for running the upstream test suite
+
+system_requirements:
+    platform:   Commodore 64 (stock 6502)
+    ram:        BASIC ROM banked out; library owns $14-$2E, $40-$7F, $FB-$FE ZP
+    reu:        REQUIRED — 1750 REU or compatible, 6 banks of 64 KB (384 KB)
+    banks_used: 0-5 (see docs/LIBRARY.md §7 for full memory map)
+
+public_api:     see src/x25519.inc for the machine-readable header
+integration:    see docs/LIBRARY.md §4 for step-by-step vendoring guide
+
+======================================================================
+This file documents where this copy of c64-x25519 came from. Keep it
+alongside the vendored source so future maintainers can update to a
+newer upstream release or audit the provenance of the crypto code.
+======================================================================

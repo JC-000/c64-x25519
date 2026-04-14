@@ -5,9 +5,18 @@ CC65_CFG = cfg/x25519.cfg
 
 SRC_DIR = src
 BUILD_DIR = build
+LIB_DIR = $(BUILD_DIR)/lib
 
 PRG = $(BUILD_DIR)/x25519.prg
 LABELS = $(BUILD_DIR)/labels.txt
+
+# Library .o set (what ships in libx25519.a — no test harness code).
+LIB_OBJS = $(BUILD_DIR)/x25519_init.o \
+           $(BUILD_DIR)/mul_8x8.o \
+           $(BUILD_DIR)/fe25519.o \
+           $(BUILD_DIR)/x25519.o \
+           $(BUILD_DIR)/data.o \
+           $(BUILD_DIR)/util.o
 
 # Separate compilation: each .s file produces its own .o
 CA65_SRCS = $(SRC_DIR)/main.s \
@@ -16,16 +25,14 @@ CA65_SRCS = $(SRC_DIR)/main.s \
             $(SRC_DIR)/mul_8x8.s \
             $(SRC_DIR)/fe25519.s \
             $(SRC_DIR)/x25519.s \
-            $(SRC_DIR)/data.s
+            $(SRC_DIR)/data.s \
+            $(SRC_DIR)/util.s
 
-CA65_OBJS = $(BUILD_DIR)/main.o \
-            $(BUILD_DIR)/x25519_init.o \
-            $(BUILD_DIR)/mul_8x8.o \
-            $(BUILD_DIR)/fe25519.o \
-            $(BUILD_DIR)/x25519.o \
-            $(BUILD_DIR)/data.o
+CA65_OBJS = $(BUILD_DIR)/main.o $(LIB_OBJS)
 
-.PHONY: all clean test test-slow test-ref test-vice
+LIBX25519 = $(LIB_DIR)/libx25519.a
+
+.PHONY: all clean test test-slow test-ref test-vice lib lib-verify
 
 all: $(PRG)
 
@@ -81,5 +88,75 @@ $(PRG): $(CA65_OBJS) $(CC65_CFG) | $(BUILD_DIR)
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
 
+$(LIB_DIR):
+	mkdir -p $(LIB_DIR) $(LIB_DIR)/cfg
+
 clean:
 	rm -f $(BUILD_DIR)/*.o $(PRG) $(LABELS) $(LABELS).raw
+	rm -rf $(LIB_DIR)
+
+# --- Relocatable library archive ---------------------------------------------
+#
+# `make lib` produces a ca65/ld65-ready library package under build/lib/ that
+# downstream c64 crypto projects can vendor and link against:
+#
+#   build/lib/libx25519.a      — ca65 archive of all library .o modules
+#   build/lib/*.o              — individual .o files (alternative to the archive)
+#   build/lib/x25519.inc       — public header (copy of src/x25519.inc)
+#   build/lib/cfg/x25519-example.cfg — starter linker config fragment
+#
+# The archive contains ONLY library code (fe25519, x25519, x25519_init,
+# mul_8x8, data, util). It does NOT include main.o (BASIC stub, test harness
+# idle loop, print helpers) — downstream users supply their own entry point.
+
+lib: $(LIBX25519) \
+     $(LIB_DIR)/x25519.inc \
+     $(LIB_DIR)/cfg/x25519-example.cfg \
+     $(addprefix $(LIB_DIR)/, $(notdir $(LIB_OBJS)))
+
+$(LIBX25519): $(LIB_OBJS) | $(LIB_DIR)
+	rm -f $@
+	ar65 r $@ $(LIB_OBJS)
+
+$(LIB_DIR)/%.o: $(BUILD_DIR)/%.o | $(LIB_DIR)
+	cp $< $@
+
+$(LIB_DIR)/x25519.inc: $(SRC_DIR)/x25519.inc | $(LIB_DIR)
+	cp $< $@
+
+$(LIB_DIR)/cfg/x25519-example.cfg: cfg/x25519-example.cfg | $(LIB_DIR)
+	cp $< $@
+
+# --- Library linkage smoke test ----------------------------------------------
+#
+# `make lib-verify` assembles a tiny downstream stub, links it against
+# libx25519.a via the example config, and asserts the resulting binary is
+# non-zero and contains all the expected public symbols. This proves the
+# archive is actually usable, not just a pile of .o files in a tarball.
+
+LIB_VERIFY_DIR = $(BUILD_DIR)/lib_verify
+LIB_VERIFY_PRG = $(LIB_VERIFY_DIR)/lib_linkage_stub.prg
+LIB_VERIFY_STUB = tests/lib_linkage/lib_linkage_stub.s
+
+lib-verify: lib $(LIB_VERIFY_PRG)
+	@set -e; \
+	test -s $(LIB_VERIFY_PRG) || (echo "FAIL: $(LIB_VERIFY_PRG) is empty" && exit 1); \
+	for sym in x25519_clamp x25519_scalarmult x25519_base \
+	           fe25519_add fe25519_sub fe25519_mul fe25519_sqr \
+	           sqtab_init reu_mul_init \
+	           x25_scalar x25_u x25_result \
+	           vic_blank vic_unblank bench_start bench_stop; do \
+	  grep -q "\\b$$sym\\b" $(LIB_VERIFY_DIR)/stub.labels \
+	    || (echo "FAIL: expected symbol $$sym not in linked binary" && exit 1); \
+	done; \
+	bytes=$$(wc -c < $(LIB_VERIFY_PRG)); \
+	echo "OK: $(LIB_VERIFY_PRG) is $$bytes bytes, all expected symbols present"
+
+$(LIB_VERIFY_PRG): $(LIB_VERIFY_STUB) $(LIBX25519) cfg/x25519-example.cfg | $(LIB_VERIFY_DIR)
+	$(CA65) -I $(SRC_DIR) -o $(LIB_VERIFY_DIR)/stub.o $(LIB_VERIFY_STUB)
+	$(LD65) -C cfg/x25519-example.cfg -o $@ \
+	    -Ln $(LIB_VERIFY_DIR)/stub.labels \
+	    $(LIB_VERIFY_DIR)/stub.o $(LIBX25519)
+
+$(LIB_VERIFY_DIR):
+	mkdir -p $(LIB_VERIFY_DIR)

@@ -35,7 +35,7 @@
 .import fe25519_inv, fe25519_reduce_final, fe25519_mul_a24
 
 ; --- Imports from data.s ---
-.import fe25519_tmp1, fe25519_tmp2, fe25519_tmp3, fe_tmp4
+.import fe25519_tmp1, fe25519_tmp2, fe25519_tmp3, fe25519_tmp4
 .import x25_x2, x25_z2, x25_x3, x25_z3
 .import x25_a, x25_b, x25_da, x25_cb, x25_e
 .import x25_scalar, x25_u, x25_result, x25_basepoint
@@ -304,16 +304,16 @@
         jsr fe25519_sqr             ; fe25519_tmp3 = AA
         jsr fe25519_reduce_final    ; AA feeds into fe25519_sub/fe25519_add
 
-        ; BB = B^2 → fe_tmp4
+        ; BB = B^2 → fe25519_tmp4
         lda #<(x25_b)
         sta fe25519_src1
         lda #>(x25_b)
         sta fe25519_src1+1
-        lda #<(fe_tmp4)
+        lda #<(fe25519_tmp4)
         sta fe25519_dst
-        lda #>(fe_tmp4)
+        lda #>(fe25519_tmp4)
         sta fe25519_dst+1
-        jsr fe25519_sqr             ; fe_tmp4 = BB
+        jsr fe25519_sqr             ; fe25519_tmp4 = BB
         jsr fe25519_reduce_final    ; BB feeds into fe25519_sub
 
         ; E = AA - BB → x25_e
@@ -321,9 +321,9 @@
         sta fe25519_src1
         lda #>(fe25519_tmp3)
         sta fe25519_src1+1
-        lda #<(fe_tmp4)
+        lda #<(fe25519_tmp4)
         sta fe25519_src2
-        lda #>(fe_tmp4)
+        lda #>(fe25519_tmp4)
         sta fe25519_src2+1
         lda #<(x25_e)
         sta fe25519_dst
@@ -447,9 +447,9 @@
         sta fe25519_src1
         lda #>(fe25519_tmp3)
         sta fe25519_src1+1
-        lda #<(fe_tmp4)
+        lda #<(fe25519_tmp4)
         sta fe25519_src2
-        lda #>(fe_tmp4)
+        lda #>(fe25519_tmp4)
         sta fe25519_src2+1
         lda #<(x25_x2)
         sta fe25519_dst

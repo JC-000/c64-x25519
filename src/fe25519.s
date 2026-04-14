@@ -29,7 +29,7 @@
 .import reu_clear_wide, reu_fetch_doubled_row
 
 ; --- Imports from data.s ---
-.import fe25519_tmp1, fe25519_tmp2, fe25519_tmp3, fe_tmp4
+.import fe25519_tmp1, fe25519_tmp2, fe25519_tmp3, fe25519_tmp4
 .import x25_a, x25_b, x25_da, x25_cb
 .import fe_p, mul_cached_a, mul_src2_buf
 .import mul_dma_lo, mul_dma_hi, mul_dma_carry
