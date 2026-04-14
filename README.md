@@ -6,18 +6,45 @@ An optimized implementation of X25519 / Curve25519 scalar multiplication written
 
 ## Status
 
-**v0.1.0 released 2026-04-13** — [GitHub release](https://github.com/JC-000/c64-x25519/releases/tag/v0.1.0), MIT licensed. The `fe25519_*` and `x25519_*` public API is locked for the v0.1.0 series and follows semver: additive changes bump the minor version, breaking API changes bump the major. `make test-slow` passes 957/957 assertions across 11 test suites against pyca/cryptography as the external reference.
+**v0.2.0 candidate (2026-04-14, pending tag)** — constant-time
+remediation of issue
+[#20](https://github.com/JC-000/c64-x25519/issues/20) is **complete**
+for the `fe25519_*` / `mul_8x8` surface. Phases 0–6 have fixed all
+22 catalogued secret-dependent branches and page-cross leaks (L1–L22)
+across `mul_8x8`, `fe25519_mul`, and `fe25519_sqr` (including
+`fe25519_sqr`'s cross-term carry-cascade path, which now uses an
+unconditional per-body pending-carry chain plus a public-indexed
+end-of-inner ripple). Every branch in the field-op hot path now
+depends only on public loop indices. See
+[`docs/CT_ANALYSIS.md`](docs/CT_ANALYSIS.md) for the full leak
+inventory, threat model, landing history, Phase 6 correctness/CT
+argument, and remaining non-critical audit items (the `@diag_prop`
+diagonal path and the outer `x25519_scalarmult` ladder/cswap audit).
+
+**v0.1.0 released 2026-04-13** — [GitHub release](https://github.com/JC-000/c64-x25519/releases/tag/v0.1.0), MIT licensed. The `fe25519_*` and `x25519_*` public API is locked for the v0.1.0 series and follows semver: additive changes bump the minor version, breaking API changes bump the major. `make test-slow` passes all assertions across 11 test suites against pyca/cryptography as the external reference.
 
 ## Performance
 
 | Operation | Cost |
 |---|---|
-| `x25519_scalarmult` (basepoint 9) | 9,544 jiffies / ~159.1s NTSC / ~190.9s PAL |
-| `x25519_scalarmult` (dense u-coord) | ~10,600 jiffies / ~176.7s NTSC |
+| `x25519_scalarmult` (basepoint 9, v0.2.0 candidate) | 12,485 jiffies / ~208.1s NTSC / ~249.7s PAL |
+| `x25519_scalarmult` (basepoint 9, v0.1.0 baseline) | 9,520 jiffies / ~158.7s NTSC |
+| `x25519_scalarmult` (dense u-coord, v0.2.0 candidate) | ~13,700 jiffies / ~228.3s NTSC |
 | `fe25519_mul` | ~4.0 jiffies/call |
-| `fe25519_sqr` | ~4.1 jiffies/call |
+| `fe25519_sqr` | ~5.4 jiffies/call (post-CT) |
 
-All measurements on stock C64 with VIC-II blanked (`jsr vic_blank`). 47.1% faster than an un-optimized baseline via Phases 1–10 of incremental optimization work. See the release notes for details.
+All measurements on stock C64 with VIC-II blanked (`jsr vic_blank`). The
+v0.2.0 candidate reflects a +31.1 % regression from the full CT
+remediation (Phases 1–6): branchless CT quarter-square in `mul_8x8`,
+inline branchless CT mult66 in `fe25519_sqr`, zero-skip removal across
+`fe25519_mul` / `fe25519_sqr`, and the unconditional pending-carry
+chain that eliminated L19–L22. Correctness was prioritized over
+performance throughout: the budget breach is the price of provable
+CT-cleanliness. Performance-recovery Options 2/3/4 in
+`docs/CT_ANALYSIS.md` §Follow-ups are queued for a v0.3.0 pass that
+does not touch correctness invariants. The library remains ~31 %
+faster than the original un-optimized baseline (~18,000 jiffies)
+after the full v0.2.0 CT remediation.
 
 ## Requirements
 
@@ -68,7 +95,21 @@ The test suite caught a latent `fe_reduce_wide` carry-propagation bug in v0.1.0 
 
 ## Security notes
 
-- **Not constant-time.** Timing varies at the microsecond level based on operand values. Suitable against network-observable attackers; **not** suitable against adversaries with fine-grained timing or EM side-channel access.
+- **Constant-time field operations (v0.2.0 candidate).** All 22
+  catalogued secret-dependent branches and page-cross leaks in
+  `mul_8x8`, `fe25519_mul`, and `fe25519_sqr` (L1–L22 in
+  [`docs/CT_ANALYSIS.md`](docs/CT_ANALYSIS.md)) have been fixed. The
+  field-op hot path now contains no data-dependent branches and no
+  `(zp),y` indirect-indexed loads on secret operands. Remaining audit
+  items are non-critical: the `@diag_prop` diagonal-term path in
+  `fe25519_sqr` (tracked as a nice-to-have), and the outer
+  `x25519_scalarmult` Montgomery ladder / `fe25519_cswap` audit
+  (scalar-bit-dependent branches in the ladder would defeat the
+  field-op fixes; currently believed clean — `fe25519_cswap` is
+  mask-time-invariant and the ladder visits every scalar bit — but
+  not yet formally audited). Suitable against network-observable
+  timing attackers through the field-op surface; the ladder/cswap
+  audit is the gating item for side-channel deployment certification.
 - **No RNG.** Key generation is the caller's job.
 - **X25519 only.** No Ed25519, no X448, no hash functions, no KDF/AEAD/HKDF.
 

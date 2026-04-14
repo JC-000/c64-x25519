@@ -112,45 +112,56 @@ poly_prod_lo:   .byte 0
 poly_prod_hi:   .byte 0
 
 .proc mul_8x8
-        sta mul_a               ; save A
-        stx mul_b               ; save X
+        sta mul_a               ; save A (multiplicand)
+        stx mul_b               ; save X (multiplier)
 
-        ; Compute sum = a + b
-        clc
-        adc mul_b               ; A = a + b (low byte)
-        tax                     ; X = sum low byte
-        lda #0
-        adc #0                  ; carry → sum page (0 or 1)
-        sta mul_s_pg            ; sum page
-
-        ; Compute |a - b|
+        ; ---- Branchless |a - b| via sign-mask XOR ----
+        ; Compute raw diff = a - b, and mask = 0 (if a>=b) or $ff (if a<b).
+        ; Then |a-b| = (raw XOR mask) - mask, using the identity that
+        ; subtracting $ff with C=1 equals adding 1 in two's complement.
         lda mul_a
         sec
-        sbc mul_b
-        bcs :+
-        eor #$ff
-        adc #1                  ; negate (carry was clear, so ADC adds 1)
-:       tay                     ; Y = |a-b| (always page 0, ≤255)
+        sbc mul_b               ; A = a - b (raw), C=1 if a>=b, C=0 if a<b
+        sta mul_diff            ; stash raw diff
+        lda #0
+        sbc #0                  ; A = $00 if C=1, $ff if C=0 (sign mask)
+        sta mul_mask
+        eor mul_diff            ; A = raw XOR mask
+        sec
+        sbc mul_mask            ; A = (raw XOR mask) - mask = |a-b|
+        tay                     ; Y = |a-b|
 
-        ; sqtab[sum] - sqtab[|diff|]
-        lda mul_s_pg
-        beq @s0
-        ; sum is in page 1 (256..510)
-        lda sqtab_lo+256,x
+        ; ---- Compute sum and sum-page carry ----
+        lda mul_a
+        clc
+        adc mul_b               ; A = (a+b) & $ff
+        tax                     ; X = sum low byte
+        lda #0
+        adc #0                  ; A = sum-page carry (0 or 1)
+        sta mul_sum_pg
+
+        ; ---- Patch hi bytes of the two abs,X load sites (SMC) ----
+        ; Because sqtab_lo/sqtab_hi are each 512 bytes starting on a page
+        ; boundary ($7800 and $7a00), adding the sum-page carry (0 or 1)
+        ; to the page hi byte selects between page 0 and page 1 of each
+        ; table without any data-dependent branch.
+        lda #>sqtab_lo
+        clc
+        adc mul_sum_pg
+        sta @ct_load_lo+2       ; patch hi byte of `lda sqtab_lo,x`
+        lda #>sqtab_hi
+        clc
+        adc mul_sum_pg
+        sta @ct_load_hi+2       ; patch hi byte of `lda sqtab_hi,x`
+
+        ; ---- Straight-line sqtab[sum] - sqtab[|diff|] ----
+@ct_load_lo:
+        lda sqtab_lo,x          ; hi byte PATCHED above
         sec
         sbc sqtab_lo,y
         sta poly_prod_lo
-        lda sqtab_hi+256,x
-        sbc sqtab_hi,y
-        sta poly_prod_hi
-        rts
-@s0:
-        ; sum is in page 0 (0..255)
-        lda sqtab_lo,x
-        sec
-        sbc sqtab_lo,y
-        sta poly_prod_lo
-        lda sqtab_hi,x
+@ct_load_hi:
+        lda sqtab_hi,x          ; hi byte PATCHED above
         sbc sqtab_hi,y
         sta poly_prod_hi
         rts
@@ -158,4 +169,6 @@ poly_prod_hi:   .byte 0
 
 mul_a:          .byte 0
 mul_b:          .byte 0
-mul_s_pg:       .byte 0
+mul_diff:       .byte 0
+mul_mask:       .byte 0
+mul_sum_pg:     .byte 0

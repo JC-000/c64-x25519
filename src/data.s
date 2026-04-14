@@ -12,7 +12,6 @@
 .export x25_basepoint, fe_p
 .export mul_cached_a, mul_src2_buf
 .export mul_dma_lo, mul_dma_hi, mul_dma_carry
-.export sqtab2_lo, sqtab2_hi
 .export mul38_lo_tab, mul38_hi_tab
 .export sqr_lo, sqr_hi
 .export a24_b0, a24_b1, a24_b2, a24_b3
@@ -120,22 +119,9 @@ mul_dma_hi:
 mul_dma_carry:
         .res 256, 0           ; DMA target: 17th-bit carry of 2*a*b (0 or 1)
 
-        .align 256             ; realign sqtab2 to page boundary
-; --- mult66 second quarter-square table ---
-; sqtab2[0] = 0
-; sqtab2[n] = floor((256-n)^2 / 4) - 1  for n=1..255
-; The -1 compensates for carry being clear in the negative-difference path
-sqtab2_lo:
-        .byte 0
-        .repeat 255, i
-                .byte <(((256-(i+1))*(256-(i+1)))/4 - 1)
-        .endrepeat
-
-sqtab2_hi:
-        .byte 0
-        .repeat 255, i
-                .byte >(((256-(i+1))*(256-(i+1)))/4 - 1)
-        .endrepeat
+; (sqtab2_lo / sqtab2_hi removed after Phase 2: the branchless CT
+;  quarter-square path in fe25519_sqr no longer needs a second
+;  negative-diff table — ~512 bytes of binary reclaimed.)
 
 ; --- mul_by_38 lookup tables ---
 ; mul38_lo_tab[i] = low byte of (i * 38)
