@@ -171,17 +171,26 @@ Exact addresses can be read from `build/labels.txt` after a build.
 
 ## 8. Performance
 
-Latest (post-Phase-9: table-driven primitives,
-page-aligned buffers, 4x unrolled `fe25519_mul` inner loop):
+Latest (post-Phase-10: Phase 9 base plus fe_mul src1/src2 self-mod
+patches and per-body `clc` removal in 4x-unrolled inner loop,
+fe_sqr `@sqr_inner_dma` rewrite keeping `j` in X register, and a
+critical carry-propagation fix in `fe_reduce_wide` for a latent
+correctness bug on specific input cascades):
 
-| Operation             | Jiffies | Wall-time (PAL) |
-| --------------------- | ------: | --------------: |
-| `x25519_scalarmult`   |   9,818 |        ~163.6 s |
+| Operation             | Jiffies | Wall-time NTSC | Wall-time PAL |
+| --------------------- | ------: | -------------: | ------------: |
+| `x25519_scalarmult`   |   9,520 |       ~158.7 s |      ~190.4 s |
 
-This is ~45.5% faster than the original (un-optimized) baseline.
+This is ~47.1% faster than the original (un-optimized) baseline.
 Timing is measured with VIC-II **blanked** (`jsr vic_blank` before
 the call); running with the display enabled costs ~25% more cycles
 due to VIC-II DMA badlines.
+
+The 9,520 jiffy figure is for the basepoint (u = [9, 0×31]). The
+23 zero bytes trigger zero-skip fast paths in `fe25519_mul`; a
+dense u-coordinate (typical ECDH with a peer public key) runs
+about 10% slower — use `tools/bench_fe_ops.py` to measure an RFC
+7748 dense test vector for a representative number.
 
 One scalar multiplication performs roughly 2,550 field multiplies +
 ~264 squarings for the inversion step.
@@ -240,6 +249,10 @@ against an external, widely-audited source of truth instead.
 ## 12. Version / provenance
 
 - Upstream repository: `c64-x25519`, branch `master`.
-- Recent optimization commits: `50c7b7b`, `14920b7`, `381e3d6`,
-  `8fa953c` (Phase 9 — tables + unroll + alignment).
-- Benchmark baseline: 9,818 jiffies / scalar mult (blanked VIC-II).
+- Recent optimization commits:
+  - Phase 9 (tables + unroll + alignment): `8fa953c`, `381e3d6`,
+    `14920b7`, `50c7b7b`
+  - Phase 10 (mul/sqr/inv micro-opts + fe_reduce_wide carry fix):
+    `48092b5`, `fa7c31e`
+- Benchmark baseline: 9,520 jiffies / scalar mult (basepoint 9,
+  VIC-II blanked).
