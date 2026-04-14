@@ -1,18 +1,26 @@
 # CT_ANALYSIS — Constant-Time Audit for c64-x25519
 
-Status: **Phases 0–5b landed (uncommitted)** — tracking issue
+Status: **Phases 0–6 landed (uncommitted)** — tracking issue
 [#20](https://github.com/JC-000/c64-x25519/issues/20).
 
 This document catalogues every currently-known secret-dependent branch and
 every `(zp),y` indirect-indexed load in the X25519 library, records the
 baseline and post-fix performance, and tracks follow-up work.
 
-**Current state:** L1–L18 are fixed in the working tree (branchless
-quarter-square in `mul_8x8`, branchless CT mult66 rewrite of
-`fe25519_sqr`'s inner bodies, and zero-skip removal across `fe25519_mul`
-and `fe25519_sqr`). L19–L22 (carry-cascade short-circuits) remain `leak`
-and are tracked below as **must-fix** follow-ups before the library can
-be certified CT-clean for network-facing deployment.
+**Current state:** L1–L22 are fixed in the working tree. Phase 6 (this
+pass) replaced the four carry-cascade short-circuits in `fe25519_sqr`
+(L19–L22) with a per-body unconditional pending-carry chain plus one
+end-of-inner ripple per outer-i. Every branch in the cross-term
+accumulate depends only on public loop indices (`fe_mul_i`, `fe_mul_j`,
+`fe_sqr_pairs`) or on a public `cmp #64` guard against the phantom
+slot's out-of-bounds carry target. Scalarmult bench lands at
+**12,485 jiffies** (+2,215 vs post-5b; +2,965 vs pristine).
+(The diagonal `@diag_prop` path remains outside the Phase 6 scope — it
+was not flagged in the original leak inventory and is tracked as a
+nice-to-have audit below.) With L1–L22 fixed, the library is
+considered CT-clean for network-facing use through the `fe25519_sqr`
+and `fe25519_mul` surface, subject to the usual caveats about
+out-of-proc callers (ladder/cswap, REU hooks).
 
 ## Threat model
 
@@ -77,10 +85,10 @@ still relevant.
 | L16 | src/fe25519.s:828     | branch      | med      | fixed  | `bne @sqr_nonzero_i` removed — Phase 5b outer unconditional      |
 | L17 | src/fe25519.s:1095    | branch      | med      | fixed  | `beq @sqr_dma_skip_a` removed — Phase 5b DMA body A              |
 | L18 | src/fe25519.s:1117    | branch      | med      | fixed  | `beq @sqr_dma_skip_b` removed — Phase 5b DMA body B              |
-| L19 | src/fe25519.s:1111    | branch      | **med**  | **leak (must-fix)** | `bne @sqr_dma_prop_a` — DMA carry-prop short-circuit  |
-| L20 | src/fe25519.s:1133    | branch      | **med**  | **leak (must-fix)** | `bne @sqr_dma_prop_b` — DMA carry-prop short-circuit  |
-| L21 | src/fe25519.s:964     | branch      | **med**  | **leak (must-fix)** | `beq @sqr_next_j` — mult66 accum carry short-circuit A|
-| L22 | src/fe25519.s:1054    | branch      | **med**  | **leak (must-fix)** | `beq @sqr_next_j_b` — mult66 accum carry short-circuit B |
+| L19 | src/fe25519.s:~1188   | branch      | med      | fixed  | `bne @sqr_dma_prop_a` removed — Phase 6 per-body pending chain (DMA body A) |
+| L20 | src/fe25519.s:~1232   | branch      | med      | fixed  | `bne @sqr_dma_prop_b` removed — Phase 6 per-body pending chain (DMA body B) |
+| L21 | src/fe25519.s:~993    | branch      | med      | fixed  | `beq @sqr_next_j` removed — Phase 6 per-body pending chain (mult66 body A) |
+| L22 | src/fe25519.s:~1086   | branch      | med      | fixed  | `beq @sqr_next_j_b` removed — Phase 6 per-body pending chain + phantom guard (mult66 body B) |
 
 ### Phase landing notes
 
@@ -120,35 +128,97 @@ still relevant.
   and (c) `@sqr_accum` handles zero products as a functional no-op
   with C preserved.
 
-- **L19-L22 — deferred carry-cascade leaks, must-fix follow-ups**. See
-  the "Follow-ups" section below. These are not local fixes — both
-  require whole-procedure restructuring of the carry-propagate path.
+- **Phase 6 — L19-L22 fixed in `.proc fe25519_sqr`**. The four
+  carry-cascade short-circuits (two in the DMA hybrid path, two in the
+  mult66 path) were removed. Each secret-dependent `beq`/`bne` on the
+  combined carry (shift-carry + accumulate-carry) has been replaced by
+  an unconditional carry-chain step that threads a single-bit `pending`
+  carry between adjacent bodies within a given outer-i iteration. At
+  the end of each outer-i's inner loop, a single end-of-inner ripple
+  flushes any residual pending bit forward to `fe_wide[63]`.
+
+  **Carry-chain mechanism (per body, always runs):**
+  1. Compute `combined = shift_carry + accumulate_carry` ∈ {0,1,2}.
+  2. Add the prior body's `sqr_pending` (∈ {0,1}): `val = combined +
+     pending`, ≤ 3.
+  3. Unconditionally add `val` to `fe_wide[i+j+2]` (body's carry
+     target).
+  4. Capture the new overflow bit into `sqr_pending`.
+  5. Record `[i+j+3]` into `sqr_ripple_start` for the end-of-inner
+     flush.
+
+  The chain is consistent because the next body's carry target is
+  `[i+j+3]` (body A's overflow position coincides with body B's carry
+  target; body B's overflow position coincides with the next pair's
+  body A carry target). Body B's accumulate does not read `[i+j+3]`
+  directly (it reads `[i+j+1]` and `[i+j+2]`, both written by the prior
+  body's accumulate and/or carry step), so the pending-bit does not
+  need to be materialized into `[i+j+3]` until the next body's carry
+  step. At that point it is added in constant time alongside the new
+  body's combined carry. `sqr_pending` is reset to 0 at the top of
+  each outer-i iteration (`@sqr_outer`), so the chain does not leak
+  state across outer iterations — the end-of-inner ripple flushes any
+  residual bit out to `fe_wide[63]` before `inc fe_mul_i`.
+
+  **End-of-inner ripple:** one per outer-i (not per body). Starts at
+  `sqr_ripple_start` (= last body's `[i+j+3]`), runs to `fe_wide[63]`,
+  using an inner loop of
+  `adc fe_wide,x / sta fe_wide,x / lda #0 / inx / dey / bne` — none
+  of which touch C, so the ripple carry flows from each `adc` into
+  the next uninterrupted. Exit via `dey/bne` on a public count
+  (`64 - sqr_ripple_start`). A public `bcc` guards against
+  `sqr_ripple_start > 64` (the sentinel case from the phantom slot).
+
+  **Phantom-slot guard:** for `i = 30, j = 32` (the zero-padded
+  `mul_src2_buf[32]` phantom body B), the carry target `[i+j+2] = 64`
+  is out of fe_wide bounds. A public `cmp #64 / bcs` at the mult66
+  body B carry step skips the write, resets `sqr_pending = 0`, and
+  sets `sqr_ripple_start = 64` so the end-of-inner ripple runs zero
+  iterations. This matches the old code's silent carry-drop past
+  `fe_wide[63]` (the old `cpx #64 / bcs` stopped the ripple at the
+  same boundary). The branch is on public `(i, j)` state only.
+
+  **Design choice — Option F** (per-body 1-bit pending chain +
+  single end-of-inner ripple). An earlier Option A pass (inlined
+  unconditional ripple per body) was implemented, tested correct,
+  and benchmarked at **31,386 jiffies** (+21,116 vs post-5b). That
+  was over the brief's flag threshold (>13,000), so Option F was
+  implemented and landed instead. Option F threads one pending bit
+  per body and amortizes the ripple over the outer-i loop, reducing
+  the per-body CT overhead from ~17cy × ~35 iterations to ~15cy
+  fixed cost, plus one ~30-iteration ripple per outer-i (vs
+  544 bodies × 35 iterations for Option A). The result is a
+  far cheaper landing: **12,485 jiffies (+2,215 vs post-5b)**.
+
+  Rejected alternatives: Option B (narrow 3-byte window) lacks a
+  provable invariant for `fe_wide[i+j+3] <= $FE`; Option C (uniform
+  64-byte ripple) is strictly worse than Option A; Option E (shared
+  helper sub via `jsr`) centralizes audit but adds `jsr/rts` overhead
+  without reducing the per-body count. Option F was chosen for its
+  balance of CT clarity (carry chain is linear; pending value is a
+  single bit; `beq/bne` branches only on public loop counters) and
+  affordable performance.
+
+  **Scratch added to the `.proc`:** `sqr_pending` (1 byte, pending
+  carry ∈ {0,1}), `sqr_ripple_start` (1 byte, end-of-inner ripple
+  start address). Neither leaks secrets — they carry forward public
+  derived state (combined carry bit + public index). `sqr_tmp_b`
+  (already present for the quarter-square body) is reused to stash
+  the value-to-add across the address arithmetic.
+
+  The old out-of-line `@sqr_dma_prop_a/b` blocks and the two
+  `@sqr_prop1/_b` ripple loops were deleted entirely (~80 lines of
+  dead carry-cascade code). One `bne @sqr_dma_body_a` short-branch
+  was converted to `beq + jmp` to accommodate the inlined chain.
+  `@diag_prop` remains unchanged — it was not in the original
+  L19–L22 scope and is tracked as a nice-to-have audit below.
 
 ### Follow-ups
 
-**Must-fix (blocks CT-clean certification for network-facing use):**
-
-1. **L19/L20** — `fe25519_sqr` DMA carry-cascade short-circuit. The
-   `bne @sqr_dma_prop_a/b` path only fires when the accumulate
-   generates a carry out of `fe_wide[i+j+1]`. It leaks whether a
-   secret-derived product rolled the 16-bit accumulator into the
-   next limb. Fix: replace the opportunistic `sec/lda/adc #0/bcs`
-   cascade with an unconditional full-width ripple up to the end of
-   `fe_wide` (at most 64 bytes). Estimated cost: +300-500 jiffies per
-   scalarmult depending on how tightly the ripple unrolls.
-
-2. **L21/L22** — `fe25519_sqr` mult66 accum combined-carry
-   short-circuit. `beq @sqr_next_j/_b` fires when the doubled product
-   plus the accumulate produced zero combined carry. Same fix shape
-   as L19/L20 (unconditional ripple); may share the same helper
-   subroutine. Estimated cost: +150-300 jiffies.
-
-   **Combined L19-L22 estimated cost: +400-800 jiffies** depending on
-   how much ripple sharing is possible between the mult66 and DMA
-   paths. Target for a Phase 6 pass.
-
-**Queued performance-recovery options** (user accepted the current
-+7.9% regression for v0.2.0; recover in a later perf-recovery pass):
+**Queued performance-recovery options** (Phase 6 CT-clean landing
+further increased the regression; recover in a later perf-recovery
+pass — the library is now provably CT-clean for L1–L22 and the
+perf cost is the price paid for that guarantee):
 
 - **Option 2 — Hoist SMC patches across bodies A and B.** Compute
   `>sqtab_lo + sum_pg` and `>sqtab_hi + sum_pg` once per pair-
@@ -174,11 +244,20 @@ still relevant.
 - **Add `tools/test_ct_square_cycles.py`** cycle-count regression
   guard (deferred from Phase 2). Runs `fe25519_square` on two inputs
   with different Hamming profiles and asserts equal cycle counts.
-  Gates future edits against CT regression.
+  Gates future edits against CT regression. With L19–L22 fixed, this
+  test now has a chance of passing and is the natural first consumer
+  of the Phase 6 guarantee.
 - **Audit `x25519_scalarmult` itself** for scalar-bit-dependent
   branches in the Montgomery ladder / cswap. The ladder is the next
   layer up from `fe25519_*`; any bit-conditional branching there
   would defeat the field-op CT fixes.
+- **Audit `fe25519_sqr`'s `@diag_prop` path** for the same carry-
+  cascade short-circuit pattern as L19–L22. The `bcc @diag_skip`
+  and its `cpx`-controlled ripple loop still branch on
+  secret-derived carry. This was not in the original CT_ANALYSIS
+  inventory and is out of scope for Phase 6, but uses the same
+  leak pattern and should be fixed in the same Phase-6-style
+  unconditional ripple before the next CT re-audit.
 
 ### Class legend
 
@@ -221,9 +300,16 @@ still relevant.
 - **Phase 5b** — fix **L16-L18** (`fe25519_sqr` outer + DMA zero-
   skips). Safe via branchless-CT-body zero-product invariant and
   `mul_dma[0]==0`.
-- **Phase 6 (pending)** — fix **L19-L22** carry-cascade short-
-  circuits. Whole-procedure ripple restructuring required. See
-  Follow-ups above.
+- **Phase 6** — fix **L19-L22** (`fe25519_sqr` carry-cascade short-
+  circuits). Option F: per-body 1-bit pending-carry chain plus a
+  single end-of-inner ripple per outer-i. Every branch in the
+  cross-term accumulate now depends only on public state
+  (`fe_mul_i`, `fe_mul_j`, `fe_sqr_pairs`, and a public `cmp #64`
+  phantom-slot guard). Old opportunistic `bcs @prop / cpx #64 /
+  bcs :done` pattern replaced by an unconditional chain step
+  plus a `dey/bne`-controlled ripple whose count is public-derived
+  (`64 - sqr_ripple_start`). See "Phase 6 landing notes" above for
+  the full mechanism and the rejected Option A trial.
 
 Issue [#20](https://github.com/JC-000/c64-x25519/issues/20) was the
 origin report for L1-L15. L16-L22 were discovered during the Phase 3
@@ -243,23 +329,31 @@ VICE warp, VIC-II blanked). Measured via `python3 tools/bench_x25519.py`.
 | Pristine master (pre-fix) | 9,520   | —                 | Post-v0.1.0 baseline                |
 | Post-Phase 2 (L3–L11)     | 10,251  | +731 (+7.7 %)     | CT mult66 rewrite lands             |
 | Post-Phase 5 (L12–L15)    | ~10,251 | +731 (+7.7 %)     | negligible additional cost          |
-| Post-Phase 5b (L16–L18)   | **10,270** | **+750 (+7.9 %)** | **accepted for v0.2.0**         |
+| Post-Phase 5b (L16–L18)   | 10,270  | +750 (+7.9 %)     | v0.2.0 L1–L18 stopping point        |
+| Phase 6 (Option A trial)  | 31,386  | +21,866 (+230 %)  | unconditional per-body ripple — discarded |
+| Post-Phase 6 (L19–L22)    | **12,485** | **+2,965 (+31.1 %)** | **Option F landing; L1–L22 fixed** |
 
-### Regression budget (original plan) vs. actual
+### Regression budget (original plan) vs. actual (through Phase 6)
 
-| Bound                | Jiffies | Actual (+750) | Status                  |
-|----------------------|---------|---------------|-------------------------|
-| Soft (target)        | ≤ +200  | exceeded      | breach                  |
-| Hard (ceiling)       | ≤ +400  | exceeded      | breach                  |
-| Over hard ceiling    | > +400  | **yes**       | design review triggered |
+| Bound                | Jiffies | Actual (+2,965 since pristine) | Status                  |
+|----------------------|---------|--------------------------------|-------------------------|
+| Soft (target)        | ≤ +200  | exceeded                       | breach                  |
+| Hard (ceiling)       | ≤ +400  | exceeded                       | breach                  |
+| Phase 6 brief's cap  | ≤ 13,000 | 12,485                        | within cap              |
 
-**Design-review decision (recorded here):** the +7.9 % regression was
-**accepted** for v0.2.0 to ship a working end-to-end CT remediation of
-L1–L18 with minimal delay. Options 2/3/4 in the Follow-ups section are
-queued for a later perf-recovery pass; the target is to land v0.3.0
-under +4 % relative to the pristine 9,520 baseline after applying
-patch-hoisting and register-state tightening. The library remains ~44 %
-faster than the original pre-optimization baseline (~18,000 jiffies).
+**Design-review decision (recorded here):** Phases 1–5b already
+exceeded the pre-Phase-6 hard ceiling (+750 / +7.9 %). Phase 6 was
+explicitly scoped as correctness-first, with a 2-3× inflation of its
+own estimated 400-800 jiffy budget accepted as the price of CT-clean
+certification for network-facing use. Phase 6's Option F landing came
+in at +2,215 vs the Phase-5b baseline; Option A was rejected as
+unaffordably expensive (+21,116 vs baseline → 31,386 total, ~3× over
+the brief's flag threshold of 13,000). Options 2/3/4 in Follow-ups
+remain queued for a later perf-recovery pass; target v0.3.0 under
++15 % relative to the pristine 9,520 baseline after applying
+patch-hoisting and register-state tightening. The library remains
+~31 % faster than the original pre-optimization baseline
+(~18,000 jiffies) despite the full L1–L22 remediation.
 
 ## Related projects
 

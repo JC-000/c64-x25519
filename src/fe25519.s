@@ -820,6 +820,12 @@ mul38_hi:  .byte 0
         lda #0
         sta fe_mul_i
 @sqr_outer:
+        ; Phase 6 CT: reset the pending-carry chain at the start of each
+        ; outer-i. The chain threads a single 1-bit carry between adjacent
+        ; bodies (see sqr_pending comment at end of proc). Must be 0 before
+        ; the first body of this outer iteration.
+        lda #0
+        sta sqr_pending
         ldy fe_mul_i
         lda (fe25519_src1),y
         ; Phase 5b CT: no zero-skip on a[i]. Body runs unconditionally.
@@ -977,38 +983,36 @@ mul38_hi:  .byte 0
 @sqr_accum_st2:
         sta fe_wide+1,x
 
-        ; Capture accumulation carry and combine with shift carry
+        ; --- Phase 6 CT carry-chain step for mult66 body A ---
+        ; Compose combined carry (shift+accum, ∈ {0,1,2}) with the pending
+        ; carry from the prior body in this outer-i (∈ {0,1}). Sum ≤ 3.
+        ; Always add to fe_wide[i+j+2] and always capture the new overflow
+        ; bit into sqr_pending — no secret-dependent branch. The next body's
+        ; carry target is [i+j+3], which is body A's overflow position, so
+        ; the chain stays consistent. See proc-tail comment on sqr_pending.
         lda #0
-        adc poly_carry         ; A = accum_carry + shift_carry (0, 1, or 2)
-        beq @sqr_next_j        ; if both zero, skip
-
-        ; Add combined carries to fe_wide[i+j+2]
-        ldx fe_mul_i
-        tay                    ; Y = combined carry value
-        txa
+        adc poly_carry         ; A = combined_A (uses C from prior adc_hi)
+        clc
+        adc sqr_pending        ; A ≤ 3
+        sta sqr_tmp_b          ; stash value-to-add (reusing existing scratch)
+        lda fe_mul_i
         clc
         adc fe_mul_j
         clc
-        adc #2
+        adc #2                 ; A = i+j+2
         tax
-        tya                    ; A = combined carry value
+        lda sqr_tmp_b
         clc
         adc fe_wide,x
         sta fe_wide,x
-        bcc @sqr_next_j
-        ; Propagate further carries.
-        ; NOTE: `sec` below is load-bearing. cpx clobbers C, so sec
-        ; restores C=1 each iteration — see feedback_6502_cpx_clobbers_carry.
-@sqr_prop1:
-        inx
-        cpx #64
-        bcs @sqr_next_j
-        sec
-        lda fe_wide,x
+        lda #0
         adc #0
-        sta fe_wide,x
-        bcs @sqr_prop1
-@sqr_next_j:
+        sta sqr_pending        ; new overflow bit → chain
+        inx
+        stx sqr_ripple_start   ; record [i+j+3] as end-of-inner ripple start
+                               ; (overwritten by every subsequent body; at
+                               ; end of inner, holds last body's overflow
+                               ; position)
         inc fe_mul_j
 
         ; === Body B (branchless CT quarter-square, second unrolled copy) ===
@@ -1078,39 +1082,81 @@ mul38_hi:  .byte 0
         sta fe_wide+1,x
 
         lda #0
-        adc poly_carry
-        beq @sqr_next_j_b
-
-        ldx fe_mul_i
-        tay
-        txa
+        adc poly_carry         ; A = combined_B
+        ; --- Phase 6 CT carry-chain step for mult66 body B (see body A) ---
+        ; NOTE: body B for the phantom slot (i=30, j=32, even-i final pair)
+        ; has carry target [i+j+2] = [64] — out of fe_wide bounds. In that
+        ; case combined_B is guaranteed 0 (zero-padded mul_src2_buf[32]),
+        ; but sqr_pending from body A may be nonzero. We guard the write
+        ; with a public `cmp #64 / bcs` on the carry-target address. When
+        ; skipped, the pending is also forced to 0 via the sentinel path —
+        ; mirroring the old code's silent carry-drop past fe_wide[63].
+        ; The branch is on public data (fe_mul_i, fe_mul_j) only.
+        clc
+        adc sqr_pending
+        sta sqr_tmp_b
+        lda fe_mul_i
         clc
         adc fe_mul_j
         clc
-        adc #2
+        adc #2                 ; A = i+j+2 (for body B, j = prior j+1)
+        cmp #64
+        bcs @sqr_b_chain_skip  ; public guard: out-of-bounds phantom case
         tax
-        tya
+        lda sqr_tmp_b
         clc
         adc fe_wide,x
         sta fe_wide,x
-        bcc @sqr_next_j_b
-        ; Load-bearing sec — see @sqr_prop1 comment above.
-@sqr_prop1_b:
-        inx
-        cpx #64
-        bcs @sqr_next_j_b
-        sec
-        lda fe_wide,x
+        lda #0
         adc #0
-        sta fe_wide,x
-        bcs @sqr_prop1_b
-@sqr_next_j_b:
+        sta sqr_pending
+        inx
+        stx sqr_ripple_start
+        jmp @sqr_b_chain_done
+@sqr_b_chain_skip:
+        ; Out-of-bounds (i=30, j=32 phantom): drop the carry write.
+        ; Clear pending so end-of-inner ripple doesn't try to flush past [63].
+        lda #0
+        sta sqr_pending
+        lda #64
+        sta sqr_ripple_start   ; sentinel: end-of-inner ripple count = 0
+@sqr_b_chain_done:
         inc fe_mul_j
         dec fe_sqr_pairs
         beq @sqr_pair_loop_exit_mul
 @sqr_inner_tramp:
         jmp @sqr_inner         ; patched: @sqr_inner OR @sqr_inner_dma
 @sqr_pair_loop_exit_mul:
+        jmp @sqr_mult66_inner_done   ; Phase 6: end-of-inner ripple of
+                                     ; residual pending carry (see below).
+
+; --- Phase 6: mult66 end-of-inner ripple ---
+; Runs once per outer-i for the mult66 path, after the last body B. The
+; chain's residual `sqr_pending` bit (if any) lives at position
+; `sqr_ripple_start` = last-body-overflow-position (= i+j_last+3). Always
+; ripples from there forward to fe_wide[63]. The count is deterministic
+; from fe_mul_i / fe_mul_j (public loop state) — no secret-dependent
+; branch. When `sqr_pending == 0` every add is +0 (functional no-op).
+; When `sqr_pending == 1` the ripple is equivalent to a `+1 with carry
+; propagation` from the start position through [63].
+@sqr_mult66_inner_done:
+        ldx sqr_ripple_start
+        lda #64
+        sec
+        sbc sqr_ripple_start   ; A = 64 - start; C=0 if start > 64
+        bcc @sqr_mult66_rip_done   ; start>64 (phantom edge): public skip
+        tay                    ; Y = count ∈ [0,63]
+        beq @sqr_mult66_rip_done   ; count==0 public skip
+        lda sqr_pending
+        clc
+@sqr_mult66_rip:
+        adc fe_wide,x
+        sta fe_wide,x
+        lda #0
+        inx
+        dey
+        bne @sqr_mult66_rip
+@sqr_mult66_rip_done:
         jmp @sqr_skip_i
 
 ; --- DMA inner loop (2x unrolled): pre-doubled product tables in mul_dma_lo/hi/carry ---
@@ -1139,9 +1185,32 @@ mul38_hi:  .byte 0
 @sqr_dma_st2:
         sta fe_wide+1,x
         lda #0
-        adc poly_carry         ; combined carry = accum_carry + 17th-bit
-        bne @sqr_dma_prop_a    ; rare: propagate carry
-@sqr_dma_skip_a:
+        adc poly_carry         ; A = combined_A (accum + 17th-bit)
+        ; --- Phase 6 CT carry-chain step for DMA body A ---
+        ; Thread combined_A with sqr_pending (bit carried from prior body);
+        ; add the sum to fe_wide[i+j+2]; capture new overflow into
+        ; sqr_pending. Preserves X (= j) across the ripple-start math via
+        ; fe_mul_j. No secret-dependent branch.
+        clc
+        adc sqr_pending        ; A ≤ 3
+        sta sqr_tmp_b          ; value-to-add (scratch is dead here)
+        stx fe_mul_j           ; save j; X about to be clobbered
+        txa
+        clc
+        adc fe_mul_i
+        clc
+        adc #2                 ; A = i+j+2
+        tax
+        lda sqr_tmp_b
+        clc
+        adc fe_wide,x
+        sta fe_wide,x
+        lda #0
+        adc #0
+        sta sqr_pending        ; new overflow → pending chain
+        inx                    ; X = i+j+3
+        stx sqr_ripple_start
+        ldx fe_mul_j           ; restore j
         inx                    ; advance j (X-register)
 
         ; === Body B (DMA, second unrolled copy) ===
@@ -1161,71 +1230,56 @@ mul38_hi:  .byte 0
 @sqr_dma_st2_b:
         sta fe_wide+1,x
         lda #0
-        adc poly_carry
-        bne @sqr_dma_prop_b
-@sqr_dma_skip_b:
-        inx                    ; advance j
-        dec fe_sqr_pairs
-        bne @sqr_dma_body_a    ; preserves X across iterations
-        jmp @sqr_skip_i        ; fe_mul_j not needed beyond inner loop
-
-        ; --- Carry propagation blocks (rare ~1-2%) ---
-        ; Save X=j to fe_mul_j, compute (i+j+2) into X, propagate, restore X.
-@sqr_dma_prop_a:
-        tay                    ; Y = combined carry value
-        stx fe_mul_j           ; save j
-        txa
+        adc poly_carry         ; A = combined_B
+        ; --- Phase 6 CT carry-chain step for DMA body B (mirrors body A) ---
         clc
-        adc fe_mul_i
-        clc
-        adc #2
-        tax                    ; X = i+j+2
-        tya
-        clc
-        adc fe_wide,x
-        sta fe_wide,x
-        bcc @sqr_dma_prop_a_done
-        ; Load-bearing sec — see @prop_carry_a comment in fe25519_mul.
-@sqr_dma_prop_a_loop:
-        inx
-        cpx #64
-        bcs @sqr_dma_prop_a_done
-        sec
-        lda fe_wide,x
-        adc #0
-        sta fe_wide,x
-        bcs @sqr_dma_prop_a_loop
-@sqr_dma_prop_a_done:
-        ldx fe_mul_j           ; restore j
-        jmp @sqr_dma_skip_a
-
-@sqr_dma_prop_b:
-        tay
+        adc sqr_pending
+        sta sqr_tmp_b
         stx fe_mul_j
         txa
         clc
         adc fe_mul_i
         clc
-        adc #2
+        adc #2                 ; A = i+j+2
         tax
-        tya
+        lda sqr_tmp_b
         clc
         adc fe_wide,x
         sta fe_wide,x
-        bcc @sqr_dma_prop_b_done
-        ; Load-bearing sec — see @prop_carry_a comment in fe25519_mul.
-@sqr_dma_prop_b_loop:
-        inx
-        cpx #64
-        bcs @sqr_dma_prop_b_done
-        sec
-        lda fe_wide,x
+        lda #0
         adc #0
+        sta sqr_pending
+        inx
+        stx sqr_ripple_start
+        ldx fe_mul_j           ; restore j
+        inx                    ; advance j
+        dec fe_sqr_pairs
+        beq @sqr_dma_inner_done
+        jmp @sqr_dma_body_a    ; preserves X across iterations; long jmp
+                               ; (Phase 6 body size exceeds bne range)
+@sqr_dma_inner_done:
+        ; --- Phase 6: DMA end-of-inner ripple ---
+        ; Same purpose as @sqr_mult66_inner_done: flush any residual
+        ; pending-carry bit from this outer-i forward to fe_wide[63].
+        ; Loop count is public (derived from fe_mul_i / fe_mul_j state).
+        ldx sqr_ripple_start
+        lda #64
+        sec
+        sbc sqr_ripple_start
+        bcc @sqr_dma_rip_done
+        tay
+        beq @sqr_dma_rip_done
+        lda sqr_pending
+        clc
+@sqr_dma_rip:
+        adc fe_wide,x
         sta fe_wide,x
-        bcs @sqr_dma_prop_b_loop
-@sqr_dma_prop_b_done:
-        ldx fe_mul_j
-        jmp @sqr_dma_skip_b
+        lda #0
+        inx
+        dey
+        bne @sqr_dma_rip
+@sqr_dma_rip_done:
+        jmp @sqr_skip_i        ; fe_mul_j not needed beyond inner loop
 
 @sqr_skip_i:
         inc fe_mul_i
@@ -1265,7 +1319,10 @@ mul38_hi:  .byte 0
         bcc @diag_skip
 
         ; Propagate carry.
-        ; Load-bearing sec — see @sqr_prop1 comment above.
+        ; Load-bearing sec — cpx clobbers C, so sec restores C=1 each
+        ; iteration. See feedback_6502_cpx_clobbers_carry. NOTE: this diag
+        ; ripple still has secret-dependent branches (bcc/beq). Not in Phase 6
+        ; L19-L22 scope (diagonal path wasn't flagged in CT_ANALYSIS.md).
 @diag_prop:
         inx
         cpx #64
@@ -1304,6 +1361,22 @@ sqr_diff:   .byte 0
 sqr_mask:   .byte 0
 sqr_sum_pg: .byte 0
 sqr_tmp_b:  .byte 0
+; --- Phase 6 CT carry-chain scratch:
+;     sqr_pending — 0 or 1, the overflow bit threaded between consecutive
+;                   body carry-steps within a single outer-i iteration.
+;                   Reset to 0 at top of each outer-i. Body A's pending
+;                   is added into body B's combined carry add (target
+;                   [i+j+3] == body A's overflow position); similarly
+;                   body B's pending flows into the next pair body A's
+;                   combined carry add. At end of inner loop, any residual
+;                   pending is rippled forward to fe_wide[63].
+;     sqr_ripple_start — position at which the end-of-inner ripple begins
+;                   (last carry target + 1). Updated by each body's carry
+;                   step. Read once at end of inner loop.
+; Both are pure public-state bookkeeping (depend only on i,j and the
+; carry chain — not on branch decisions).
+sqr_pending:       .byte 0
+sqr_ripple_start:  .byte 0
 .endproc
 
 
