@@ -6,7 +6,7 @@ An optimized implementation of X25519 / Curve25519 scalar multiplication written
 
 ## Status
 
-**Pre-release (v0.1.0 in progress).** The `fe25519_*` and `x25519_*` public API is locked; the library is feature-complete for v0.1.0 and undergoing release packaging.
+**v0.1.0 released 2026-04-13** — [GitHub release](https://github.com/JC-000/c64-x25519/releases/tag/v0.1.0), MIT licensed. The `fe25519_*` and `x25519_*` public API is locked for the v0.1.0 series and follows semver: additive changes bump the minor version, breaking API changes bump the major. `make test-slow` passes 957/957 assertions across 11 test suites against pyca/cryptography as the external reference.
 
 ## Performance
 
@@ -38,20 +38,27 @@ make test-slow    # full RFC 7748 + differential tests via VICE
 
 ## Integrating into your own project
 
-c64-x25519 is designed to be **vendored** into downstream C64 projects rather than linked as a system library. The release tarball contains:
+c64-x25519 is designed to be **vendored as source** into downstream C64 projects rather than linked as a system library. Download the v0.1.0 source tarball from the [GitHub release](https://github.com/JC-000/c64-x25519/releases/tag/v0.1.0) and verify its SHA256:
 
-- Library `.o` files + `libx25519.a` archive
+```
+curl -LO https://github.com/JC-000/c64-x25519/releases/download/v0.1.0/c64-x25519-v0.1.0.tar.gz
+echo "901dd7ebb59e686ae15f7fd9d0b5df82c7cbc8f4516408e1ffaf38ba6bf4c971  c64-x25519-v0.1.0.tar.gz" | sha256sum -c
+mkdir -p vendor && tar -xzf c64-x25519-v0.1.0.tar.gz -C vendor/
+```
+
+The tarball contains:
+
+- Library source (`src/*.s`) — the 8 `.s` files you assemble with `ca65`
 - Public header (`src/x25519.inc`)
-- Integration guide (`docs/LIBRARY.md`)
-- `ORIGIN.txt` provenance stub for your copy
+- Starter linker config (`cfg/x25519-example.cfg`)
+- Integration guide (`docs/LIBRARY.md`) + release notes
+- `LICENSE` and `ORIGIN.txt.template` for provenance tracking
 
-Build the library archive and copy it into your project:
+Copy `ORIGIN.txt.template` → `ORIGIN.txt` in your vendored copy, fill in the `date_imported` / `local_modifications` fields, then assemble the source with `ca65` from your own build system.
 
-```
-make lib              # produces build/lib/libx25519.a and .o files
-```
+See [`docs/LIBRARY.md`](docs/LIBRARY.md) §4 and §4.1 for the full integration walkthrough.
 
-See [`docs/LIBRARY.md`](docs/LIBRARY.md) §4 for the full integration walkthrough.
+Upstream maintainers can also reproduce the release tarball locally via `make lib` (which builds `build/lib/libx25519.a` and individual `.o` files for in-tree verification) — this is not what downstream projects consume.
 
 ## Testing and audit posture
 
