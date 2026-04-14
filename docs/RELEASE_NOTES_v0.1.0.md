@@ -125,14 +125,25 @@ Downstream projects vendor the output of `make lib` plus `docs/LIBRARY.md` and `
 
 Optimization work across Phases 1–10 (2026-03 through 2026-04). Latent carry bug discovered and fixed via differential testing against pyca/cryptography, enabled by test-hardening work in PR #13.
 
-## Full commit list (v0.1.0 range)
+## Full commit list (v0.1.0, from `bd5137a` to `ec9adb6`)
 
-Recent v0.1.0 packaging commits (see `git log feat/v0.1.0-packaging` for the authoritative list):
+Reproduce with `git log --format="%h %s" bd5137a..ec9adb6`:
 
+- `ec9adb6` Merge pull request #17 from JC-000/feat/v0.1.0-packaging
+- `2808fb1` docs: v0.1.0 packaging — README, LICENSE, release notes, ORIGIN template, LIBRARY.md updates, API corrections
 - `f1470b5` feat: relocatable library archive (make lib / make lib-verify)
 - `3cfba0e` feat: compile-time alignment assertions for field buffers
 - `64b6494` Merge pull request #16 from JC-000/worktree-fe25519-mul-opt
 - `f336fec` docs: update Phase 10 benchmarks in LIBRARY.md and x25519.inc
 - `fa7c31e` perf(phase 10): fe_mul / fe_sqr / fe_inv micro-opts (-3.0%)
+- `48092b5` fix: fe_reduce_wide carry propagation drops +1 under cpx clobber
 
-The v0.1.0 packaging docs commit SHA will be appended at tag time.
+## Tarball
+
+**c64-x25519-v0.1.0.tar.gz** — source distribution (ca65/ld65-compatible assembly + docs + linker config example + LICENSE + ORIGIN.txt.template)
+
+- Size: 32,073 bytes
+- SHA256: `901dd7ebb59e686ae15f7fd9d0b5df82c7cbc8f4516408e1ffaf38ba6bf4c971`
+- Download: https://github.com/JC-000/c64-x25519/releases/download/v0.1.0/c64-x25519-v0.1.0.tar.gz
+
+Downstream vendoring: extract into your project, fill in `ORIGIN.txt` from the template, and run `ca65` against `src/*.s`. See `docs/LIBRARY.md` §4 and §4.1 for the full integration guide.
