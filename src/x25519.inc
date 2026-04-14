@@ -62,9 +62,11 @@
 ;                 fe_wide ($40-$7F), all fe25519_tmp1..4 and x25 scratch buffers,
 ;                 mul_dma_lo / mul_dma_hi / mul_dma_carry buffers,
 ;                 REU registers (autoload state preserved for next call).
-;       Timing:  ~9,818 jiffies (~163 s) per call on stock C64 PAL with
-;                VIC-II blanked (jsr vic_blank). VIC-II unblanked adds
-;                ~25%. See docs/LIBRARY.md.
+;       Timing:  ~9,520 jiffies per call on stock C64 with VIC-II
+;                blanked (jsr vic_blank) on the basepoint input.
+;                ~158.7 s NTSC / ~190.4 s PAL. VIC-II unblanked
+;                adds ~25%. Dense u-coordinates (non-basepoint ECDH)
+;                run ~10% slower. See docs/LIBRARY.md.
 ;
 ;   x25519_base
 ;       Convenience: x25_result = x25_scalar * basepoint(9). Copies the
