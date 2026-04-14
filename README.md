@@ -6,18 +6,36 @@ An optimized implementation of X25519 / Curve25519 scalar multiplication written
 
 ## Status
 
-**v0.1.0 released 2026-04-13** — [GitHub release](https://github.com/JC-000/c64-x25519/releases/tag/v0.1.0), MIT licensed. The `fe25519_*` and `x25519_*` public API is locked for the v0.1.0 series and follows semver: additive changes bump the minor version, breaking API changes bump the major. `make test-slow` passes 957/957 assertions across 11 test suites against pyca/cryptography as the external reference.
+**v0.2.0-pre (in progress, 2026-04-14)** — constant-time remediation of
+issue [#20](https://github.com/JC-000/c64-x25519/issues/20) is landing in
+phases on `master`. Phases 0–5b have fixed 18 of 22 catalogued
+secret-dependent branches and page-cross leaks (L1–L18) in `mul_8x8`,
+`fe25519_mul`, and `fe25519_sqr`. L19–L22 carry-cascade short-circuits in
+`fe25519_sqr` are tracked as **must-fix** follow-ups before the library can
+be certified CT-clean for network-facing deployments. See
+[`docs/CT_ANALYSIS.md`](docs/CT_ANALYSIS.md) for the full leak inventory,
+landing history, and must-fix queue.
+
+**v0.1.0 released 2026-04-13** — [GitHub release](https://github.com/JC-000/c64-x25519/releases/tag/v0.1.0), MIT licensed. The `fe25519_*` and `x25519_*` public API is locked for the v0.1.0 series and follows semver: additive changes bump the minor version, breaking API changes bump the major. `make test-slow` passes all assertions across 11 test suites against pyca/cryptography as the external reference.
 
 ## Performance
 
 | Operation | Cost |
 |---|---|
-| `x25519_scalarmult` (basepoint 9) | 9,544 jiffies / ~159.1s NTSC / ~190.9s PAL |
-| `x25519_scalarmult` (dense u-coord) | ~10,600 jiffies / ~176.7s NTSC |
+| `x25519_scalarmult` (basepoint 9, v0.2.0-pre) | 10,270 jiffies / ~171.2s NTSC / ~205.4s PAL |
+| `x25519_scalarmult` (basepoint 9, v0.1.0 baseline) | 9,520 jiffies / ~158.7s NTSC |
+| `x25519_scalarmult` (dense u-coord, v0.2.0-pre) | ~11,300 jiffies / ~188.3s NTSC |
 | `fe25519_mul` | ~4.0 jiffies/call |
-| `fe25519_sqr` | ~4.1 jiffies/call |
+| `fe25519_sqr` | ~4.5 jiffies/call (post-CT) |
 
-All measurements on stock C64 with VIC-II blanked (`jsr vic_blank`). 47.1% faster than an un-optimized baseline via Phases 1–10 of incremental optimization work. See the release notes for details.
+All measurements on stock C64 with VIC-II blanked (`jsr vic_blank`). The
+v0.2.0-pre number reflects the +7.9 % regression from the branchless CT
+rewrites of `mul_8x8` and `fe25519_sqr` and the zero-skip removals in
+`fe25519_mul` / `fe25519_sqr`. Correctness is prioritized over performance
+until L19–L22 land; Options 2/3/4 in `docs/CT_ANALYSIS.md` §Follow-ups
+are queued for a v0.3.0 perf-recovery pass that should claw back most of
+the regression. The library remains ~43 % faster than the original
+un-optimized baseline (~18,000 jiffies) after v0.2.0-pre.
 
 ## Requirements
 
@@ -68,7 +86,15 @@ The test suite caught a latent `fe_reduce_wide` carry-propagation bug in v0.1.0 
 
 ## Security notes
 
-- **Not constant-time.** Timing varies at the microsecond level based on operand values. Suitable against network-observable attackers; **not** suitable against adversaries with fine-grained timing or EM side-channel access.
+- **Partial constant-time (in progress).** v0.2.0-pre has eliminated
+  18 of 22 catalogued secret-dependent branches and page-cross leaks
+  (L1–L18) in the quarter-square multiply, the field multiply, and the
+  field square. Four carry-cascade short-circuits (L19–L22) in
+  `fe25519_sqr` remain and are tracked as **must-fix** before a CT-clean
+  certification. Until those land, the library is suitable against
+  network-observable attackers but **not yet** certified against
+  adversaries with fine-grained timing or EM side-channel access. See
+  [`docs/CT_ANALYSIS.md`](docs/CT_ANALYSIS.md) for the full inventory.
 - **No RNG.** Key generation is the caller's job.
 - **X25519 only.** No Ed25519, no X448, no hash functions, no KDF/AEAD/HKDF.
 

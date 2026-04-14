@@ -228,39 +228,51 @@ Exact addresses can be read from `build/labels.txt` after a build.
 
 ## 8. Performance
 
-Latest (post-Phase-10: Phase 9 base plus fe_mul src1/src2 self-mod
-patches and per-body `clc` removal in 4x-unrolled inner loop,
-fe_sqr `@sqr_inner_dma` rewrite keeping `j` in X register, and a
-critical carry-propagation fix in `fe_reduce_wide` for a latent
-correctness bug on specific input cascades):
+| Operation                           | Jiffies | Wall-time NTSC | Wall-time PAL |
+| ----------------------------------- | ------: | -------------: | ------------: |
+| `x25519_scalarmult` (v0.2.0-pre)    |  10,270 |       ~171.2 s |      ~205.4 s |
+| `x25519_scalarmult` (v0.1.0 base)   |   9,520 |       ~158.7 s |      ~190.4 s |
 
-| Operation             | Jiffies | Wall-time NTSC | Wall-time PAL |
-| --------------------- | ------: | -------------: | ------------: |
-| `x25519_scalarmult`   |   9,520 |       ~158.7 s |      ~190.4 s |
+The v0.2.0-pre number reflects the +7.9 % regression from the
+constant-time remediation work landing for issue #20: branchless CT
+quarter-square in `mul_8x8`, inline branchless CT mult66 rewrite of
+`fe25519_sqr`'s mult66 bodies, and zero-skip removals across both
+`fe25519_mul` and `fe25519_sqr`. Correctness is prioritized over
+performance until L19–L22 carry-cascade leaks are also fixed (see
+`docs/CT_ANALYSIS.md` §Follow-ups).
 
-This is ~47.1% faster than the original (un-optimized) baseline.
-Timing is measured with VIC-II **blanked** (`jsr vic_blank` before
-the call); running with the display enabled costs ~25% more cycles
-due to VIC-II DMA badlines.
+The v0.1.0 baseline is ~47.1 % faster than the original (un-optimized)
+baseline. The v0.2.0-pre candidate is ~43 % faster than the original.
+Timing is measured with VIC-II **blanked** (`jsr vic_blank` before the
+call); running with the display enabled costs ~25 % more cycles due to
+VIC-II DMA badlines.
 
-The 9,520 jiffy figure is for the basepoint (u = [9, 0×31]). The
-23 zero bytes trigger zero-skip fast paths in `fe25519_mul`; a
-dense u-coordinate (typical ECDH with a peer public key) runs
-about 10% slower — use `tools/bench_fe_ops.py` to measure an RFC
-7748 dense test vector for a representative number.
+The jiffy figures are for the basepoint (u = [9, 0×31]). The 23 zero
+bytes no longer trigger a fast path after Phase 5 / Phase 5b removed
+the zero-skip branches; a dense u-coordinate (typical ECDH with a peer
+public key) now runs only about 5 % slower on v0.2.0-pre than the
+basepoint — use `tools/bench_fe_ops.py` to measure an RFC 7748 dense
+test vector for a representative number.
 
 One scalar multiplication performs roughly 2,550 field multiplies +
 ~264 squarings for the inversion step.
 
 ## 9. Constraints and caveats
 
-- **Timing is not constant.** `fe25519_cswap` takes the same time regardless
-  of its mask, and the Montgomery ladder visits every bit, but the
-  per-byte REU fetch routines' timing and the inner loops are data
-  dependent at the microsecond level. This library is not suitable
-  against side-channel adversaries with fine-grained timing or EM
-  access. It **is** suitable against an attacker who only sees the
-  wire output.
+- **Partial constant-time — work in progress (v0.2.0-pre).** 18 of 22
+  catalogued secret-dependent branches and page-cross leaks have been
+  fixed (L1–L18 in `docs/CT_ANALYSIS.md`): branchless CT quarter-square
+  in `mul_8x8`; inline branchless CT mult66 rewrite of `fe25519_sqr`
+  mult66 bodies; zero-skip removals across both `fe25519_mul` and
+  `fe25519_sqr` (outer and DMA-hybrid). Four carry-cascade
+  short-circuits (L19–L22) in `fe25519_sqr` remain and are tracked as
+  **must-fix** — they require a whole-procedure carry-ripple rewrite
+  and are not local edits. Until those land, the library is suitable
+  against network-observable attackers but not yet certified CT-clean
+  against adversaries with fine-grained timing or EM side-channel
+  access. `fe25519_cswap` is already mask-time-invariant and the
+  Montgomery ladder visits every bit regardless of scalar, so the
+  scalar-bit side of the ladder is not currently known to leak.
 - **No RNG.** Key generation is the caller's job. The library does
   not seed or consume randomness. `x25519_base` expects the scalar
   to already be in `x25_scalar`.
@@ -306,10 +318,16 @@ against an external, widely-audited source of truth instead.
 ## 12. Version / provenance
 
 - Upstream repository: `c64-x25519`, branch `master`.
-- Recent optimization commits:
-  - Phase 9 (tables + unroll + alignment): `8fa953c`, `381e3d6`,
-    `14920b7`, `50c7b7b`
-  - Phase 10 (mul/sqr/inv micro-opts + fe_reduce_wide carry fix):
-    `48092b5`, `fa7c31e`
-- Benchmark baseline: 9,520 jiffies / scalar mult (basepoint 9,
-  VIC-II blanked).
+- Recent history:
+  - **v0.2.0-pre (in progress)** — CT remediation Phases 0–5b
+    (issue #20): branchless CT `mul_8x8`, inline CT `fe25519_sqr`
+    mult66 rewrite, zero-skip removals across `fe25519_mul` /
+    `fe25519_sqr`. L19–L22 carry-cascade leaks pending as must-fix
+    (see `docs/CT_ANALYSIS.md`).
+  - **v0.1.0 (2026-04-13)** — tagged release. Phase 9 tables/unroll/
+    alignment + Phase 10 mul/sqr/inv micro-opts + fe_reduce_wide
+    carry fix.
+- Benchmark history: 18,000 jiffies (pre-optimization) →
+  9,520 jiffies (v0.1.0) → 10,270 jiffies (v0.2.0-pre; CT regression
+  accepted for correctness; Options 2/3/4 queued for v0.3.0
+  perf-recovery).

@@ -33,7 +33,6 @@
 .import x25_a, x25_b, x25_da, x25_cb
 .import fe_p, mul_cached_a, mul_src2_buf
 .import mul_dma_lo, mul_dma_hi, mul_dma_carry
-.import sqtab2_lo, sqtab2_hi
 .import mul38_lo_tab, mul38_hi_tab
 .import sqr_lo, sqr_hi
 .import a24_b0, a24_b1, a24_b2, a24_b3
@@ -438,7 +437,8 @@
         ; --- Body A: process src2[j] ---
 @ldy_src2_a:
         ldy mul_src2_buf,x     ; patched to direct src2 addr
-        beq @next_j_first      ; skip if zero (C preserved = 0)
+        ; CT: zero-skip `beq @next_j_first` removed (Phase 5 / L12).
+        ; y=0 is handled by mul_dma_lo[0]==mul_dma_hi[0]==0 (adds 0, no carry).
 @accum_ld1:
         lda fe_wide,x          ; patched to fe_wide+i base
         adc mul_dma_lo,y
@@ -456,7 +456,7 @@
         ; --- Body B: process src2[j+1] ---
 @ldy_src2_b:
         ldy mul_src2_buf,x
-        beq @next_j_second
+        ; CT: zero-skip `beq @next_j_second` removed (Phase 5 / L13).
 @accum_ld1_b:
         lda fe_wide,x
         adc mul_dma_lo,y
@@ -474,7 +474,7 @@
         ; --- Body C: process src2[j+2] ---
 @ldy_src2_c:
         ldy mul_src2_buf,x
-        beq @next_j_third
+        ; CT: zero-skip `beq @next_j_third` removed (Phase 5 / L14).
 @accum_ld1_c:
         lda fe_wide,x
         adc mul_dma_lo,y
@@ -492,7 +492,7 @@
         ; --- Body D: process src2[j+3] ---
 @ldy_src2_d:
         ldy mul_src2_buf,x
-        beq @next_j
+        ; CT: zero-skip `beq @next_j` removed (Phase 5 / L15).
 @accum_ld1_d:
         lda fe_wide,x
         adc mul_dma_lo,y
@@ -812,11 +812,9 @@ mul38_hi:  .byte 0
         dey
         bpl @copy_src
 
-        ; 3. Set up ZP pointers for mult66 indirect-indexed multiply
-        lda #>(sqtab_lo)
-        sta lmul0+1
-        lda #>(sqtab_hi)
-        sta lmul1+1
+        ; 3. (lmul0/lmul1 setup removed — branchless CT quarter-square
+        ;     path uses abs,X (SMC-patched) + abs,Y, no indirect-indexed
+        ;     loads remain.)
 
         ; 4. Cross terms with mult66 + self-mod, shift-before-accumulate
         lda #0
@@ -824,9 +822,9 @@ mul38_hi:  .byte 0
 @sqr_outer:
         ldy fe_mul_i
         lda (fe25519_src1),y
-        bne @sqr_nonzero_i
-        jmp @sqr_skip_i
-@sqr_nonzero_i:
+        ; Phase 5b CT: no zero-skip on a[i]. Body runs unconditionally.
+        ; When a[i]==0 the branchless quarter-square body yields 0 for every
+        ; partial product, and the accumulate is a no-op (+0, no carry).
         sta mul_cached_a       ; cache a[i] for inner loop
 
         ; Hybrid path select: if i < SQR_DMA_K, use DMA path; else mult66 path
@@ -881,10 +879,7 @@ mul38_hi:  .byte 0
         sta @sqr_accum_ld2_b+1
         sta @sqr_accum_st2_b+1
 
-        ; Set up ZP pointer low byte = a[i] once per outer loop
-        lda mul_cached_a
-        sta lmul0              ; lmul0 = sqtab_lo + a[i]
-        sta lmul1              ; lmul1 = sqtab_hi + a[i]
+        ; (No per-outer lmul0/lmul1 feed — CT body computes sum/diff inline.)
 
         ; j starts at i+1
         lda fe_mul_i
@@ -906,39 +901,58 @@ mul38_hi:  .byte 0
         jmp @sqr_inner_tramp   ; dispatch to mult66 or DMA unrolled pair loop
 
 @sqr_inner:
-        ; === Body A (mult66) ===
+        ; === Body A (branchless CT quarter-square) ===
+        ; Unconditional: no zero-skip, no sign branch, no (zp),y loads.
+        ; Mirrors src/mul_8x8.s Phase 1 rewrite.
         ldx fe_mul_j
-        ldy mul_src2_buf,x     ; Y = a[j]
-        bne @sqr_nonzero_j     ; skip if zero
-        jmp @sqr_next_j
-@sqr_nonzero_j:
+        lda mul_src2_buf,x     ; A = a[j]  (unconditional load)
+        sta sqr_tmp_b          ; stash a[j] for sum computation below
 
-        ; --- mult66 inline: a[i] * a[j] ---
-        tya                    ; A = a[j]
+        ; Branchless |a[i] - a[j]| via sign-mask.
         sec
-        sbc mul_cached_a       ; A = a[j] - a[i]
-        tax                    ; X = difference (or wrapped)
+        sbc mul_cached_a       ; A = a[j] - a[i]; C = (a[j] >= a[i])
+        sta sqr_diff
+        lda #0
+        sbc #0                 ; sign mask: $00 if C=1 else $ff
+        sta sqr_mask
+        lda sqr_diff
+        eor sqr_mask
+        sec
+        sbc sqr_mask           ; A = |a[i] - a[j]|
+        tay                    ; Y = |diff|  (abs,Y always page 0 of sqtab)
 
-        ; (lmul0),Y = sqtab_lo[a[i] + a[j]]
-        lda (lmul0),y
-        bcc @sqr_neg_diff      ; branch if a[j] < a[i]
+        ; Compute sum = a[i] + a[j] and sum-page carry.
+        lda mul_cached_a
+        clc
+        adc sqr_tmp_b          ; A = sum_lo, C = sum-page carry
+        tax                    ; X = sum_lo
+        lda #0
+        adc #0                 ; A = sum-page carry (0 or 1)
+        sta sqr_sum_pg
 
-        ; Positive difference path (carry SET):
-        sbc sqtab_lo,x
+        ; Patch hi bytes of the two abs,X load sites (sum path).
+        ; sqtab_lo/sqtab_hi are 512 bytes page-aligned: hi += page carry
+        ; selects between page 0 and page 1 branchlessly.
+        lda #>sqtab_lo
+        clc
+        adc sqr_sum_pg
+        sta @ct_sum_load_lo_a+2
+        lda #>sqtab_hi
+        clc
+        adc sqr_sum_pg
+        sta @ct_sum_load_hi_a+2
+
+        ; Straight-line sqtab[sum] - sqtab[|diff|]
+@ct_sum_load_lo_a:
+        lda sqtab_lo,x         ; hi byte PATCHED above
+        sec
+        sbc sqtab_lo,y
         sta poly_prod_lo
-        lda (lmul1),y
-        sbc sqtab_hi,x
+@ct_sum_load_hi_a:
+        lda sqtab_hi,x         ; hi byte PATCHED above
+        sbc sqtab_hi,y
         sta poly_prod_hi
-        jmp @sqr_accum
-
-@sqr_neg_diff:
-        ; Negative difference path (carry CLEAR):
-        sbc sqtab2_lo,x
-        sta poly_prod_lo
-        lda (lmul1),y
-        sbc sqtab2_hi,x
-        sta poly_prod_hi
-        ; --- END mult66 ---
+        ; --- END CT quarter-square body A ---
 
 @sqr_accum:
         ; Double the product (shift-before-accumulate replaces second addition)
@@ -997,34 +1011,50 @@ mul38_hi:  .byte 0
 @sqr_next_j:
         inc fe_mul_j
 
-        ; === Body B (mult66, second unrolled copy) ===
+        ; === Body B (branchless CT quarter-square, second unrolled copy) ===
         ldx fe_mul_j
-        ldy mul_src2_buf,x     ; Y = a[j]
-        bne @sqr_nonzero_j_b
-        jmp @sqr_next_j_b
-@sqr_nonzero_j_b:
+        lda mul_src2_buf,x     ; A = a[j]  (unconditional load)
+        sta sqr_tmp_b
 
-        tya
         sec
-        sbc mul_cached_a
+        sbc mul_cached_a       ; A = a[j] - a[i]; C = (a[j] >= a[i])
+        sta sqr_diff
+        lda #0
+        sbc #0
+        sta sqr_mask
+        lda sqr_diff
+        eor sqr_mask
+        sec
+        sbc sqr_mask           ; A = |a[i] - a[j]|
+        tay                    ; Y = |diff|
+
+        lda mul_cached_a
+        clc
+        adc sqr_tmp_b          ; A = sum_lo, C = page carry
         tax
+        lda #0
+        adc #0
+        sta sqr_sum_pg
 
-        lda (lmul0),y
-        bcc @sqr_neg_diff_b
+        lda #>sqtab_lo
+        clc
+        adc sqr_sum_pg
+        sta @ct_sum_load_lo_b+2
+        lda #>sqtab_hi
+        clc
+        adc sqr_sum_pg
+        sta @ct_sum_load_hi_b+2
 
-        sbc sqtab_lo,x
+@ct_sum_load_lo_b:
+        lda sqtab_lo,x
+        sec
+        sbc sqtab_lo,y
         sta poly_prod_lo
-        lda (lmul1),y
-        sbc sqtab_hi,x
+@ct_sum_load_hi_b:
+        lda sqtab_hi,x
+        sbc sqtab_hi,y
         sta poly_prod_hi
-        jmp @sqr_accum_b
-
-@sqr_neg_diff_b:
-        sbc sqtab2_lo,x
-        sta poly_prod_lo
-        lda (lmul1),y
-        sbc sqtab2_hi,x
-        sta poly_prod_hi
+        ; --- END CT quarter-square body B ---
 
 @sqr_accum_b:
         asl poly_prod_lo
@@ -1090,8 +1120,11 @@ mul38_hi:  .byte 0
         ldx fe_mul_j
 @sqr_dma_body_a:
         ; === Body A (DMA) ===
+        ; Phase 5b CT: no zero-skip on a[j]. The doubled row is indexed by
+        ; a[j], and row[0] = 2*a[i]*0 = 0 (lo=hi=carry=0 — see
+        ; reu_mul_init dbl_gen loop in x25519_init.s:108-121). So Y==0 adds
+        ; zero into fe_wide and produces no carry; body is a functional no-op.
         ldy mul_src2_buf,x     ; Y = a[j]
-        beq @sqr_dma_skip_a    ; Y==0 fast-skip
         lda mul_dma_carry,y
         sta poly_carry
         clc
@@ -1112,8 +1145,8 @@ mul38_hi:  .byte 0
         inx                    ; advance j (X-register)
 
         ; === Body B (DMA, second unrolled copy) ===
+        ; Phase 5b CT: no zero-skip on a[j] (see Body A comment above).
         ldy mul_src2_buf,x     ; Y = a[j]
-        beq @sqr_dma_skip_b    ; Y==0 fast-skip
         lda mul_dma_carry,y
         sta poly_carry
         clc
@@ -1265,6 +1298,12 @@ mul38_hi:  .byte 0
         ; NOTE: fe25519_reduce_final removed from fe25519_sqr — callers that need
         ; canonical [0,p) output must call fe25519_reduce_final explicitly.
         rts
+
+; --- CT quarter-square scratch (local to fe25519_sqr) ---
+sqr_diff:   .byte 0
+sqr_mask:   .byte 0
+sqr_sum_pg: .byte 0
+sqr_tmp_b:  .byte 0
 .endproc
 
 
