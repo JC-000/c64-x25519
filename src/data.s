@@ -5,7 +5,7 @@
 .setcpu "6502"
 
 ; --- Exported data labels ---
-.export fe25519_tmp1, fe25519_tmp2, fe25519_tmp3, fe_tmp4
+.export fe25519_tmp1, fe25519_tmp2, fe25519_tmp3, fe25519_tmp4
 .export x25_x2, x25_z2, x25_x3, x25_z3
 .export x25_a, x25_b, x25_da, x25_cb, x25_e
 .export x25_scalar, x25_u, x25_result
@@ -25,7 +25,7 @@
 ; Page-aligned 32-byte buffers: each buffer's low byte is one of
 ; {$00, $20, $40, $60, $80, $A0, $C0, $E0}, so Y ∈ [0..31] never
 ; crosses a page boundary. This enables self-mod abs,Y without the
-; page-crossing penalty in fe25519_add/fe25519_sub/fe_cmp_p/fe25519_reduce_final.
+; page-crossing penalty in fe25519_add/fe25519_sub/fe25519_reduce_final.
         .align 256
 fe25519_tmp1:
         .res 32, 0            ; page+$00
@@ -33,7 +33,7 @@ fe25519_tmp2:
         .res 32, 0            ; page+$20
 fe25519_tmp3:
         .res 32, 0            ; page+$40
-fe_tmp4:
+fe25519_tmp4:
         .res 32, 0            ; page+$60
 x25_x2:
         .res 32, 0            ; page+$80
@@ -87,7 +87,7 @@ fe_p:
 .assert (fe25519_tmp1 & $1F) = 0, lderror, "fe25519_tmp1 must be 32-byte aligned"
 .assert (fe25519_tmp2 & $1F) = 0, lderror, "fe25519_tmp2 must be 32-byte aligned"
 .assert (fe25519_tmp3 & $1F) = 0, lderror, "fe25519_tmp3 must be 32-byte aligned"
-.assert (fe_tmp4      & $1F) = 0, lderror, "fe_tmp4 must be 32-byte aligned"
+.assert (fe25519_tmp4      & $1F) = 0, lderror, "fe25519_tmp4 must be 32-byte aligned"
 .assert (x25_x2       & $1F) = 0, lderror, "x25_x2 must be 32-byte aligned"
 .assert (x25_z2       & $1F) = 0, lderror, "x25_z2 must be 32-byte aligned"
 .assert (x25_x3       & $1F) = 0, lderror, "x25_x3 must be 32-byte aligned"

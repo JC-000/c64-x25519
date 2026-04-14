@@ -100,6 +100,64 @@ To compute a shared secret:
         ; x25_result = scalar * peer_public.
 ```
 
+## 4.1 Vendoring via the library archive
+
+For downstream projects, the cleanest way to integrate is to build a
+ca65/ld65 **library archive** and vendor it alongside the public header
+and a linker-config fragment:
+
+```
+make lib          # produces build/lib/
+make lib-verify   # smoke-tests the archive links against a stub
+```
+
+`make lib` produces `build/lib/`:
+
+```
+build/lib/
+  libx25519.a                # ca65 archive (6 members)
+  fe25519.o
+  x25519.o
+  x25519_init.o
+  mul_8x8.o
+  data.o
+  util.o
+  x25519.inc                 # public header copy
+  cfg/x25519-example.cfg     # starter linker config fragment
+```
+
+The `libx25519.a` archive contains six members: `fe25519`, `x25519`,
+`x25519_init`, `mul_8x8`, `data`, `util`. Individual `.o` files are
+included alongside for callers who prefer not to link via archive.
+
+To link against the archive from a downstream project, start from
+`build/lib/cfg/x25519-example.cfg`, adjust for your memory layout,
+and link:
+
+```
+ld65 -C your_config.cfg -o your_app.prg your_app.o build/lib/libx25519.a
+```
+
+**Important subtlety — archive-member resolution.** ld65 only pulls
+an archive member into the link if some symbol from that member is
+referenced. If your application does not reference any symbol from
+a given library module (for example `util.o`, which provides
+`vic_blank` / `bench_start`), that module will silently **not** be
+linked. To force all library modules into the link, reference at
+least one public symbol from each.
+
+The canonical example of this technique is
+`tests/lib_linkage/lib_linkage_stub.s`, which uses a `public_refs`
+address table to force resolution of every library member. Use it as
+a reference when building your own downstream integration.
+
+`make lib-verify` runs this stub, links it against `libx25519.a`
+via the example cfg, and greps the linked label file for a set of
+sentinel public symbols. If the archive is broken (missing member,
+unresolved import, name typo), `make lib-verify` fails — so running
+it in CI provides a cheap smoke test that the archive is actually
+usable.
+
 ## 5. Public API
 
 See `src/x25519.inc` for the full reference with calling conventions
@@ -121,7 +179,6 @@ and clobber lists. Summary:
 | `fe25519_copy` / `fe25519_zero` / `fe25519_one` | trivial helpers                    |
 | `fe25519_cswap`          | Conditional 32-byte swap                        |
 | `fe25519_reduce_final`   | Canonicalize a value to `[0, p)`                |
-| `fe_cmp_p`          | Compare `(fe25519_dst)` with `p`                     |
 | `vic_blank` / `vic_unblank` | Toggle VIC-II display (speed)           |
 | `bench_start` / `bench_stop` | Jiffy-clock timing                     |
 
@@ -134,13 +191,13 @@ All `fe25519_*` routines take operand pointers in ZP slots `fe25519_src1` (`$1E`
 `$00, $20, $40, $60, $80, $A0, $C0, $E0` within a 256-byte page.**
 
 This is a hard requirement of the optimized routines
-(`fe25519_add`, `fe25519_sub`, `fe_cmp_p`, `fe25519_reduce_final`) which use
+(`fe25519_add`, `fe25519_sub`, `fe25519_reduce_final`) which use
 self-modifying `abs,Y` addressing and depend on `Y in [0..31]` never
 crossing a page boundary. Violating this alignment will produce
 silently wrong results.
 
 All library-provided buffers (`x25_scalar`, `x25_u`, `x25_result`,
-`fe25519_tmp1..4`, `x25_a/b/da/cb/e`, `x25_x2/x3`, `x25_z2/z3`) are
+`fe25519_tmp{1,2,3}` and `fe25519_tmp4`, `x25_a/b/da/cb/e`, `x25_x2/x3`, `x25_z2/z3`) are
 allocated with the correct alignment in `src/data.s`. If you add
 your own field buffers, use `.align 32` followed by `.res 32, 0`.
 

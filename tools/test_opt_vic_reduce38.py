@@ -659,7 +659,7 @@ def main():
         "fe25519_copy", "fe25519_zero", "fe25519_one",
         "fe25519_add", "fe25519_sub", "fe25519_mul", "fe25519_sqr", "fe25519_inv",
         "fe25519_cswap", "fe25519_mul_a24", "fe25519_reduce_final",
-        "fe25519_tmp1", "fe25519_tmp2", "fe25519_tmp3", "fe_tmp4",
+        "fe25519_tmp1", "fe25519_tmp2", "fe25519_tmp3", "fe25519_tmp4",
         "fe_wide", "fe_p",
         "cassette_buf", "input_buffer",
         "vic_blank", "vic_unblank",
