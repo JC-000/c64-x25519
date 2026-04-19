@@ -6,8 +6,8 @@ An optimized implementation of X25519 / Curve25519 scalar multiplication written
 
 ## Status
 
-**v0.2.0 candidate (2026-04-14, pending tag)** — constant-time
-remediation of issue
+**v0.2.0 released 2026-04-19** — [GitHub release](https://github.com/JC-000/c64-x25519/releases/tag/v0.2.0),
+MIT licensed. Constant-time remediation of issue
 [#20](https://github.com/JC-000/c64-x25519/issues/20) is **complete**
 for the `fe25519_*` / `mul_8x8` surface. Phases 0–6 have fixed all
 22 catalogued secret-dependent branches and page-cross leaks (L1–L22)
@@ -15,11 +15,15 @@ across `mul_8x8`, `fe25519_mul`, and `fe25519_sqr` (including
 `fe25519_sqr`'s cross-term carry-cascade path, which now uses an
 unconditional per-body pending-carry chain plus a public-indexed
 end-of-inner ripple). Every branch in the field-op hot path now
-depends only on public loop indices. See
-[`docs/CT_ANALYSIS.md`](docs/CT_ANALYSIS.md) for the full leak
-inventory, threat model, landing history, Phase 6 correctness/CT
-argument, and remaining non-critical audit items (the `@diag_prop`
-diagonal path and the outer `x25519_scalarmult` ladder/cswap audit).
+depends only on public loop indices. Hosts can now override the
+library's zero-page layout via `.ifndef` guards in `src/constants.s`
+to compose with sibling c64 crypto libraries — see
+[`docs/LIBRARY.md`](docs/LIBRARY.md) §4.2. Public API is unchanged
+from v0.1.0. See [`docs/CT_ANALYSIS.md`](docs/CT_ANALYSIS.md) for
+the full leak inventory, threat model, landing history, Phase 6
+correctness/CT argument, and remaining non-critical audit items
+(the `@diag_prop` diagonal path and the outer `x25519_scalarmult`
+ladder/cswap audit).
 
 **v0.1.0 released 2026-04-13** — [GitHub release](https://github.com/JC-000/c64-x25519/releases/tag/v0.1.0), MIT licensed. The `fe25519_*` and `x25519_*` public API is locked for the v0.1.0 series and follows semver: additive changes bump the minor version, breaking API changes bump the major. `make test-slow` passes all assertions across 11 test suites against pyca/cryptography as the external reference.
 
@@ -27,14 +31,14 @@ diagonal path and the outer `x25519_scalarmult` ladder/cswap audit).
 
 | Operation | Cost |
 |---|---|
-| `x25519_scalarmult` (basepoint 9, v0.2.0 candidate) | 12,485 jiffies / ~208.1s NTSC / ~249.7s PAL |
+| `x25519_scalarmult` (basepoint 9, v0.2.0) | 12,485 jiffies / ~208.1s NTSC / ~249.7s PAL |
 | `x25519_scalarmult` (basepoint 9, v0.1.0 baseline) | 9,520 jiffies / ~158.7s NTSC |
-| `x25519_scalarmult` (dense u-coord, v0.2.0 candidate) | ~13,700 jiffies / ~228.3s NTSC |
+| `x25519_scalarmult` (dense u-coord, v0.2.0) | ~13,700 jiffies / ~228.3s NTSC |
 | `fe25519_mul` | ~4.0 jiffies/call |
 | `fe25519_sqr` | ~5.4 jiffies/call (post-CT) |
 
 All measurements on stock C64 with VIC-II blanked (`jsr vic_blank`). The
-v0.2.0 candidate reflects a +31.1 % regression from the full CT
+v0.2.0 figure reflects a +31.1 % regression from the full CT
 remediation (Phases 1–6): branchless CT quarter-square in `mul_8x8`,
 inline branchless CT mult66 in `fe25519_sqr`, zero-skip removal across
 `fe25519_mul` / `fe25519_sqr`, and the unconditional pending-carry
@@ -65,7 +69,19 @@ make test-slow    # full RFC 7748 + differential tests via VICE
 
 ## Integrating into your own project
 
-c64-x25519 is designed to be **vendored as source** into downstream C64 projects rather than linked as a system library. Download the v0.1.0 source tarball from the [GitHub release](https://github.com/JC-000/c64-x25519/releases/tag/v0.1.0) and verify its SHA256:
+c64-x25519 is designed to be **vendored as source** into downstream C64 projects rather than linked as a system library. Both the current v0.2.0 and the previous v0.1.0 tarballs are published; downstream projects can pin to either. Verify the SHA256 before extracting.
+
+**v0.2.0 (current — recommended for new integrations):**
+
+```
+curl -LO https://github.com/JC-000/c64-x25519/releases/download/v0.2.0/c64-x25519-v0.2.0.tar.gz
+echo "TBD-FILLED-IN-POST-RELEASE  c64-x25519-v0.2.0.tar.gz" | sha256sum -c
+mkdir -p vendor && tar -xzf c64-x25519-v0.2.0.tar.gz -C vendor/
+```
+
+The SHA256 placeholder `TBD-FILLED-IN-POST-RELEASE` will be replaced once the release tarball is built; the canonical value is also published in the [GitHub release](https://github.com/JC-000/c64-x25519/releases/tag/v0.2.0) body.
+
+**v0.1.0 (pinned — for historical or API-identical builds):**
 
 ```
 curl -LO https://github.com/JC-000/c64-x25519/releases/download/v0.1.0/c64-x25519-v0.1.0.tar.gz
@@ -95,7 +111,7 @@ The test suite caught a latent `fe_reduce_wide` carry-propagation bug in v0.1.0 
 
 ## Security notes
 
-- **Constant-time field operations (v0.2.0 candidate).** All 22
+- **Constant-time field operations (v0.2.0).** All 22
   catalogued secret-dependent branches and page-cross leaks in
   `mul_8x8`, `fe25519_mul`, and `fe25519_sqr` (L1–L22 in
   [`docs/CT_ANALYSIS.md`](docs/CT_ANALYSIS.md)) have been fixed. The

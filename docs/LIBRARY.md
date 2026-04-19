@@ -281,10 +281,10 @@ Exact addresses can be read from `build/labels.txt` after a build.
 
 | Operation                             | Jiffies | Wall-time NTSC | Wall-time PAL |
 | ------------------------------------- | ------: | -------------: | ------------: |
-| `x25519_scalarmult` (v0.2.0 candidate, full CT) | 12,485 |   ~208.1 s |      ~249.7 s |
+| `x25519_scalarmult` (v0.2.0, full CT)           | 12,485 |   ~208.1 s |      ~249.7 s |
 | `x25519_scalarmult` (v0.1.0 baseline) | 9,520   |       ~158.7 s |      ~190.4 s |
 
-The v0.2.0 candidate reflects a +31.1 % regression from the full
+The v0.2.0 figure reflects a +31.1 % regression from the full
 constant-time remediation landing for issue #20 (Phases 1–6):
 branchless CT quarter-square in `mul_8x8`, inline branchless CT
 mult66 rewrite of `fe25519_sqr`'s mult66 bodies, zero-skip removal
@@ -298,7 +298,7 @@ discarded as unaffordable) and the landed Option F (1-bit pending
 chain amortizing the ripple cost across the outer-i loop).
 
 The v0.1.0 baseline was ~47.1 % faster than the original
-(un-optimized) ~18,000-jiffy baseline. The v0.2.0 candidate is ~31 %
+(un-optimized) ~18,000-jiffy baseline. v0.2.0 is ~31 %
 faster than the original after paying for full CT. Timing is
 measured with VIC-II **blanked** (`jsr vic_blank` before the call);
 running with the display enabled costs ~25 % more cycles due to
@@ -318,7 +318,7 @@ branchless-blend as an SMC alternative) are queued for a v0.3.0 pass
 that does not touch the CT correctness invariants — see
 `docs/CT_ANALYSIS.md` §Follow-ups.
 
-- **Constant-time field operations (v0.2.0 candidate).** All 22
+- **Constant-time field operations (v0.2.0).** All 22
   catalogued secret-dependent branches and page-cross leaks
   (L1–L22 in `docs/CT_ANALYSIS.md`) have been fixed: branchless CT
   quarter-square in `mul_8x8`; inline branchless CT mult66 rewrite
@@ -383,7 +383,7 @@ against an external, widely-audited source of truth instead.
 
 - Upstream repository: `c64-x25519`, branch `master`.
 - Recent history:
-  - **v0.2.0 candidate (2026-04-14, pending tag)** — full CT
+  - **v0.2.0 (2026-04-19)** — full CT
     remediation of issue #20, Phases 0–6: L1–L22 all fixed.
     Branchless CT `mul_8x8`, inline CT `fe25519_sqr` mult66 rewrite,
     zero-skip removals across `fe25519_mul` / `fe25519_sqr`, and
@@ -395,6 +395,6 @@ against an external, widely-audited source of truth instead.
     alignment + Phase 10 mul/sqr/inv micro-opts + fe_reduce_wide
     carry fix.
 - Benchmark history: 18,000 jiffies (pre-optimization) →
-  9,520 jiffies (v0.1.0) → 12,485 jiffies (v0.2.0 candidate; full CT
+  9,520 jiffies (v0.1.0) → 12,485 jiffies (v0.2.0; full CT
   L1–L22; Options 2/3/4 queued for v0.3.0 perf-recovery pass that
   does not touch correctness).
