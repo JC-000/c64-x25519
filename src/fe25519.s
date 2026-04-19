@@ -910,42 +910,47 @@ mul38_hi:  .byte 0
         ; === Body A (branchless CT quarter-square) ===
         ; Unconditional: no zero-skip, no sign branch, no (zp),y loads.
         ; Mirrors src/mul_8x8.s Phase 1 rewrite.
+        ; Phase 1 (v0.3.0): diff held in X across EOR/SBC chain (no ZP
+        ; round-trip for sqr_diff); sum-page carry stays in the carry flag
+        ; and the hi-table patch is derived from the lo-table patch via
+        ; +2 (= >sqtab_hi - >sqtab_lo) rather than a second ADC sum_pg.
         ldx fe_mul_j
         lda mul_src2_buf,x     ; A = a[j]  (unconditional load)
         sta sqr_tmp_b          ; stash a[j] for sum computation below
 
-        ; Branchless |a[i] - a[j]| via sign-mask.
+        ; Branchless |a[i] - a[j]| via sign-mask. Diff kept in X, mask in
+        ; ZP (eor/sbc require a mem operand; using X for diff avoids the
+        ; sqr_diff round-trip entirely).
         sec
         sbc mul_cached_a       ; A = a[j] - a[i]; C = (a[j] >= a[i])
-        sta sqr_diff
+        tax                    ; X = diff (preserved across mask compute)
         lda #0
         sbc #0                 ; sign mask: $00 if C=1 else $ff
         sta sqr_mask
-        lda sqr_diff
+        txa                    ; A = diff
         eor sqr_mask
         sec
         sbc sqr_mask           ; A = |a[i] - a[j]|
         tay                    ; Y = |diff|  (abs,Y always page 0 of sqtab)
 
-        ; Compute sum = a[i] + a[j] and sum-page carry.
+        ; Compute sum = a[i] + a[j]; sum-page carry rides the C flag
+        ; directly into the patch compute — no sqr_sum_pg round-trip.
         lda mul_cached_a
         clc
         adc sqr_tmp_b          ; A = sum_lo, C = sum-page carry
-        tax                    ; X = sum_lo
-        lda #0
-        adc #0                 ; A = sum-page carry (0 or 1)
-        sta sqr_sum_pg
+        tax                    ; X = sum_lo (C preserved)
 
         ; Patch hi bytes of the two abs,X load sites (sum path).
         ; sqtab_lo/sqtab_hi are 512 bytes page-aligned: hi += page carry
-        ; selects between page 0 and page 1 branchlessly.
+        ; selects between page 0 and page 1 branchlessly. The hi-table
+        ; base differs from the lo-table base by exactly 2 pages
+        ; ($7800 vs $7A00), so we derive the hi patch from the lo patch
+        ; with a constant +2.
         lda #>sqtab_lo
-        clc
-        adc sqr_sum_pg
+        adc #0                 ; A = >sqtab_lo + sum_pg (folds in C)
         sta @ct_sum_load_lo_a+2
-        lda #>sqtab_hi
         clc
-        adc sqr_sum_pg
+        adc #2                 ; A = >sqtab_hi + sum_pg  (hi-lo = +2)
         sta @ct_sum_load_hi_a+2
 
         ; Straight-line sqtab[sum] - sqtab[|diff|]
@@ -1016,17 +1021,19 @@ mul38_hi:  .byte 0
         inc fe_mul_j
 
         ; === Body B (branchless CT quarter-square, second unrolled copy) ===
+        ; Same Phase 1 (v0.3.0) refactor as body A: diff in X, sum_pg in C,
+        ; hi-patch derived from lo-patch via +2.
         ldx fe_mul_j
         lda mul_src2_buf,x     ; A = a[j]  (unconditional load)
         sta sqr_tmp_b
 
         sec
         sbc mul_cached_a       ; A = a[j] - a[i]; C = (a[j] >= a[i])
-        sta sqr_diff
+        tax                    ; X = diff (preserved across mask compute)
         lda #0
         sbc #0
         sta sqr_mask
-        lda sqr_diff
+        txa                    ; A = diff
         eor sqr_mask
         sec
         sbc sqr_mask           ; A = |a[i] - a[j]|
@@ -1035,18 +1042,13 @@ mul38_hi:  .byte 0
         lda mul_cached_a
         clc
         adc sqr_tmp_b          ; A = sum_lo, C = page carry
-        tax
-        lda #0
-        adc #0
-        sta sqr_sum_pg
+        tax                    ; X = sum_lo (C preserved)
 
         lda #>sqtab_lo
-        clc
-        adc sqr_sum_pg
+        adc #0                 ; A = >sqtab_lo + sum_pg (folds in C)
         sta @ct_sum_load_lo_b+2
-        lda #>sqtab_hi
         clc
-        adc sqr_sum_pg
+        adc #2                 ; A = >sqtab_hi + sum_pg  (hi-lo = +2)
         sta @ct_sum_load_hi_b+2
 
 @ct_sum_load_lo_b:
