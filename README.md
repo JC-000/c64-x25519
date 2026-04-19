@@ -75,11 +75,9 @@ c64-x25519 is designed to be **vendored as source** into downstream C64 projects
 
 ```
 curl -LO https://github.com/JC-000/c64-x25519/releases/download/v0.2.0/c64-x25519-v0.2.0.tar.gz
-echo "TBD-FILLED-IN-POST-RELEASE  c64-x25519-v0.2.0.tar.gz" | sha256sum -c
+echo "18e573e9c86e81b17f27a0c51becb782a0d0f79f67d30247e0242789c11f22e8  c64-x25519-v0.2.0.tar.gz" | sha256sum -c
 mkdir -p vendor && tar -xzf c64-x25519-v0.2.0.tar.gz -C vendor/
 ```
-
-The SHA256 placeholder `TBD-FILLED-IN-POST-RELEASE` will be replaced once the release tarball is built; the canonical value is also published in the [GitHub release](https://github.com/JC-000/c64-x25519/releases/tag/v0.2.0) body.
 
 **v0.1.0 (pinned — for historical or API-identical builds):**
 

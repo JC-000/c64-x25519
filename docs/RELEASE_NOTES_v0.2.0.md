@@ -126,8 +126,8 @@ Reproduce with `git log --format="%h %s" v0.1.0..master`:
 
 **c64-x25519-v0.2.0.tar.gz** — source distribution (ca65/ld65-compatible assembly + docs + linker config example + LICENSE + ORIGIN.txt.template)
 
-- Size: **TBD** (filled in via post-release follow-up PR)
-- SHA256: `TBD-FILLED-IN-POST-RELEASE` (canonical value published in the GitHub release body)
+- Size: **49,415 bytes**
+- SHA256: `18e573e9c86e81b17f27a0c51becb782a0d0f79f67d30247e0242789c11f22e8`
 - Download: https://github.com/JC-000/c64-x25519/releases/download/v0.2.0/c64-x25519-v0.2.0.tar.gz
 
 Downstream vendoring: extract into your project, fill in `ORIGIN.txt` from the template, and run `ca65` against `src/*.s`. See `docs/LIBRARY.md` §4 and §4.1 for the full integration guide, and §4.2 for the new host ZP override protocol.
