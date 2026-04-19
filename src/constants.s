@@ -38,40 +38,84 @@ jiffy_clock     = $00a0         ; 3-byte jiffy clock (MSB)
 
 ; --- Zero page variables ---
 ; General purpose pointers
-zp_ptr1         = $fb           ; 2-byte pointer
-zp_ptr2         = $fd           ; 2-byte pointer
-zp_tmp1         = $02           ; temp byte
-zp_tmp2         = $03           ; temp byte
+.ifndef zp_ptr1
+  zp_ptr1         = $fb           ; 2-byte pointer
+.endif
+.ifndef zp_ptr2
+  zp_ptr2         = $fd           ; 2-byte pointer
+.endif
+.ifndef zp_tmp1
+  zp_tmp1         = $02           ; temp byte
+.endif
+.ifndef zp_tmp2
+  zp_tmp2         = $03           ; temp byte
+.endif
 
 ; fe25519 field arithmetic working variables
-fe25519_src1         = $1e           ; 2-byte pointer to operand 1
-fe25519_src2         = $20           ; 2-byte pointer to operand 2
-fe25519_dst          = $22           ; 2-byte pointer to destination
-fe_misc         = $24           ; 2-byte misc pointer
-fe_carry        = $26           ; carry/borrow byte
-fe_loop         = $27           ; loop counter
-fe_mul_i        = $28           ; multiply outer index
-fe_mul_j        = $29           ; multiply inner index
+.ifndef fe25519_src1
+  fe25519_src1         = $1e           ; 2-byte pointer to operand 1
+.endif
+.ifndef fe25519_src2
+  fe25519_src2         = $20           ; 2-byte pointer to operand 2
+.endif
+.ifndef fe25519_dst
+  fe25519_dst          = $22           ; 2-byte pointer to destination
+.endif
+.ifndef fe_misc
+  fe_misc         = $24           ; 2-byte misc pointer
+.endif
+.ifndef fe_carry
+  fe_carry        = $26           ; carry/borrow byte
+.endif
+.ifndef fe_loop
+  fe_loop         = $27           ; loop counter
+.endif
+.ifndef fe_mul_i
+  fe_mul_i        = $28           ; multiply outer index
+.endif
+.ifndef fe_mul_j
+  fe_mul_j        = $29           ; multiply inner index
+.endif
 
 ; X25519 working variables
-x25_prev_bit    = $2a           ; previous k_t for swap
-x25_bit_ctr     = $2b           ; bit counter
-x25_byte_idx    = $2c           ; byte index in scalar
-x25_bit_mask    = $2d           ; current bit mask
-fe_sqr_pairs    = $2e           ; fe25519_sqr unrolled cross-loop pair counter
+.ifndef x25_prev_bit
+  x25_prev_bit    = $2a           ; previous k_t for swap
+.endif
+.ifndef x25_bit_ctr
+  x25_bit_ctr     = $2b           ; bit counter
+.endif
+.ifndef x25_byte_idx
+  x25_byte_idx    = $2c           ; byte index in scalar
+.endif
+.ifndef x25_bit_mask
+  x25_bit_mask    = $2d           ; current bit mask
+.endif
+.ifndef fe_sqr_pairs
+  fe_sqr_pairs    = $2e           ; fe25519_sqr unrolled cross-loop pair counter
+.endif
 
 ; (lmul0/lmul1 removed after Phase 2 CT rewrite: fe25519_sqr no longer
 ;  uses indirect-indexed sqtab pointers. Former slots $14-$17 are free.)
 
 ; Poly1305 mul_8x8 working variables (reused by fe25519)
-poly_i          = $1a           ; inner loop counter
-poly_j          = $1b           ; outer loop counter
-poly_carry      = $1c           ; carry byte
-poly_tmp        = $1d           ; temp
+.ifndef poly_i
+  poly_i          = $1a           ; inner loop counter
+.endif
+.ifndef poly_j
+  poly_j          = $1b           ; outer loop counter
+.endif
+.ifndef poly_carry
+  poly_carry      = $1c           ; carry byte
+.endif
+.ifndef poly_tmp
+  poly_tmp        = $1d           ; temp
+.endif
 
 ; fe_wide product buffer relocated to zero page ($40..$7F)
 ; This enables zp,X addressing (2 bytes, 4 cycles) vs abs,X (3 bytes, 5 cycles)
-fe_wide         = $40
+.ifndef fe_wide
+  fe_wide         = $40
+.endif
 
 ; --- fe25519_sqr hybrid DMA threshold (8f+8g) ---
 SQR_DMA_K        = 14          ; outer i < K uses pre-doubled DMA tables

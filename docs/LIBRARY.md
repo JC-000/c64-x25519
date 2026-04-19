@@ -19,7 +19,10 @@ header is `src/x25519.inc`; this file is the human-readable guide.
   or any REU/compatible with at least 6 banks of 64 KB). The library
   pre-computes full 8x8->16 multiplication tables into REU banks 0-5.
 - **Zero page:** the library owns `$14-$2E`, `$40-$7F`, and `$FB-$FE`
-  while running. See `src/x25519.inc` for the full map.
+  while running. See `src/x25519.inc` for the full map. Each library-
+  owned ZP equate in `src/constants.s` is wrapped in `.ifndef` so a
+  host project composing multiple c64 crypto libraries can pre-define
+  its own ZP layout before `.include`'ing `constants.s`; see §4.2.
 
 ## 2. Building
 
@@ -157,6 +160,54 @@ sentinel public symbols. If the archive is broken (missing member,
 unresolved import, name typo), `make lib-verify` fails — so running
 it in CI provides a cheap smoke test that the archive is actually
 usable.
+
+## 4.2 Overriding the zero-page layout
+
+Every library-owned ZP equate in `src/constants.s` is wrapped in
+`.ifndef <name>` / `.endif`, so a host project that wants to place
+the library's ZP scratch at different addresses can pre-define the
+equates before `.include`'ing `constants.s`. The library will then
+defer to the host's definitions.
+
+Wrapped equates (all inside `src/constants.s`):
+
+- General scratch: `zp_ptr1`, `zp_ptr2`, `zp_tmp1`, `zp_tmp2`
+- fe25519 working: `fe25519_src1`, `fe25519_src2`, `fe25519_dst`,
+  `fe_misc`, `fe_carry`, `fe_loop`, `fe_mul_i`, `fe_mul_j`
+- x25519 working: `x25_prev_bit`, `x25_bit_ctr`, `x25_byte_idx`,
+  `x25_bit_mask`, `fe_sqr_pairs`
+- mul_8x8 working (reused by fe25519): `poly_i`, `poly_j`,
+  `poly_carry`, `poly_tmp`
+- Wide product buffer: `fe_wide` (32-byte ZP region at `$40..$7F`)
+
+Non-library equates are **not** wrapped: KERNAL routines (`chrout`,
+`getin`), hardware registers (`vic_*`, `cia1_*`, `sid_*`, `proc_port`),
+KERNAL-defined system ZP (`kbd_buf_count`, `jiffy_clock`), REU
+registers (`reu_*`), and the build-time threshold constant
+`SQR_DMA_K` — the host cannot relocate any of these.
+
+Example: to move `fe_wide` from `$40..$7F` to `$60..$9F` in a host
+project that needs `$40..$5F` for its own data:
+
+```ca65
+; host_zp.inc — included before constants.s
+fe_wide = $60
+
+; host_app.s
+.include "host_zp.inc"      ; pre-define fe_wide
+.include "x25519.inc"       ; pulls in constants.s; our fe_wide wins
+```
+
+This pattern is consistent with the sibling c64 crypto libraries
+(`c64-ChaCha20-Poly1305`'s `lib/constants_lib.s`) so a downstream
+project composing multiple libraries has a single, uniform override
+mechanism for the ZP layer.
+
+Note that the outer `.ifndef CONSTANTS_S_INCLUDED` guard is
+independent of the per-equate guards: it prevents the file from
+being assembled twice if `.include`'d from multiple compilation
+units. Host overrides must be defined *before* the first `.include
+"constants.s"`.
 
 ## 5. Public API
 
