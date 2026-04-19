@@ -118,7 +118,7 @@ jiffy_clock     = $00a0         ; 3-byte jiffy clock (MSB)
 .endif
 
 ; --- fe25519_sqr hybrid DMA threshold (8f+8g) ---
-SQR_DMA_K        = 14          ; outer i < K uses pre-doubled DMA tables
+SQR_DMA_K        = 22          ; outer i < K uses pre-doubled DMA tables
 
 ; --- REU (Ram Expansion Unit) registers ---
 reu_status      = $df00         ; status register
