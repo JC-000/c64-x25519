@@ -1,23 +1,22 @@
 # CT_ANALYSIS — Constant-Time Audit for c64-x25519
 
-Status: **Phases 0–6 landed (uncommitted)** — tracking issue
+Status: **Phases 0–6 landed + @diag_prop audit closed** — tracking issue
 [#20](https://github.com/JC-000/c64-x25519/issues/20).
 
 This document catalogues every currently-known secret-dependent branch and
 every `(zp),y` indirect-indexed load in the X25519 library, records the
 baseline and post-fix performance, and tracks follow-up work.
 
-**Current state:** L1–L22 are fixed in the working tree. Phase 6 (this
-pass) replaced the four carry-cascade short-circuits in `fe25519_sqr`
+**Current state:** L1–L23 are fixed in the working tree. Phase 6
+replaced the four carry-cascade short-circuits in `fe25519_sqr`
 (L19–L22) with a per-body unconditional pending-carry chain plus one
-end-of-inner ripple per outer-i. Every branch in the cross-term
-accumulate depends only on public loop indices (`fe_mul_i`, `fe_mul_j`,
-`fe_sqr_pairs`) or on a public `cmp #64` guard against the phantom
-slot's out-of-bounds carry target. Scalarmult bench lands at
-**12,485 jiffies** (+2,215 vs post-5b; +2,965 vs pristine).
-(The diagonal `@diag_prop` path remains outside the Phase 6 scope — it
-was not flagged in the original leak inventory and is tracked as a
-nice-to-have audit below.) With L1–L22 fixed, the library is
+end-of-inner ripple per outer-i. The subsequent @diag_prop audit
+(2026-04-19) closed three additional leaks in the diagonal-term
+carry path (L23a/b/c, collectively rolled up as **L23**) using the
+same Phase-6-style unconditional-ripple pattern. Every branch in the
+cross-term and diagonal accumulate now depends only on public loop
+indices (`fe_mul_i`, `fe_mul_j`, `fe_sqr_pairs`) or on public `cmp
+#64` / ripple-count guards. With L1–L23 fixed, the library is
 considered CT-clean for network-facing use through the `fe25519_sqr`
 and `fe25519_mul` surface, subject to the usual caveats about
 out-of-proc callers (ladder/cswap, REU hooks).
@@ -89,6 +88,9 @@ still relevant.
 | L20 | src/fe25519.s:~1232   | branch      | med      | fixed  | `bne @sqr_dma_prop_b` removed — Phase 6 per-body pending chain (DMA body B) |
 | L21 | src/fe25519.s:~993    | branch      | med      | fixed  | `beq @sqr_next_j` removed — Phase 6 per-body pending chain (mult66 body A) |
 | L22 | src/fe25519.s:~1086   | branch      | med      | fixed  | `beq @sqr_next_j_b` removed — Phase 6 per-body pending chain + phantom guard (mult66 body B) |
+| L23a | src/fe25519.s:~1316  | branch      | low      | fixed  | `beq @diag_skip` on secret `a[i]==0` — @diag_prop audit (2026-04-19), unconditional via `sqr_lo[0]=sqr_hi[0]=0` zero-product |
+| L23b | src/fe25519.s:~1337  | branch      | med      | fixed  | `bcc @diag_skip` on diag-add carry — @diag_prop audit, replaced by unconditional ripple |
+| L23c | src/fe25519.s:~1352  | branch      | med      | fixed  | `bcs @diag_prop` cascade (ripple length tied to secret data) — @diag_prop audit, replaced by public-count ripple |
 
 ### Phase landing notes
 
@@ -210,8 +212,68 @@ still relevant.
   `@sqr_prop1/_b` ripple loops were deleted entirely (~80 lines of
   dead carry-cascade code). One `bne @sqr_dma_body_a` short-branch
   was converted to `beq + jmp` to accommodate the inlined chain.
-  `@diag_prop` remains unchanged — it was not in the original
-  L19–L22 scope and is tracked as a nice-to-have audit below.
+  `@diag_prop` remained unchanged in Phase 6 — it was not in the
+  original L19–L22 scope — and was closed later in the @diag_prop
+  audit (see below).
+
+- **@diag_prop audit (2026-04-19) — fix L23a/b/c in the diagonal
+  term carry path**. The squaring diagonal (`a[i]^2` into
+  `fe_wide[2*i..2*i+1]` + forward ripple) had three latent leaks
+  not flagged in the original L1–L22 inventory:
+
+  - **L23a**: `beq @diag_skip` short-circuited the entire diagonal
+    body when `a[i] == 0`. Branch direction leaked a secret byte's
+    zero-ness.
+  - **L23b**: `bcc @diag_skip` skipped the carry-propagation phase
+    when the 16-bit diag add did not overflow. Branch direction
+    leaked whether `fe_wide[2*i..2*i+1] + a[i]^2` overflowed (a
+    secret-derived condition).
+  - **L23c**: `bcs @diag_prop` controlled a variable-length ripple
+    whose iteration count depended on how many consecutive
+    `fe_wide[k]` bytes were `$FF` — a secret-derived ripple length.
+
+  **Fix:** the diagonal body now runs unconditionally per outer-i ∈
+  [0, 31]; the `a[i]==0` case is handled by the zero-product
+  invariant of `sqr_lo`/`sqr_hi` (both tables have value 0 at index
+  0 by construction, so `a[i]=0` yields a functional no-op add).
+  The 16-bit diag add captures its carry-out into the accumulator
+  via `lda #0 / adc #0` (no branch). The forward ripple is an
+  unconditional `dey / bne` loop whose count is `64 - (2*i + 2) =
+  62 - 2*i`, derived entirely from the public counter `fe_mul_i`.
+  A public `bcc` guards the `i = 31` edge where `2*i+2 = 64` lands
+  exactly at fe_wide's end; in that case the ripple runs zero
+  iterations, matching the old behavior of silently dropping any
+  carry past `fe_wide[63]`.
+
+  **Invariants (mirroring the Phase-6 style):**
+  1. `@diag_outer` runs unconditionally per public `i ∈ [0, 31]`.
+  2. The diag 16-bit add writes `fe_wide[2*i]` / `fe_wide[2*i+1]`
+     unconditionally. Carry-out ∈ {0, 1} captured into A via
+     `lda #0 / adc #0`.
+  3. Ripple runs from `fe_wide[2*i+2]` through `fe_wide[63]` with a
+     public iteration count `Y = 62 - 2*i`.
+  4. Diagonal path does not interact with Phase-6 `sqr_pending`:
+     the diagonal executes after `@sqr_cross_done`, i.e. after the
+     cross-term end-of-inner ripple flushed any residual bit out
+     to `fe_wide[63]`. Diagonal reuses `sqr_pending` and
+     `sqr_ripple_start` only as scratch; writes are
+     non-conflicting because cross-term is dead.
+  5. The only `(zp),y` indirect load is `lda (fe25519_src1),y` with
+     `Y = fe_mul_i` (public); base pointer is public.
+
+  **Perf cost:** scalarmult bench moves from **10,740 → 12,070
+  jiffies** (+1,330 jif, +12.4 %). The regression is dominated by
+  the now-unconditional ripple (~31 iterations × 32 outer × 17 cy
+  per iter × 1,529 squares). This exceeds the audit plan's
+  projected +100–200 jif but lands well within the Phase-6-era
+  budget pattern (+2,215 for L19–L22).
+
+  **CT guard (new):** `tools/test_ct_square_cycles.py` gains a
+  `diag_zeros` input (alternating 0x00 / 0x55 bytes) that
+  specifically exercises the former `beq @diag_skip` zero-skip
+  path. Post-audit it lands at the same per-call cycle count as
+  `dense_55` (spread 0.04 jif), confirming the diagonal path no
+  longer leaks on `a[i]`'s zero-ness.
 
 - **Ladder/cswap audit (2026-04-19) — fix L24a/b in
   `x25519_scalarmult`, verify `fe25519_cswap` CT-clean by inspection**.
@@ -335,13 +397,10 @@ perf cost is the price paid for that guarantee):
   branches in the Montgomery ladder / cswap. The ladder is the next
   layer up from `fe25519_*`; any bit-conditional branching there
   would defeat the field-op CT fixes.
-- **Audit `fe25519_sqr`'s `@diag_prop` path** for the same carry-
-  cascade short-circuit pattern as L19–L22. The `bcc @diag_skip`
-  and its `cpx`-controlled ripple loop still branch on
-  secret-derived carry. This was not in the original CT_ANALYSIS
-  inventory and is out of scope for Phase 6, but uses the same
-  leak pattern and should be fixed in the same Phase-6-style
-  unconditional ripple before the next CT re-audit.
+- ~~**Audit `fe25519_sqr`'s `@diag_prop` path**~~ — **closed
+  2026-04-19**. See L23a/b/c and the @diag_prop audit landing
+  notes above. Fix applied in the same Phase-6-style unconditional
+  ripple pattern.
 
 ### Class legend
 
@@ -394,6 +453,17 @@ perf cost is the price paid for that guarantee):
   plus a `dey/bne`-controlled ripple whose count is public-derived
   (`64 - sqr_ripple_start`). See "Phase 6 landing notes" above for
   the full mechanism and the rejected Option A trial.
+- **@diag_prop audit (2026-04-19)** — fix **L23a/b/c**
+  (`fe25519_sqr` diagonal carry path). Three leaks closed in
+  one pass via a Phase-6-style unconditional structure: the
+  `beq @diag_skip` zero-skip on secret `a[i]`, the `bcc @diag_skip`
+  skip on diag-add carry, and the `bcs @diag_prop` variable-length
+  cascade. The rewrite runs `@diag_outer` unconditionally per
+  public `i`, captures carry-out via `lda #0 / adc #0` (no branch),
+  and replaces the cascade with an unconditional ripple whose
+  count (`62 - 2*i`) is public. See "@diag_prop audit" landing
+  notes above. `tools/test_ct_square_cycles.py` gains a
+  `diag_zeros` input as CT regression guard for this path.
 - **Ladder/cswap audit (2026-04-19)** — fix **L24a/b**
   (`x25519_scalarmult` scalar-bit-dependent branches), verify
   **`fe25519_cswap` CT-clean by inspection**. Two branches on
@@ -406,11 +476,12 @@ perf cost is the price paid for that guarantee):
   (unrolled 4x abs,Y sequence with no branch on fe_carry, no
   page-cross under the library's 32-byte alignment contract);
   audit now recorded as an inline comment in `src/fe25519.s`.
-  Scalarmult bench **flat at 10,739 jiffies** (median of 3).
-  Gating item for side-channel deployment certification — the
-  library's outermost primitive no longer leaks scalar-bit
-  information through branch timing. See "Ladder/cswap audit"
-  landing notes above.
+  Scalarmult bench **flat (median of 3; branchless sequence
+  cycle-equivalent to old best-case branch path)**. Gating item
+  for side-channel deployment certification — the library's
+  outermost primitive no longer leaks scalar-bit information
+  through branch timing. See "Ladder/cswap audit" landing notes
+  above.
 
 Issue [#20](https://github.com/JC-000/c64-x25519/issues/20) was the
 origin report for L1-L15. L16-L22 were discovered during the Phase 3
@@ -434,16 +505,30 @@ VICE warp, VIC-II blanked). Measured via `python3 tools/bench_x25519.py`.
 | Phase 6 (Option A trial)  | 31,386  | +21,866 (+230 %)  | unconditional per-body ripple — discarded |
 | Post-Phase 6 (L19–L22)    | 12,485  | +2,965 (+31.1 %)  | Option F landing                    |
 | v0.3.0 perf recovery      | 10,739  | +1,219 (+12.8 %)  | Phases 1–3 landed (master 181a181)  |
-| Post-ladder/cswap audit (L24) | **10,739** | **+1,219 (+12.8 %)** | **flat; branchless bit-extract, 3-run median** |
+| Post-@diag_prop (L23)     | 12,070  | +2,550 (+26.8 %)  | diagonal unconditional ripple; L1–L23 fixed (measured on diag branch alone) |
+| Post-ladder/cswap audit (L24) | 10,739 | +1,219 (+12.8 %) | flat; branchless bit-extract, 3-run median (measured on ladder branch alone) |
+| **Post-both audits (L23+L24)** | **~12,070** | **~+2,550 (~+26.8 %)** | **L1–L24 fixed; combined bench pending post-merge remeasurement** |
 
 ### Regression budget (original plan) vs. actual (through L24)
 
-| Bound                | Jiffies | Actual (+1,219 since pristine) | Status                  |
+| Bound                | Jiffies | Actual (+2,550 since pristine) | Status                  |
 |----------------------|---------|--------------------------------|-------------------------|
 | Soft (target)        | ≤ +200  | exceeded                       | breach                  |
 | Hard (ceiling)       | ≤ +400  | exceeded                       | breach                  |
-| Phase 6 brief's cap  | ≤ 13,000 | 10,739                        | within cap              |
+| Phase 6 brief's cap  | ≤ 13,000 | ~12,070                       | within cap              |
 | Ladder/cswap budget  | ≤ +50   | +0 (flat)                      | within budget           |
+
+The v0.3.0 perf-recovery work (Phases 1–3 in the perf track, not the CT
+track) closed ~1,746 jif of the Phase-6 regression against the
+pristine baseline before the two audits landed. The @diag_prop audit
+re-added +1,330 jif for the unconditional diagonal ripple — roughly
+the cost of making ~49k diagonal passes (32 outer × 1,529 squares)
+ripple unconditionally rather than short-circuiting on secret data.
+The ladder/cswap audit was cycle-neutral (branchless bit-extract was
+cycle-equivalent to the old best-case branch path). Net v0.3.0
+state relative to v0.2.0 shipped (12,485 jif): slight improvement,
+with 5 additional leaks closed (L23a/b/c, L24a/b) and field-op
+surface + outer ladder now both fully CT-clean.
 
 **Design-review decision (recorded here):** Phases 1–5b already
 exceeded the pre-Phase-6 hard ceiling (+750 / +7.9 %). Phase 6 was
