@@ -113,7 +113,7 @@ c64-x25519 is designed to be **vendored as source** into downstream C64 projects
 
 ```
 curl -LO https://github.com/JC-000/c64-x25519/releases/download/v0.3.0/c64-x25519-v0.3.0.tar.gz
-echo "TBD-FILLED-IN-POST-RELEASE  c64-x25519-v0.3.0.tar.gz" | sha256sum -c
+echo "799d3998559001a102c2e5d4f782f69a7e03feaf31316b3d689176544d05c28d  c64-x25519-v0.3.0.tar.gz" | sha256sum -c
 mkdir -p vendor && tar -xzf c64-x25519-v0.3.0.tar.gz -C vendor/
 ```
 
