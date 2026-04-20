@@ -2,15 +2,15 @@ c64-x25519 — vendored library provenance
 ==========================================
 
 upstream:       https://github.com/JC-000/c64-x25519
-version:        v0.2.0
+version:        v0.3.0
 commit:         <SHA from `git rev-parse HEAD` at release tag>
-tag:            v0.2.0
+tag:            v0.3.0
 tarball_sha256: <sha256sum of the release tarball>
 date_imported:  <ISO 8601 date the downstream consumer imported this>
 
 license:        MIT
 license_file:   LICENSE
-release_notes:  https://github.com/JC-000/c64-x25519/releases/tag/v0.2.0
+release_notes:  https://github.com/JC-000/c64-x25519/releases/tag/v0.3.0
 
 local_modifications: none
     (if patched, list patches as "patches/000N-description.patch" below)
