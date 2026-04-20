@@ -226,6 +226,27 @@
 ;           + sta abs,Y(5) = 38 cycles/byte
 ; Old: 49 cycles/byte (indirect-indexed + redundant re-read)
 ; Savings: ~11 cyc/byte * 32 bytes * 512 calls = ~180k cycles
+;
+; --- CT audit (closed on branch audit/ladder-cswap-ct) ---
+; The swap mask is secret (derived from scalar bits via k_t XOR prev_bit).
+; Every op below must therefore be mask-time-invariant:
+;   * Entry SMC patches src1/src2 addresses 20 times — src1 and src2 are
+;     public link-time pointers (fe25519_src1/src2 ZP, set by the ladder
+;     caller to point at x25_x2/x3/z2/z3, all 32-byte-aligned public data
+;     addresses). No secret input to the patch sequence.
+;   * Inner loop (unrolled 4x) runs 8 iterations of a fixed instruction
+;     sequence: lda/tax/eor/and/sta/txa/eor/sta/lda/eor/sta. Every op
+;     executes every iteration regardless of mask value. The mask only
+;     influences the DATA loaded/stored, not the control flow or timing.
+;   * No branch on the mask; the only loop branch is `bpl @loop` on the
+;     Y counter (public byte index).
+;   * No page-cross in the abs,Y loads: every caller (x25519_scalarmult)
+;     passes src1/src2 pointing at 32-byte-aligned buffers (x25_x2/x3/z2/z3
+;     at page+$80/$A0/$C0/$E0 respectively — see data.s). With Y in
+;     [0..31], the abs+Y access stays within a single page. The 32-byte
+;     alignment is a hard link-time assertion in data.s, and is documented
+;     as a library contract in LIBRARY.md §6.
+; Conclusion: fe25519_cswap is CT-clean with respect to the swap mask.
 ; =============================================================================
 .proc fe25519_cswap
         sta fe_carry           ; save mask

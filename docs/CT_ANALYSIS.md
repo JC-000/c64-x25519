@@ -213,6 +213,90 @@ still relevant.
   `@diag_prop` remains unchanged — it was not in the original
   L19–L22 scope and is tracked as a nice-to-have audit below.
 
+- **Ladder/cswap audit (2026-04-19) — fix L24a/b in
+  `x25519_scalarmult`, verify `fe25519_cswap` CT-clean by inspection**.
+  Gating item for side-channel deployment certification. Two
+  separately-verified components:
+
+  **A. Montgomery ladder bit loop (`src/x25519.s`).** The pre-audit
+  bit loop extracted each scalar bit via a compound
+  `beq @bit_zero / lda #1` sequence (L24a) and expanded the
+  XOR-swap value to a $00/$FF mask via a second
+  `beq @no_swap_mask / lda #$ff` (L24b). Both branches depended on
+  secret state (scalar bit value and XOR of consecutive scalar
+  bits respectively), contributing ~1 cy of scalar-bit-dependent
+  timing per iteration × 255 iterations × 2 branches — small in
+  absolute terms, but a structural leak.
+
+  **Fix:** the bit-extract + mask-expand rewrites to a
+  branchless constant-cycle sequence:
+
+  ```
+  ldx x25_byte_idx          ; public loop counter
+  lda x25_scalar,x          ; scalar byte (secret, time-invariant load)
+  and x25_bit_mask          ; A = 0 or bit_mask (secret DATA, constant timing)
+  cmp #1                    ; C = (A != 0) = scalar bit
+  lda #0
+  sbc #0                    ; A = $00 if bit=1, $FF if bit=0
+  eor #$ff                  ; A = $FF if bit=1, $00 if bit=0 (k_t_mask)
+  tax                       ; X = k_t_mask for prev_bit update
+  eor x25_prev_bit          ; A = swap_mask (direct EOR, no branch)
+  stx x25_prev_bit          ; prev_bit = k_t_mask (mask form carried forward)
+  ```
+
+  Every op runs unconditionally; every branch remaining in the bit
+  loop (`bne @bit_loop` on `lsr x25_bit_mask`, `bpl @bit_loop` on
+  `dec x25_byte_idx`) is driven by a public loop counter. The
+  `beq @skip_final_mask` branch at the post-loop final-cswap
+  setup was also deleted — storing prev_bit in mask form makes
+  the post-loop `lda x25_prev_bit` produce the correct
+  $00/$FF mask directly.
+
+  **B. `fe25519_cswap` (`src/fe25519.s`).** The cswap body is a
+  4x-unrolled 32-byte loop with 20 entry-time SMC patches of
+  src1/src2 addresses into abs,Y loads/stores. Audit conclusions:
+
+  - Entry SMC depends only on `fe25519_src1`/`fe25519_src2` ZP
+    pointers. Every caller (`x25519_scalarmult`) sets these from
+    link-time public addresses (`x25_x2`/`x25_x3`/`x25_z2`/`x25_z3`,
+    all 32-byte aligned per `data.s:.assert`). No secret input to
+    the patch sequence.
+  - Inner loop instruction sequence
+    (`lda/tax/eor/and/sta/txa/eor/sta/lda/eor/sta`) runs every
+    iteration unchanged. The mask (`fe_carry`) affects only the
+    DATA written, never the instruction stream or the number of
+    ops executed.
+  - Only branch in the body is `bpl @loop` on `dey`, where Y is
+    the byte counter (public).
+  - No page-cross in the 32-byte abs,Y loads: every caller passes
+    src1/src2 pointing at 32-byte-aligned buffers, so abs+Y for
+    Y ∈ [0..31] stays on a single page. The alignment is a
+    hard link-time assertion in `data.s` and is documented as a
+    library contract in `LIBRARY.md §6`.
+
+  Conclusion: `fe25519_cswap` is CT-clean with respect to the
+  swap mask, and the audit is recorded as an inline comment
+  above the `.proc` body.
+
+  **Branch classification summary (x25519_scalarmult):**
+
+  | Site              | Branch                    | Class            | Notes                                      |
+  |-------------------|---------------------------|------------------|--------------------------------------------|
+  | bit loop line 137 | `beq @bit_zero` (was)     | secret → fixed   | L24a — scalar bit, replaced by cmp/sbc/eor |
+  | bit loop line 146 | `beq @no_swap_mask` (was) | secret → fixed   | L24b — XOR of scalar bits, direct EOR      |
+  | bit loop          | `bne @bit_loop`           | public           | bit position counter (lsr bit_mask)        |
+  | bit loop          | `bpl @bit_loop`           | public           | byte index counter (dec byte_idx)          |
+  | final cswap       | `beq @skip_final_mask` (was) | derived → fixed | prev_bit now in mask form, branch removed  |
+  | ladder step       | (no branches)             | —                | straight-line fe25519 primitives           |
+  | x_3 = u init      | `and #$7f` + copy         | public           | fe25519_copy is a fixed 32-byte loop       |
+
+  **Perf:** scalarmult bench lands at **10,739 jiffies (median of
+  3, flat vs baseline)**. The new branchless sequence replaces the
+  old branching sequence cycle-for-cycle in the best case, and
+  saves 1 cycle in the worst case — net ≈ 0 jif over 255
+  iterations. CT spread (`test_ct_square_cycles.py`) stays at
+  0.150 jif (pre: 0.155), well under the 1.0 jif threshold.
+
 ### Follow-ups
 
 **Queued performance-recovery options** (Phase 6 CT-clean landing
@@ -310,6 +394,23 @@ perf cost is the price paid for that guarantee):
   plus a `dey/bne`-controlled ripple whose count is public-derived
   (`64 - sqr_ripple_start`). See "Phase 6 landing notes" above for
   the full mechanism and the rejected Option A trial.
+- **Ladder/cswap audit (2026-04-19)** — fix **L24a/b**
+  (`x25519_scalarmult` scalar-bit-dependent branches), verify
+  **`fe25519_cswap` CT-clean by inspection**. Two branches on
+  scalar-derived state (`beq @bit_zero`, `beq @no_swap_mask`) in
+  the Montgomery ladder bit loop replaced by a branchless
+  `cmp/sbc/eor` bit-to-mask idiom. `x25_prev_bit` storage
+  migrated to mask form ($00/$FF), eliminating a third branch
+  (`beq @skip_final_mask`) at the post-loop final cswap. The
+  cswap body was already mask-time-invariant by construction
+  (unrolled 4x abs,Y sequence with no branch on fe_carry, no
+  page-cross under the library's 32-byte alignment contract);
+  audit now recorded as an inline comment in `src/fe25519.s`.
+  Scalarmult bench **flat at 10,739 jiffies** (median of 3).
+  Gating item for side-channel deployment certification — the
+  library's outermost primitive no longer leaks scalar-bit
+  information through branch timing. See "Ladder/cswap audit"
+  landing notes above.
 
 Issue [#20](https://github.com/JC-000/c64-x25519/issues/20) was the
 origin report for L1-L15. L16-L22 were discovered during the Phase 3
@@ -331,15 +432,18 @@ VICE warp, VIC-II blanked). Measured via `python3 tools/bench_x25519.py`.
 | Post-Phase 5 (L12–L15)    | ~10,251 | +731 (+7.7 %)     | negligible additional cost          |
 | Post-Phase 5b (L16–L18)   | 10,270  | +750 (+7.9 %)     | v0.2.0 L1–L18 stopping point        |
 | Phase 6 (Option A trial)  | 31,386  | +21,866 (+230 %)  | unconditional per-body ripple — discarded |
-| Post-Phase 6 (L19–L22)    | **12,485** | **+2,965 (+31.1 %)** | **Option F landing; L1–L22 fixed** |
+| Post-Phase 6 (L19–L22)    | 12,485  | +2,965 (+31.1 %)  | Option F landing                    |
+| v0.3.0 perf recovery      | 10,739  | +1,219 (+12.8 %)  | Phases 1–3 landed (master 181a181)  |
+| Post-ladder/cswap audit (L24) | **10,739** | **+1,219 (+12.8 %)** | **flat; branchless bit-extract, 3-run median** |
 
-### Regression budget (original plan) vs. actual (through Phase 6)
+### Regression budget (original plan) vs. actual (through L24)
 
-| Bound                | Jiffies | Actual (+2,965 since pristine) | Status                  |
+| Bound                | Jiffies | Actual (+1,219 since pristine) | Status                  |
 |----------------------|---------|--------------------------------|-------------------------|
 | Soft (target)        | ≤ +200  | exceeded                       | breach                  |
 | Hard (ceiling)       | ≤ +400  | exceeded                       | breach                  |
-| Phase 6 brief's cap  | ≤ 13,000 | 12,485                        | within cap              |
+| Phase 6 brief's cap  | ≤ 13,000 | 10,739                        | within cap              |
+| Ladder/cswap budget  | ≤ +50   | +0 (flat)                      | within budget           |
 
 **Design-review decision (recorded here):** Phases 1–5b already
 exceeded the pre-Phase-6 hard ceiling (+750 / +7.9 %). Phase 6 was

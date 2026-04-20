@@ -117,7 +117,10 @@
         sta fe25519_dst+1
         jsr fe25519_one
 
-        ; prev_bit = 0
+        ; prev_bit_mask = $00 (no prior bit, no swap on first iteration)
+        ; NOTE: x25_prev_bit is stored in MASK form ($00/$FF), not value form
+        ; (0/1), to permit branchless bit-extract + swap-mask compute in the
+        ; loop below. See ladder CT audit (audit/ladder-cswap-ct).
         lda #0
         sta x25_prev_bit
 
@@ -130,22 +133,33 @@
         sta x25_bit_mask
 
 @bit_loop:
-        ; Get current bit k_t (single extraction)
-        ldx x25_byte_idx
-        lda x25_scalar,x
-        and x25_bit_mask
-        beq @bit_zero
-        lda #1
-@bit_zero:
-        ; A = k_t (0 or 1)
-        tax                    ; X = k_t (save for prev_bit update)
-        eor x25_prev_bit       ; A = swap = k_t XOR old prev_bit
-        stx x25_prev_bit       ; update prev_bit = k_t
-
-        ; Convert to mask: 0 → $00, 1 → $FF
-        beq @no_swap_mask
-        lda #$ff
-@no_swap_mask:
+        ; --- CT-audit: branchless bit extraction + swap-mask compute ---
+        ; The prior layout branched on the scalar bit (beq @bit_zero) and
+        ; again on the swap value (beq @no_swap_mask). Each branch
+        ; contributed ~1 cyc of scalar-bit-dependent timing per iteration
+        ; (255 iterations × 2 branches). The rewrite below produces the
+        ; swap mask in $00/$FF form without any branch on the scalar.
+        ;
+        ; Sequence (all ops constant-cycle; no branches on secret state):
+        ;   1. load scalar byte (byte_idx is public loop counter)
+        ;   2. AND with bit_mask (bit_mask is public loop counter)
+        ;   3. cmp #1      → C = (AND result != 0), i.e., C = scalar bit
+        ;   4. lda #0      → A = 0
+        ;   5. sbc #0      → A = $00 if bit=1 (C=1), $FF if bit=0 (C=0)
+        ;   6. eor #$ff    → A = $FF if bit=1, $00 if bit=0 (= k_t_mask)
+        ;   7. tax         → X = k_t_mask (save for prev_bit update)
+        ;   8. eor prev    → A = swap_mask = k_t_mask XOR prev_bit_mask
+        ;   9. stx prev    → prev_bit = k_t_mask (mask form carries forward)
+        ldx x25_byte_idx       ; X = byte_idx (public loop counter)
+        lda x25_scalar,x       ; A = scalar[byte_idx]
+        and x25_bit_mask       ; A = scalar_bit * bit_mask (0 or bit_mask)
+        cmp #1                 ; C = (A != 0) = scalar bit
+        lda #0
+        sbc #0                 ; A = $00 if bit=1, $FF if bit=0
+        eor #$ff               ; A = $FF if bit=1, $00 if bit=0 (k_t_mask)
+        tax                    ; X = k_t_mask (save for prev_bit update)
+        eor x25_prev_bit       ; A = swap_mask = k_t_mask XOR old prev_mask
+        stx x25_prev_bit       ; prev_bit_mask = k_t_mask
 
         ; cswap(x_2, x_3, swap)
         pha                    ; save mask
@@ -188,11 +202,14 @@
         dec x25_byte_idx
         bpl @bit_loop          ; continue until byte_idx < 0
 
-        ; Final cswap with prev_bit
+        ; Final cswap with prev_bit. x25_prev_bit is already in mask form
+        ; ($00/$FF) from the loop above, so no branch needed here.
+        ; CT-audit: no secret-dependent branches in this final-cswap setup.
+        ; Note: with a clamped scalar (k_0 = 0), the final prev_bit_mask is
+        ; always $00 and the cswap is a no-op — but we call it unconditionally
+        ; in constant time to preserve CT behaviour for non-clamped callers
+        ; and to match RFC 7748's pseudocode shape.
         lda x25_prev_bit
-        beq @skip_final_mask
-        lda #$ff
-@skip_final_mask:
         pha
         sta fe_carry
         lda #<(x25_x2)
