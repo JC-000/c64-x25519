@@ -66,12 +66,22 @@ THRESHOLD_JIF = 1.0
 #               phantom-slot guard at the i+j=64 boundary.
 #   mixed_hi  — 24 zero bytes then 8 0xFF bytes. High-byte concentration
 #               forces the mult66 regime (i >= 14).
+#   diag_zeros — alternating zero / non-zero bytes. Targets the post-audit
+#                @diag_prop path (2026-04-19). Pre-audit, @diag_prop had a
+#                `beq @diag_skip` on `a[i] == 0` and a `bcc @diag_skip` on
+#                the 16-bit diag-add carry — so this input (16 a[i]==0
+#                bytes) would have short-circuited half the diagonal loop
+#                iterations, creating a distinct timing profile from
+#                dense_55 (all a[i] non-zero). Post-audit, the diagonal
+#                ripple is unconditional and the cycle count matches the
+#                dense profile.
 #
 INPUTS = [
-    ("dense_55",  bytes([0x55] * 32)),
-    ("sparse_09", bytes([0x09]) + bytes(31)),
-    ("mixed_mid", bytes(16) + bytes([0xFF] * 16)),
-    ("mixed_hi",  bytes(24) + bytes([0xFF] * 8)),
+    ("dense_55",   bytes([0x55] * 32)),
+    ("sparse_09",  bytes([0x09]) + bytes(31)),
+    ("mixed_mid",  bytes(16) + bytes([0xFF] * 16)),
+    ("mixed_hi",   bytes(24) + bytes([0xFF] * 8)),
+    ("diag_zeros", bytes([0x55 if (i & 1) else 0 for i in range(32)])),
 ]
 
 

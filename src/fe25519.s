@@ -1331,48 +1331,85 @@ mul38_hi:  .byte 0
         ; 5. Add diagonal terms: a[i]^2 at position 2*i (precomputed sqr tables)
         lda #0
         sta fe_mul_i
+; ---------------------------------------------------------------------
+; CT invariants for the diagonal carry path (post @diag_prop audit,
+; 2026-04-19). Previously out of Phase-6 L19–L22 scope; now closed by
+; an unconditional structure analogous to the cross-term chain.
+;
+;   D1.  Runs unconditionally per public outer-i ∈ [0,31]. No
+;        zero-skip on secret a[i] (sqr_lo[0] = sqr_hi[0] = 0 by
+;        construction, so `a[i]=0` yields a functional no-op add).
+;   D2.  The 16-bit diag add writes fe_wide[2*i] / fe_wide[2*i+1]
+;        unconditionally. Any overflow bit (∈ {0,1}) is captured
+;        into register A via `lda #0 / adc #0` — no branch on C.
+;   D3.  The forward ripple is an unconditional `dey/bne` loop whose
+;        count is `62 - 2*i` (public), running from fe_wide[2*i+2]
+;        through fe_wide[63]. When `2*i+2 = 64` (only i=31), the
+;        count is 0 and the loop body runs zero times.
+;   D4.  No interaction with Phase 6 sqr_pending: the diagonal
+;        section runs AFTER `@sqr_cross_done`, i.e. after the
+;        cross-term end-of-inner ripple flushed any residual
+;        pending bit out to fe_wide[63]. sqr_pending is dead at
+;        this point and is reused only as a per-iteration scratch.
+;   D5.  No `(zp),y` with secret Y: the only indirect load is
+;        `lda (fe25519_src1),y` with Y = fe_mul_i (public index).
+;        Indirect base fe25519_src1 is a public pointer (set by the
+;        caller, not secret data).
+;
+; All branches in the diagonal section now depend only on public
+; counters (fe_mul_i, loop count Y derived from 64 - (2*i+2)).
+; ---------------------------------------------------------------------
 @diag_outer:
+        ; Unconditional body: no zero-skip on a[i] (D1).
         ldy fe_mul_i
-        lda (fe25519_src1),y
-        beq @diag_skip         ; skip if a[i] == 0
-
+        lda (fe25519_src1),y   ; Y = fe_mul_i (public); pointer is public
         tay                    ; Y = a[i]
-        lda sqr_lo,y
+        lda sqr_lo,y           ; sqr_lo[0] = 0 → add-zero no-op when a[i]=0
         sta poly_prod_lo
-        lda sqr_hi,y
+        lda sqr_hi,y           ; sqr_hi[0] = 0 likewise
         sta poly_prod_hi
 
-        ; Add to fe_wide[2*i]
+        ; Add poly_prod to fe_wide[2*i..2*i+1] unconditionally.
         lda fe_mul_i
-        asl                    ; A = 2*i
+        asl                    ; A = 2*i (public)
         tax
 
         clc
         lda fe_wide,x
         adc poly_prod_lo
         sta fe_wide,x
-        inx
+        inx                    ; X = 2*i+1
         lda fe_wide,x
         adc poly_prod_hi
         sta fe_wide,x
-        bcc @diag_skip
 
-        ; Propagate carry.
-        ; Load-bearing sec — cpx clobbers C, so sec restores C=1 each
-        ; iteration. See feedback_6502_cpx_clobbers_carry. NOTE: this diag
-        ; ripple still has secret-dependent branches (bcc/beq). Not in Phase 6
-        ; L19-L22 scope (diagonal path wasn't flagged in CT_ANALYSIS.md).
-@diag_prop:
-        inx
-        cpx #64
-        bcs @diag_skip
+        ; Capture carry-out into register A as a 0/1 byte, no branch (D2).
+        lda #0
+        adc #0                 ; A = C_in ∈ {0,1}; C now = 0
+        sta sqr_pending        ; stash pending (reuse Phase-6 scratch;
+                               ; cross-term chain is dead at this point — D4)
+
+        ; Start of ripple window = 2*i+2. Count = 64 - (2*i+2) = 62 - 2*i.
+        ; Both derive from the public loop counter fe_mul_i (D3).
+        inx                    ; X = 2*i+2 (public)
+        lda #64
+        stx sqr_ripple_start
         sec
-        lda fe_wide,x
-        adc #0
+        sbc sqr_ripple_start   ; A = 64 - (2*i+2); C=0 iff start > 64
+        bcc @diag_rip_done     ; public guard: i=31 edge (phantom slot)
+        beq @diag_rip_done     ; count==0 → no ripple this iter (public)
+        tay                    ; Y = count ∈ [1, 62]
+        lda sqr_pending        ; A = pending carry (0 or 1)
+        clc
+@diag_rip:
+        adc fe_wide,x          ; pending (+ prior carry) into fe_wide[x]
         sta fe_wide,x
-        bcs @diag_prop
+        lda #0                 ; subsequent adds contribute only carry
+        inx
+        dey
+        bne @diag_rip          ; public count-driven exit
 
-@diag_skip:
+@diag_rip_done:
         inc fe_mul_i
         lda fe_mul_i
         cmp #32
