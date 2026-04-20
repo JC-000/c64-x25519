@@ -6,6 +6,44 @@ An optimized implementation of X25519 / Curve25519 scalar multiplication written
 
 ## Status
 
+**v0.3.0 released 2026-04-19** — [GitHub release](https://github.com/JC-000/c64-x25519/releases/tag/v0.3.0),
+MIT licensed. A perf-recovery + full-CT-certification minor release:
+`x25519_scalarmult` (basepoint 9) lands at **12,070 jiffies
+(~201.2 s NTSC / ~241.4 s PAL)**, which is **−415 jif (−3.3 %) vs
+v0.2.0's 12,485 jif** and **+26.8 % vs v0.1.0's 9,520-jif baseline**.
+Two independent bodies of work:
+
+1. **Perf recovery (Phases 1–3).** Rewrites `fe25519_sqr`'s hot path
+   without touching any CT invariant: SMC-literal hoist +
+   register-threaded abs-math (Phase 1, −247 jif), `SQR_DMA_K` retune
+   14→22 (Phase 2, −347 jif), and chain-step address-math +
+   ripple-setup fold (Phase 3, −1,152 jif, overshooting its −425 jif
+   plan estimate). Phase 3's PR includes an 8-invariant correctness
+   walkthrough. Phase 0 ships a CT cycle-count regression guard
+   (`tools/test_ct_square_cycles.py`) asserting `fe25519_sqr` stays
+   data-independent to within 1 jif.
+
+2. **Full CT certification (L23 + L24 audit closures).** v0.3.0 is
+   the first release with **full field-op + outer-ladder side-channel
+   posture**. PR [#31](https://github.com/JC-000/c64-x25519/pull/31)
+   closes L23a/b/c in `fe25519_sqr`'s `@diag_prop` diagonal-term carry
+   path (+1,330 jif) with a Phase-6-style unconditional ripple. PR
+   [#30](https://github.com/JC-000/c64-x25519/pull/30) closes L24a/b
+   in the Montgomery ladder — two scalar-bit-dependent branches in
+   the bit loop — with a branchless `cmp/sbc/eor` bit-to-mask idiom
+   (0 jif regression). `fe25519_cswap` is verified CT-clean by
+   inspection (no source change). All 24 catalogued leaks (L1–L24)
+   are now closed. The library's outermost primitive no longer leaks
+   scalar-bit information through branch timing.
+
+Post-release CT cycle-guard spread is **0.045 jif** across five
+structurally distinct inputs (3× tighter than the pre-audit 0.150
+spread; the `@diag_prop` fix tightened the per-call timing
+distribution). **Public API unchanged** from v0.2.0. See
+[`docs/RELEASE_NOTES_v0.3.0.md`](docs/RELEASE_NOTES_v0.3.0.md) for
+the full release notes and [`docs/CT_ANALYSIS.md`](docs/CT_ANALYSIS.md)
+for the underlying leak inventory.
+
 **v0.2.0 released 2026-04-19** — [GitHub release](https://github.com/JC-000/c64-x25519/releases/tag/v0.2.0),
 MIT licensed. Constant-time remediation of issue
 [#20](https://github.com/JC-000/c64-x25519/issues/20) is **complete**
@@ -31,24 +69,24 @@ ladder/cswap audit).
 
 | Operation | Cost |
 |---|---|
+| `x25519_scalarmult` (basepoint 9, v0.3.0) | **12,070 jiffies / ~201.2s NTSC / ~241.4s PAL** |
 | `x25519_scalarmult` (basepoint 9, v0.2.0) | 12,485 jiffies / ~208.1s NTSC / ~249.7s PAL |
 | `x25519_scalarmult` (basepoint 9, v0.1.0 baseline) | 9,520 jiffies / ~158.7s NTSC |
-| `x25519_scalarmult` (dense u-coord, v0.2.0) | ~13,700 jiffies / ~228.3s NTSC |
 | `fe25519_mul` | ~4.0 jiffies/call |
-| `fe25519_sqr` | ~5.4 jiffies/call (post-CT) |
+| `fe25519_sqr` | ~6.36 jiffies/call (v0.3.0) |
 
-All measurements on stock C64 with VIC-II blanked (`jsr vic_blank`). The
-v0.2.0 figure reflects a +31.1 % regression from the full CT
-remediation (Phases 1–6): branchless CT quarter-square in `mul_8x8`,
-inline branchless CT mult66 in `fe25519_sqr`, zero-skip removal across
-`fe25519_mul` / `fe25519_sqr`, and the unconditional pending-carry
-chain that eliminated L19–L22. Correctness was prioritized over
-performance throughout: the budget breach is the price of provable
-CT-cleanliness. Performance-recovery Options 2/3/4 in
-`docs/CT_ANALYSIS.md` §Follow-ups are queued for a v0.3.0 pass that
-does not touch correctness invariants. The library remains ~31 %
-faster than the original un-optimized baseline (~18,000 jiffies)
-after the full v0.2.0 CT remediation.
+All measurements on stock C64 with VIC-II blanked (`jsr vic_blank`),
+median of 3 runs. v0.3.0 combines two independent bodies of work on
+the v0.2.0 baseline: the Phases 1–3 `fe25519_sqr` hot-path rewrite
+recovers **1,746 jif** from the v0.1.0→v0.2.0 regression without
+touching any CT invariant, and the L23 + L24 audit closures cost back
+**~1,330 jif** for full outer-ladder side-channel certification. Net
+vs v0.2.0: **−415 jif (−3.3 %)** and fully CT-certified. The library
+runs at **+26.8 % vs the v0.1.0 baseline** (vs +31.1 % at v0.2.0)
+and **~32.9 % faster than the original un-optimized ~18,000-jiffy
+baseline** (vs ~31 % at v0.2.0, ~47.1 % at v0.1.0). See
+[`docs/RELEASE_NOTES_v0.3.0.md`](docs/RELEASE_NOTES_v0.3.0.md) for the
+full perf and CT-posture story.
 
 ## Requirements
 
@@ -69,9 +107,17 @@ make test-slow    # full RFC 7748 + differential tests via VICE
 
 ## Integrating into your own project
 
-c64-x25519 is designed to be **vendored as source** into downstream C64 projects rather than linked as a system library. Both the current v0.2.0 and the previous v0.1.0 tarballs are published; downstream projects can pin to either. Verify the SHA256 before extracting.
+c64-x25519 is designed to be **vendored as source** into downstream C64 projects rather than linked as a system library. The current v0.3.0 tarball and the previous v0.2.0 and v0.1.0 tarballs are all published; downstream projects can pin to any. Verify the SHA256 before extracting.
 
-**v0.2.0 (current — recommended for new integrations):**
+**v0.3.0 (current — recommended for new integrations):**
+
+```
+curl -LO https://github.com/JC-000/c64-x25519/releases/download/v0.3.0/c64-x25519-v0.3.0.tar.gz
+echo "TBD-FILLED-IN-POST-RELEASE  c64-x25519-v0.3.0.tar.gz" | sha256sum -c
+mkdir -p vendor && tar -xzf c64-x25519-v0.3.0.tar.gz -C vendor/
+```
+
+**v0.2.0 (pinned — full CT remediation, pre-perf-recovery):**
 
 ```
 curl -LO https://github.com/JC-000/c64-x25519/releases/download/v0.2.0/c64-x25519-v0.2.0.tar.gz
@@ -109,21 +155,23 @@ The test suite caught a latent `fe_reduce_wide` carry-propagation bug in v0.1.0 
 
 ## Security notes
 
-- **Constant-time field operations (v0.2.0).** All 22
-  catalogued secret-dependent branches and page-cross leaks in
-  `mul_8x8`, `fe25519_mul`, and `fe25519_sqr` (L1–L22 in
-  [`docs/CT_ANALYSIS.md`](docs/CT_ANALYSIS.md)) have been fixed. The
-  field-op hot path now contains no data-dependent branches and no
-  `(zp),y` indirect-indexed loads on secret operands. Remaining audit
-  items are non-critical: the `@diag_prop` diagonal-term path in
-  `fe25519_sqr` (tracked as a nice-to-have), and the outer
-  `x25519_scalarmult` Montgomery ladder / `fe25519_cswap` audit
-  (scalar-bit-dependent branches in the ladder would defeat the
-  field-op fixes; currently believed clean — `fe25519_cswap` is
-  mask-time-invariant and the ladder visits every scalar bit — but
-  not yet formally audited). Suitable against network-observable
-  timing attackers through the field-op surface; the ladder/cswap
-  audit is the gating item for side-channel deployment certification.
+- **Full side-channel posture (v0.3.0).** All 24 catalogued leaks
+  (L1–L24 in [`docs/CT_ANALYSIS.md`](docs/CT_ANALYSIS.md)) are now
+  closed. L1–L22 (landed v0.2.0): secret-dependent branches and
+  page-cross leaks across `mul_8x8`, `fe25519_mul`, and `fe25519_sqr`'s
+  cross-term carry path. L23a/b/c (landed v0.3.0, PR #31): the
+  `@diag_prop` diagonal-term carry path in `fe25519_sqr` rewritten
+  as a Phase-6-style unconditional ripple. L24a/b (landed v0.3.0,
+  PR #30): two scalar-bit-dependent branches in the `x25519_scalarmult`
+  Montgomery ladder bit loop replaced by a branchless `cmp/sbc/eor`
+  bit-to-mask idiom. `fe25519_cswap` is verified CT-clean by
+  inspection (mask-time-invariant unrolled `abs,Y` inner loop; 32-byte
+  page alignment hard-asserted in `src/data.s`). v0.3.0 is the first
+  release with **full field-op + outer-ladder side-channel posture**
+  — the library's outermost primitive no longer leaks scalar-bit
+  information through branch timing, making it suitable for
+  network-facing deployments (e.g. `c64-wireguard`) where the scalar
+  is a long-lived ECDH private key.
 - **No RNG.** Key generation is the caller's job.
 - **X25519 only.** No Ed25519, no X448, no hash functions, no KDF/AEAD/HKDF.
 
