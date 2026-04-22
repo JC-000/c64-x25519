@@ -81,6 +81,11 @@
 ; Clobbers: A, X, Y, all fe_* and x25_* ZP vars
 ; =============================================================================
 .proc x25519_scalarmult
+        php              ; save caller's processor status (I flag incl.)
+        sei              ; mask IRQs for the full call — defends
+                         ; against mid-REU-DMA preemption and against
+                         ; consumer ISRs clobbering our 83 ZP bytes
+                         ; ($1A-$2E, $40-$7F).  See A2/A5 memos.
         ; Initialize ladder state
         ; x_2 = 1
         lda #<(x25_x2)
@@ -264,6 +269,7 @@
         jsr fe25519_mul             ; x25_result = x_2 * z_2^(-1) mod p
         jsr fe25519_reduce_final    ; Final output must be canonical
 
+        plp              ; restore caller's processor status (I flag incl.)
         rts
 .endproc
 
