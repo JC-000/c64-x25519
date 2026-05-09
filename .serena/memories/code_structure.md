@@ -49,7 +49,9 @@ c64-x25519/
     ├── test_mul38_tables.py
     ├── test_ladder_checkpoint.py
     ├── test_{reproduce_failure,vector2_debug,clamp_then_v2,state_leak}.py
-    ├── ct_mul_brute_check.py   CT brute-force checker
+    ├── test_ct_square_cycles.py        fe25519_sqr CT cycle-count gate (≤1 jif)
+    ├── test_issue33_adversarial.py     S2 REU-residue regression (8 cases, VICE + U64E)
+    ├── ct_mul_brute_check.py           CT brute-force checker
     ├── bench_{x25519,fe_mul,fe_ops}.py
 ```
 

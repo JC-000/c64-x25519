@@ -172,6 +172,22 @@ The test suite caught a latent `fe_reduce_wide` carry-propagation bug in v0.1.0 
   information through branch timing, making it suitable for
   network-facing deployments (e.g. `c64-wireguard`) where the scalar
   is a long-lived ECDH private key.
+- **State-contract defences (post-v0.3.0, on master).** Two
+  correctness-class fixes that complement the L1–L24 timing-leak
+  posture by hardening the library against caller state pollution
+  when composed with sibling REU consumers (see
+  [`docs/CT_ANALYSIS.md`](docs/CT_ANALYSIS.md) §State-contract
+  defences). **S1** ([PR #35](https://github.com/JC-000/c64-x25519/pull/35)):
+  `x25519_scalarmult` is wrapped in `php / sei … plp` — IRQs are
+  library-masked for the full call. **S2**
+  ([PR #36](https://github.com/JC-000/c64-x25519/pull/36), closes
+  [#33](https://github.com/JC-000/c64-x25519/issues/33)): defensive
+  zero of `reu_reu_lo` ($DF04) and `reu_addr_ctrl` ($DF0A) at
+  scalarmult entry. Closes a wrong-result-not-hang vector in TLS
+  composition (caller residue caused `reu_clear_wide` to fill
+  `fe_wide` with garbage). Hardware-confirmed on Ultimate 64 Elite
+  via `tools/test_issue33_adversarial.py`. ~6 cycles total cost,
+  CT-neutral.
 - **No RNG.** Key generation is the caller's job.
 - **X25519 only.** No Ed25519, no X448, no hash functions, no KDF/AEAD/HKDF.
 

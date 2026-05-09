@@ -45,6 +45,33 @@ No explicit linter or formatter is configured (ca65 assembly +
 hand-crafted Python). No `ruff`, `black`, `pytest` config in the repo.
 Python tools are run directly via `python3 tools/...`.
 
+## Python environment gotcha (macOS, this dev machine)
+The Makefile's `make test` / `make test-slow` targets invoke `python3`
+(system Python). On this machine the system `python3` lacks
+`cryptography`, while the c64-test-harness venv has it. To run the
+suite, prepend the venv on PATH:
+```
+PATH=/Users/someone/.local/share/c64-test-harness/venv/bin:$PATH make test-slow
+```
+For one-off scripts (e.g. `tools/test_issue33_adversarial.py --target u64`),
+invoke the venv Python directly:
+```
+/Users/someone/.local/share/c64-test-harness/venv/bin/python tools/<script>.py [args]
+```
+
+## Issue #33 / S2 regression test
+`tools/test_issue33_adversarial.py` — adversarial REU-state harness,
+8 cases. Use to verify the S2 defensive-init fix hasn't regressed.
+```
+# VICE (fast, ~15s/case warp)
+/Users/someone/.local/share/c64-test-harness/venv/bin/python tools/test_issue33_adversarial.py --target vice --case <name>
+# Real U64E (~230s/case at NTSC, queues device via harness lock)
+/Users/someone/.local/share/c64-test-harness/venv/bin/python tools/test_issue33_adversarial.py --target u64 --case <name>
+```
+Cases: `clean`, `h1_audit`, `reu_low_dirty`, `reu_addr_ctrl_dirty`,
+`reu_full_dirty`, `nmi_corrupts_zp40`, `irq_during_call`. All should
+match RFC 7748 §6.1 vec-1 hash post-fix.
+
 ## Git / GitHub
 ```
 git status

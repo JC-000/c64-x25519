@@ -367,13 +367,26 @@ subject to the CT cycle-count regression guard
   to already be in `x25_scalar`.
 - **No key derivation / HKDF / anything beyond the raw scalar mult.**
 - **REU is mandatory.** There is no fallback to pure-6502 multiply.
-- **Interrupts.** Run with `sei` for consistent timing. NMIs (RESTORE
-  key, CIA2 TimerB) are not masked; if your host sets them up,
-  consider masking them too for the duration of the call.
-- **REU register state.** The library leaves the REU registers in
-  a non-default state (configured for `reu_fetch_mul_row`). If your
-  host also uses the REU, save `$DF02-$DF0A` before calling and
-  restore afterward.
+- **Interrupts.** `x25519_scalarmult` is now wrapped in `php / sei …
+  plp` (PR #35) — IRQs are library-masked for the full call and the
+  caller's I-flag is restored on exit. NMIs are NOT masked by `sei`
+  (RESTORE key, CIA2 TimerB, U64E firmware NMI hooks); if your host
+  installs an NMI handler that touches the library's owned ZP bytes
+  (`$1A-$2E`, `$40-$7F`), mask those NMI sources at their source for
+  the duration of the call. The other library entry points
+  (`fe25519_*`, `x25519_clamp`, `x25519_base`) do not self-mask;
+  callers are responsible.
+- **REU register state.** As of PR #36 (issue #33 fix),
+  `x25519_scalarmult` defensively re-initialises `reu_reu_lo` ($DF04)
+  and `reu_addr_ctrl` ($DF0A) to `$00` at entry, so caller residue
+  on those two registers is harmless. The other REU registers
+  (`reu_c64_lo/hi`, `reu_len_lo/hi`, `reu_reu_hi`, `reu_reu_bank`)
+  are re-written by `reu_clear_wide` and the inlined per-row DMA in
+  `fe25519_mul`, so caller residue on those is also tolerated.
+  However, the library still leaves the REU registers in a
+  non-default state on return (configured for `reu_fetch_mul_row`).
+  If your host needs a clean post-call state for its own REU work,
+  save `$DF02-$DF0A` before calling and restore afterward.
 
 ## 10. What is NOT included
 
