@@ -544,6 +544,89 @@ patch-hoisting and register-state tightening. The library remains
 ~31 % faster than the original pre-optimization baseline
 (~18,000 jiffies) despite the full L1–L22 remediation.
 
+## State-contract defences (correctness, not CT)
+
+These are **not** CT leak fixes — they are correctness defences against
+caller state pollution that surface when the library is composed with
+other REU consumers (e.g. sibling crypto libraries, NIC drivers). They
+are documented here because the investigation that found them ran
+alongside the CT audit work and used the same `tools/test_*` harness
+discipline. They do **not** affect the L1–L24 timing-leak posture.
+
+### S1 — IRQ-during-call defence (PR #35, landed 2026-05-06)
+
+`x25519_scalarmult` runs ~12,000 jiffies. Without IRQ masking, a
+mid-DMA IRQ could (a) interleave a partial REU multi-store register
+write, corrupting an in-flight DMA, or (b) clobber a ZP byte the
+library owns (`$1A-$2E`, `$40-$7F`) via a consumer ISR (UCI / RS-232 /
+CIA timer). PR #35 wraps the proc in `php / sei … plp`, converting the
+"caller must mask IRQs" contract into a library-enforced invariant.
+
+**File:line.** `src/x25519.s:84-85` (entry), `src/x25519.s:272` (exit).
+
+**Caveat.** `sei` only masks the I-flag — it does **not** mask NMI.
+A consumer-installed NMI handler (RESTORE key, CIA2 RS-232, U64E
+firmware hook) that touches `$1A-$2E` / `$40-$7F` would still corrupt
+ladder state. Vanilla Kernal NMI is benign on this ZP range; custom
+NMI handlers are caller responsibility (documented in `LIBRARY.md`).
+
+### S2 — Caller REU register residue defence (issue #33, landed 2026-05-08)
+
+`reu_clear_wide` (`src/x25519_init.s:316-336`) re-writes 6 of 8 REU
+registers but skips `reu_reu_lo` (`$DF04`) and `reu_addr_ctrl`
+(`$DF0A`), trusting they are still `$00` from `reu_mul_init`'s tail.
+A caller writing those registers after init (e.g. a sibling library
+DMAing into REU between a `reu_mul_init` and a later
+`x25519_scalarmult`) leaves them non-zero. The first `reu_clear_wide`
+inside `fe25519_mul` then DMAs from the wrong REU offset (or, with
+`reu_addr_ctrl=$80` "hold C64 address", into a single byte), filling
+the 64-byte `fe_wide` accumulator with garbage instead of zeros.
+
+The schoolbook multiply silently accumulates `garbage + a*b`. The
+ladder runs to completion in normal time and returns a
+**deterministic but wrong** field element. Downstream symptoms in
+network composition (e.g. c64-https TLS handshake, issue #33):
+wrong shared secret → wrong key schedule → AEAD decrypt failure →
+handshake stalls. **Not a hang in the ladder.** The earlier
+issue-#33 digest of "stuck inside `x25519_scalarmult`" was already
+disputed in the maintainer's 2026-04-22 retrace and was never
+reproduced; the actual symptom is wrong-result, not hang.
+
+**Repro (VICE, deterministic, ~15 s warp).** Set `reu_reu_lo=$5A`
+before `jsr x25519_scalarmult`; result hash diverges from RFC 7748
+§6.1 vec-1. Likewise `reu_addr_ctrl=$80`. See
+`tools/test_issue33_adversarial.py` for the full 8-case suite
+(clean, h1_audit, reu_low_dirty, reu_addr_ctrl_dirty, reu_full_dirty,
+nmi_corrupts_zp40, irq_during_call, plus baseline). The
+`irq_during_call` case is OK on master — confirms PR #35's `sei`
+defence works.
+
+**Fix.** Defensive register init at `x25519_scalarmult` entry
+(immediately after the existing `php / sei` from PR #35):
+
+```asm
+lda #0
+sta reu_reu_lo            ; $df04
+sta reu_addr_ctrl         ; $df0a
+```
+
+**File:line.** `src/x25519.s:90-103` (the new block, after PR #35's
+`sei` and before the ladder-state init).
+
+**Cost.** 6 cycles + 5 bytes per scalarmult call. Impact on the
+12,070-jiffy budget: < 0.001%, below measurement noise.
+
+**CT impact.** None. The two stores are unconditional and run
+before any secret-dependent code.
+
+**Caveat.** This closes the `reu_reu_lo` / `reu_addr_ctrl` vector
+specifically. Other `$DFxx` registers (`reu_c64_lo/hi`, `reu_len_lo/hi`,
+`reu_reu_hi`, `reu_reu_bank`) are re-written by `reu_clear_wide` and
+the inlined per-row DMA in `fe25519_mul`, so caller residue on those
+registers is already harmless. The minimal repro for the bug used
+`reu_reu_lo=$5A` alone (5 bytes of injected pre-state); see issue
+investigation report.
+
 ## Related projects
 
 Sibling audit reports and CT remediations (same leak patterns, same
