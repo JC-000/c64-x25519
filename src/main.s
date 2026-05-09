@@ -33,6 +33,8 @@
 .exportzp fe25519_src1, fe25519_src2, fe25519_dst
 .exportzp fe_wide
 .export cassette_buf
+.export main_loop                 ; needed by tools/test_issue33_adversarial.py
+                                  ; for trampoline hijack on U64E hardware
 
 ; ---------------------------------------------------------------------------
 ; LOADADDR segment: 2-byte PRG header (little-endian start address $0801)

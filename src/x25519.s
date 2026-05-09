@@ -86,6 +86,21 @@
                          ; against mid-REU-DMA preemption and against
                          ; consumer ISRs clobbering our 83 ZP bytes
                          ; ($1A-$2E, $40-$7F).  See A2/A5 memos.
+
+        ; --- Defensive REU register init (issue #33) ---
+        ; reu_clear_wide (x25519_init.s:316-336) and the inlined per-row
+        ; DMA in fe25519_mul (fe25519.s:412-418) both rely on
+        ; reu_reu_lo == 0 and reu_addr_ctrl == 0 latched by reu_mul_init's
+        ; tail.  A caller that touched $DF04 or $DF0A after init (e.g. a
+        ; sibling REU consumer) leaves those registers non-zero, causing
+        ; reu_clear_wide to DMA from the wrong REU offset and fill fe_wide
+        ; with garbage instead of zeros.  Result: deterministic-but-wrong
+        ; scalarmult output (not a hang).  Re-establish them explicitly
+        ; so caller REU register state cannot affect us.
+        lda #0
+        sta reu_reu_lo            ; $df04
+        sta reu_addr_ctrl         ; $df0a
+
         ; Initialize ladder state
         ; x_2 = 1
         lda #<(x25_x2)
