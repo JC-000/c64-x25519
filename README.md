@@ -125,7 +125,7 @@ make test-slow    # full RFC 7748 + differential tests via VICE
 
 ## Integrating into your own project
 
-c64-x25519 is designed to be **vendored as source** into downstream C64 projects rather than linked as a system library. The current v0.4.0 tarball and the previous v0.3.0, v0.2.0 and v0.1.0 tarballs are all published; downstream projects can pin to any. Verify the SHA256 before extracting.
+c64-x25519 is designed to be **vendored as source** into downstream C64 projects rather than linked as a system library. The current **v0.4.0** release hosts a downloadable tarball asset; new integrations should pin to it. Verify the SHA256 before extracting.
 
 **v0.4.0 (current — recommended for new integrations):**
 
@@ -134,6 +134,8 @@ curl -LO https://github.com/JC-000/c64-x25519/releases/download/v0.4.0/c64-x2551
 echo "74e3d252760c15de34c35a2e3419bab4de999f2fb084182fe3b6c423047192fe  c64-x25519-v0.4.0.tar.gz" | sha256sum -c
 mkdir -p vendor && tar -xzf c64-x25519-v0.4.0.tar.gz -C vendor/
 ```
+
+> **Note on the legacy v0.1.0 / v0.2.0 / v0.3.0 download URLs below.** The release-page asset uploads for v0.1.0, v0.2.0, and v0.3.0 were lost in a remote-history reset and are not currently hosted (the `releases/download/v0.X.0/...` URLs return HTTP 404). The git tags themselves remain intact and the source can be reconstructed via `git archive` from the tag, but the resulting tarball will not byte-match the SHA256 values recorded below — those SHAs are kept as a record of the originally-published artifacts. For a current-recipe reproducible build of any v0.4.0+ release from its tag, see `tools/build_release.sh` (or `make dist VERSION=v0.4.0`).
 
 **v0.3.0 (pinned — pre-Phase-7, L1-L24 closed):**
 
