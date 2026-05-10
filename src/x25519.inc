@@ -109,10 +109,26 @@
 ; OPTIONAL HELPERS
 ; ----------------------------------------------------------------------------
 ;
-;   vic_blank      Disable VIC-II display (DEN=0). ~25% CPU speedup.
-;   vic_unblank    Re-enable VIC-II display.
-;   bench_start    Reset jiffy clock for timing.
-;   bench_stop     Snapshot jiffy clock into bench_ticks (3 bytes).
+;   vic_blank             Disable VIC-II display (DEN=0). ~25% CPU speedup.
+;   vic_unblank           Re-enable VIC-II display.
+;   bench_start           Reset jiffy clock for timing. Requires IRQs to
+;                         remain enabled across the benched region (the
+;                         jiffy clock at $A0-$A2 only advances on each
+;                         kernal IRQ). Do NOT use to time a region that
+;                         runs under sei (e.g. x25519_scalarmult, which
+;                         sei's internally as a CT defence) — the clock
+;                         will not tick. Use bench_cycles_start in that
+;                         case.
+;   bench_stop            Snapshot jiffy clock into bench_ticks (3 bytes).
+;   bench_cycles_start    Start CIA1 timer-A/B 32-bit cycle counter.
+;                         Survives sei. Counts CPU cycles directly.
+;                         Range: 2^32 cycles (~4.2 s of C64 time / ~70 min
+;                         wall-clock at 60 Hz). After bench_cycles_stop
+;                         the kernal jiffy IRQ rate is no longer correct
+;                         until kernal re-init — fine for one-shot bench
+;                         harnesses, NOT for long-running host programs.
+;   bench_cycles_stop     Stop counter, snapshot into bench_cycles
+;                         (4 bytes, little-endian u32 cycle count).
 ;
 ; ----------------------------------------------------------------------------
 ; PUBLIC DATA BUFFERS (caller I/O)
@@ -207,8 +223,15 @@
 ; ----------------------------------------------------------------------------
 ;
 ;   The library does not touch the IRQ vector. It does not disable IRQs
-;   except briefly inside bench_start / bench_stop. For best (and most
-;   consistent) timing, callers should:
+;   except briefly inside bench_start / bench_stop, AND for the full
+;   duration of x25519_scalarmult itself (which wraps its body in
+;   php / sei … plp as a CT defence — see commit 35351c9). One
+;   consequence: the kernal jiffy clock at $A0-$A2 does NOT advance
+;   during a scalarmult call, so bench_start / bench_stop will report
+;   ~0 jif around it. Time scalarmult with bench_cycles_start /
+;   bench_cycles_stop (CIA1-driven, survives sei) instead.
+;
+;   For best (and most consistent) timing, callers should:
 ;     sei                ; mask IRQ for the duration of the op
 ;     jsr vic_blank      ; ~25% speedup
 ;     jsr x25519_scalarmult
@@ -226,3 +249,4 @@
 .import fe25519_inv, fe25519_reduce_final, fe25519_mul_a24
 .import x25_scalar, x25_u, x25_result, x25_basepoint
 .import vic_blank, vic_unblank, bench_start, bench_stop, bench_ticks
+.import bench_cycles_start, bench_cycles_stop, bench_cycles

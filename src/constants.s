@@ -55,6 +55,18 @@ CONSTANTS_S_INCLUDED = 1
 .ifndef cia1_cra
   cia1_cra        = $dc0e         ; CIA #1 control register A
 .endif
+.ifndef cia1_tb_lo
+  cia1_tb_lo      = $dc06         ; CIA #1 timer B low byte
+.endif
+.ifndef cia1_tb_hi
+  cia1_tb_hi      = $dc07         ; CIA #1 timer B high byte
+.endif
+.ifndef cia1_icr
+  cia1_icr        = $dc0d         ; CIA #1 interrupt control register
+.endif
+.ifndef cia1_crb
+  cia1_crb        = $dc0f         ; CIA #1 control register B
+.endif
 .ifndef sid_v3_freq_lo
   sid_v3_freq_lo  = $d40e         ; SID voice 3 frequency low
 .endif

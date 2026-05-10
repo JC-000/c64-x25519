@@ -2,7 +2,15 @@
 """bench_x25519.py — End-to-end X25519 scalarmult benchmark on C64.
 
 Runs a full x25519_base (scalar * basepoint 9) natively on the C64 and
-measures wall-clock time via the jiffy clock.
+measures CPU cycles directly via a CIA1-driven 32-bit cycle counter
+(bench_cycles_start / bench_cycles_stop, see src/util.s).
+
+Why CIA timers, not the jiffy clock: since PR #35 (commit 35351c9),
+x25519_scalarmult wraps its entire body in `php / sei … plp` as a CT
+defence. The kernal jiffy clock at $A0-$A2 is incremented by the IRQ
+handler, so it stops ticking while scalarmult is running and the
+old jiffy-based bench reported ~0 jif. The CIA1 timer pair ticks
+from the phi2 system clock directly and is unaffected by sei.
 
 Uses jsr() with event-based binary monitor checkpoints for reliable
 long-running computation in warp mode.
@@ -29,6 +37,7 @@ VECTORS_PATH = os.path.join(PROJECT_ROOT, "test", "rfc7748_vectors.json")
 
 NTSC_HZ = 60  # jiffy clock tick rate
 NTSC_CYCLES_PER_SEC = 1_022_727
+NTSC_CYCLES_PER_JIF = NTSC_CYCLES_PER_SEC / NTSC_HZ   # ≈ 17,045.45
 
 # Benchmark subroutine address
 BENCH_SUB_ADDR = 0x0360
@@ -38,42 +47,32 @@ def build_bench_subroutine(labels, blank=True):
     """Build 6502 subroutine that runs the full benchmark and returns via RTS.
 
     The subroutine:
-      1. SEI; zero jiffy clock; CLI
-      2. (optional) JSR vic_blank
-      3. JSR x25519_base
-      4. SEI; copy jiffy clock to bench_ticks; CLI
+      1. (optional) JSR vic_blank
+      2. JSR bench_cycles_start  (sei + CIA1 TA/TB reconfigured)
+      3. JSR x25519_base         (internally php/sei…plp)
+      4. JSR bench_cycles_stop   (stops timers, writes 4-byte LE cycle count)
       5. (optional) JSR vic_unblank
       6. RTS
     """
     code = bytearray()
 
-    # 1. Zero jiffy clock (3 bytes at $A0-$A2, big-endian)
-    code += bytes([0x78])         # SEI
-    code += bytes([0xA9, 0x00])   # LDA #$00
-    code += bytes([0x85, 0xA0])   # STA $A0
-    code += bytes([0x85, 0xA1])   # STA $A1
-    code += bytes([0x85, 0xA2])   # STA $A2
-    code += bytes([0x58])         # CLI
-
-    # 2. Blank VIC (optional)
+    # 1. Blank VIC (optional) — done before starting the timer so the
+    # blank itself isn't counted toward scalarmult cycles.
     if blank:
         addr = labels["vic_blank"]
         code += bytes([0x20, addr & 0xFF, (addr >> 8) & 0xFF])  # JSR vic_blank
 
-    # 3. JSR x25519_base
-    addr = labels["x25519_base"]
-    code += bytes([0x20, addr & 0xFF, (addr >> 8) & 0xFF])  # JSR x25519_base
+    # 2. Start CIA1 cycle counter (32-bit, survives sei)
+    addr = labels["bench_cycles_start"]
+    code += bytes([0x20, addr & 0xFF, (addr >> 8) & 0xFF])      # JSR bench_cycles_start
 
-    # 4. Copy jiffy clock to bench_ticks
-    bt = labels["bench_ticks"]
-    code += bytes([0x78])                                         # SEI
-    code += bytes([0xA5, 0xA0])                                   # LDA $A0
-    code += bytes([0x8D, bt & 0xFF, (bt >> 8) & 0xFF])           # STA bench_ticks
-    code += bytes([0xA5, 0xA1])                                   # LDA $A1
-    code += bytes([0x8D, (bt+1) & 0xFF, ((bt+1) >> 8) & 0xFF])  # STA bench_ticks+1
-    code += bytes([0xA5, 0xA2])                                   # LDA $A2
-    code += bytes([0x8D, (bt+2) & 0xFF, ((bt+2) >> 8) & 0xFF])  # STA bench_ticks+2
-    code += bytes([0x58])                                         # CLI
+    # 3. JSR x25519_base (does the scalarmult under sei)
+    addr = labels["x25519_base"]
+    code += bytes([0x20, addr & 0xFF, (addr >> 8) & 0xFF])      # JSR x25519_base
+
+    # 4. Stop CIA1 cycle counter (atomic snapshot into bench_cycles)
+    addr = labels["bench_cycles_stop"]
+    code += bytes([0x20, addr & 0xFF, (addr >> 8) & 0xFF])      # JSR bench_cycles_stop
 
     # 5. Unblank VIC (optional)
     if blank:
@@ -86,12 +85,13 @@ def build_bench_subroutine(labels, blank=True):
     return bytes(code)
 
 
-def jiffies_to_str(ticks):
-    secs = ticks / NTSC_HZ
+def cycles_to_str(cycles):
+    secs = cycles / NTSC_CYCLES_PER_SEC
+    jif = cycles / NTSC_CYCLES_PER_JIF
     if secs < 60:
-        return f"{ticks} jiffies ({secs:.1f}s)"
+        return f"{cycles:,} cycles (~{jif:,.0f} jif, {secs:.1f}s)"
     mins = secs / 60
-    return f"{ticks} jiffies ({mins:.1f} min / {secs:.0f}s)"
+    return f"{cycles:,} cycles (~{jif:,.0f} jif, {mins:.1f} min / {secs:.0f}s)"
 
 
 def main():
@@ -126,7 +126,8 @@ def main():
     # Verify required labels
     required = [
         "x25519_base", "x25_scalar", "x25_result",
-        "bench_ticks", "vic_blank", "vic_unblank",
+        "bench_cycles_start", "bench_cycles_stop", "bench_cycles",
+        "vic_blank", "vic_unblank",
     ]
     for name in required:
         if labels.address(name) is None:
@@ -176,21 +177,24 @@ def main():
             jsr(transport, BENCH_SUB_ADDR, timeout=7200.0)
             wall_elapsed = time.time() - wall_start
 
-            # Read results
-            ticks_data = read_bytes(transport, labels["bench_ticks"], 3)
-            ticks = (ticks_data[0] << 16) | (ticks_data[1] << 8) | ticks_data[2]
+            # Read 4-byte little-endian u32 cycle count from bench_cycles
+            cyc_data = read_bytes(transport, labels["bench_cycles"], 4)
+            cycles = (cyc_data[0]
+                      | (cyc_data[1] << 8)
+                      | (cyc_data[2] << 16)
+                      | (cyc_data[3] << 24))
             result_bytes = read_bytes(transport, labels["x25_result"], 32)
 
-            c64_secs = ticks / NTSC_HZ
-            est_cycles = c64_secs * NTSC_CYCLES_PER_SEC
+            c64_secs = cycles / NTSC_CYCLES_PER_SEC
+            est_jif = cycles / NTSC_CYCLES_PER_JIF
 
             print(f"\n--- Results ---")
-            print(f"  Jiffy clock:   {jiffies_to_str(ticks)}")
+            print(f"  CIA1 cycles:   {cycles_to_str(cycles)}")
+            print(f"  Jif (derived): {est_jif:,.1f}")
             print(f"  Wall clock:    {wall_elapsed:.1f}s ({wall_elapsed/60:.1f} min)")
             if wall_elapsed > 0:
                 print(f"  Warp factor:   {c64_secs/wall_elapsed:.1f}x")
-            print(f"  Est. cycles:   {est_cycles:,.0f}")
-            print(f"  C64 real-time: {c64_secs:.0f}s ({c64_secs/60:.1f} min)")
+            print(f"  C64 real-time: {c64_secs:.1f}s ({c64_secs/60:.2f} min)")
 
             # Verify correctness
             if verify:

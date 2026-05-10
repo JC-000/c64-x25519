@@ -62,3 +62,4 @@ public_refs:
         .addr x25_scalar, x25_u, x25_result, x25_basepoint
         .addr vic_blank, vic_unblank
         .addr bench_start, bench_stop, bench_ticks
+        .addr bench_cycles_start, bench_cycles_stop, bench_cycles
