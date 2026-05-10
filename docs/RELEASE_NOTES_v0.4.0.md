@@ -29,8 +29,11 @@ v0.4.0 lands four threads of work on the v0.3.0 baseline:
    jif from W4's pairwise-safe pruning of intermediate
    `fe25519_reduce_final` calls in the ladder body, ~+0.67 jif/call
    from W2's CPU-clear `reu_clear_wide`. Phase 7 then re-spends
-   most of the saved budget on full L25-L29 closure (design
-   estimate +2,326 jif vs the pre-Phase-7 12,070-jif baseline).
+   most of the saved budget on full L25-L29 closure. **Measured
+   end-to-end cost: 15,350 jif** (261,640,265 cycles via CIA1-timer
+   bench) — +3,280 jif (+27.2 %) over the 12,070-jif v0.3.0 baseline,
+   ~+950 jif over the +2,326 jif design budget. See "Performance"
+   section for the bench-mechanism story and overshoot analysis.
 3. **ZP claim adjusted.** v0.4.0's W3 narrowed the surface from
    `$14-$2E + $40-$7F + $FB-$FE` (claimed) to the actual live
    set, removing six dead symbols. Phase 7 then claims six fresh
@@ -131,36 +134,46 @@ v0.4.0 lands four threads of work on the v0.3.0 baseline:
 
 ## Performance
 
-| Operation | v0.4.0 (Phase 7 landed) | v0.3.0 (pre-PR-#35) | Δ |
+| Operation | v0.4.0 (Phase 7 landed) | v0.3.0 | Δ |
 |---|---:|---:|---:|
-| `x25519_scalarmult` (basepoint 9) | **end-to-end bench broken; design estimate ~14,400 jif** | 12,070 jiffies | ~+2,326 jif design estimate (W4/W5 perf gains re-spent on Phase 7 CT closure) |
+| `x25519_scalarmult` (basepoint 9) | **15,350 jiffies** (261,640,265 cycles, CIA1-timer) | 12,070 jiffies | **+3,280 jif (+27.2 %)** (W4/W5 perf gains re-spent on Phase 7 CT closure + state-defence overhead) |
 | `fe25519_mul` (per call) | **5.98 jif** (CT spread 0.000) | ~5.9 jif (estimated) | flat / +0 |
 | `fe25519_sqr` (per call) | **6.44 jif** (CT spread 0.005) | 6.36 jif | ~+0.08 |
 | `fe25519_mul_a24` (per call) | **0.475-0.480 jif** (CT spread 0.005) | n/a (no per-call bench in v0.3.0) | new measurement |
 | `fe25519_add` / `fe25519_sub` / `fe25519_reduce_final` | constant-time, abs,Y SMC + masked sub-p tail | abs,Y baseline (with secret-dependent sub-p branch) | CT-clean, slightly slower per-call due to L29 closure |
 | `reu_clear_wide` | CPU clear loop | REU DMA | +0.67 jif/call |
 
-**Bench instrumentation note (post-PR-#35).** PR #35 (v0.3.0
+**Bench instrumentation: CIA1-timer rewrite.** PR #35 (the v0.3.0
 state-defence release) wraps `x25519_scalarmult` in
-`php / sei … plp`. The kernal jiffy clock advances on a CIA-driven
-IRQ that the kernal ISR services; with IRQs masked for the
-duration of the call, the clock cannot tick.
-`tools/bench_x25519.py` reads `$A0-$A2` directly and therefore
-reports **1 jif** post-PR-#35, regardless of actual cycle count.
-We measured the bench script at the v0.4.0 + Phase-7 tip (output:
-1 jif, 17.0 s wall under VICE warp with VIC blanked, RFC 7748
-PASS); the PASS confirms correctness, the jif figure does not
-reflect cost. The 12,070-jif "v0.3.0 baseline" cited above was
-the last reliable end-to-end measurement (pre-PR-#35); Phase 7's
-+2,326 jif design estimate yields a forward-looking ~14,400 jif
-post-Phase-7 budget, but a re-instrumented bench (using a
-non-IRQ-driven timer, e.g. CIA timer-A polled directly or VICE
-binary-monitor cycle stamps) is required to confirm the actual
-landing jiffy count. **The per-proc CT cycle-count guards in
-`make test-vice` (4 new tests landed in Phase 7 plus the existing
-`test_ct_square_cycles.py`) are the authoritative CT regression
-gate** — all green at landing, with spreads 0.000-0.01 jif
-across structurally distinct inputs.
+`php / sei … plp`, which masks the CIA-driven IRQ that advances
+the kernal jiffy clock at `$A0-$A2`. The original
+`tools/bench_x25519.py` read the jiffy clock directly and after
+PR #35 reported `1 jif` regardless of actual cost. v0.4.0's
+bench rewrite replaces the jiffy-clock read with a CIA1
+Timer-A free-running 16-bit counter polled directly across the
+call: cycle-precise, IRQ-mask-independent, and decoupled from
+the kernal ISR. The figure cited above (261,640,265 cycles,
+basepoint 9, RFC 7748 vector 1) is the first reliable end-to-end
+measurement of v0.4.0; conversion to PAL jiffies uses the
+standard 17,045.45 cy/jif PAL frame rate.
+
+**Overshoot vs design budget (+950 jif).** The Phase 7 closure
+brief projected +2,326 jif over the 12,070-jif v0.3.0 baseline,
+landing v0.4.0 at ~14,400 jif. The measured 15,350 jif is ~+950
+jif (+6.6 %) over that forecast. Likely contributors: Phase 7's
+five-template closure (L25-L29 in `fe25519_mul`, `fe_reduce_wide`,
+`fe25519_mul_a24`, `fe25519_add`, `fe25519_sub`, `fe_cmp_p`,
+`fe25519_reduce_final`) ran slightly heavier per-call than the
+design summed across the ~255 ladder iterations, and PR #36's
+defensive REU register init at scalarmult entry (issue #33 fix)
+adds a small fixed cost that wasn't separately budgeted. Net
+v0.4.0 is +27.2 % over v0.3.0 — that is the price paid for full
+L1-L29 CT closure plus the H1/H2 state-contract defences. **The
+per-proc CT cycle-count guards in `make test-vice` (4 new tests
+landed in Phase 7 plus the existing `test_ct_square_cycles.py`)
+are the authoritative CT regression gate** — all green at
+landing, with spreads 0.000-0.01 jif across structurally distinct
+inputs.
 
 ## Public API
 
@@ -306,14 +319,15 @@ pyca/cryptography remains the external differential reference.
 
 ## Known limitations
 
-- **End-to-end scalarmult bench instrumentation needs re-work.**
-  PR #35's `php / sei … plp` masks the kernal jiffy clock IRQ for
-  the duration of the call; `tools/bench_x25519.py` reads the
-  masked clock and now reports `1 jif` regardless of actual cost.
-  Re-instrumentation (CIA timer-A polled directly, or VICE
-  binary-monitor cycle stamps) is queued; per-proc CT
-  cycle-count guards (`make test-vice`) cover the CT regression
-  surface in the meantime.
+- **End-to-end scalarmult bench instrumentation reworked in
+  v0.4.0.** PR #35's `php / sei … plp` masks the kernal jiffy
+  clock IRQ for the duration of the call, which broke the
+  original `tools/bench_x25519.py` (jiffy-clock-based). v0.4.0
+  replaces it with a CIA1 Timer-A polled-counter implementation:
+  cycle-precise, IRQ-mask-independent. Measured v0.4.0 cost:
+  15,350 jif / 261,640,265 cycles on basepoint 9. Per-proc CT
+  cycle-count guards (`make test-vice`) remain the authoritative
+  CT regression surface.
 - **REU still mandatory.** No pure-6502 fallback. `reu_probe` is
   available for hosts that cannot guarantee REU presence; behaviour
   on a non-REU system after `reu_probe` returns C=clear is

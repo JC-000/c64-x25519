@@ -85,8 +85,8 @@ ladder/cswap audit).
 
 | Operation | Cost |
 |---|---|
-| `x25519_scalarmult` (basepoint 9, v0.4.0 / Phase 7 landed) | **~14,400 jiffies design estimate** (end-to-end bench broken post-PR-#35; per-proc CT guards green) |
-| `x25519_scalarmult` (basepoint 9, v0.3.0 — last reliable end-to-end measurement) | 12,070 jiffies / ~201.2s NTSC / ~241.4s PAL |
+| `x25519_scalarmult` (basepoint 9, v0.4.0 / Phase 7 landed) | **15,350 jiffies / ~256.4s NTSC / ~307.7s PAL** (261,640,265 cycles, CIA1-timer measurement) |
+| `x25519_scalarmult` (basepoint 9, v0.3.0) | 12,070 jiffies / ~201.2s NTSC / ~241.4s PAL |
 | `x25519_scalarmult` (basepoint 9, v0.2.0) | 12,485 jiffies / ~208.1s NTSC / ~249.7s PAL |
 | `x25519_scalarmult` (basepoint 9, v0.1.0 baseline) | 9,520 jiffies / ~158.7s NTSC |
 | `fe25519_mul` | 5.98 jiffies/call (v0.4.0, CT spread 0.000) |

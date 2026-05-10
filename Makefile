@@ -52,7 +52,9 @@ test-slow: $(PRG)
 	python3 tools/test_ct_square_cycles.py; \
 	python3 tools/test_ct_mul_cycles.py; \
 	python3 tools/test_ct_mul_a24_cycles.py; \
+	python3 tools/test_ct_reduce_wide_cycles.py; \
 	python3 tools/test_fe_reduce_wide_carry.py; \
+	python3 tools/test_fe_reduce_wide_bound.py; \
 	python3 tools/test_opt_sqr.py; \
 	python3 tools/test_opt_karatsuba.py; \
 	python3 tools/test_opt_fast_mul.py; \
@@ -72,7 +74,9 @@ test-vice: $(PRG)
 	python3 tools/test_ct_square_cycles.py; \
 	python3 tools/test_ct_mul_cycles.py; \
 	python3 tools/test_ct_mul_a24_cycles.py; \
-	python3 tools/test_fe_reduce_wide_carry.py
+	python3 tools/test_ct_reduce_wide_cycles.py; \
+	python3 tools/test_fe_reduce_wide_carry.py; \
+	python3 tools/test_fe_reduce_wide_bound.py
 
 # Reference-only self-test (no VICE, no build required).
 test-ref:
@@ -151,7 +155,8 @@ lib-verify: lib $(LIB_VERIFY_PRG)
 	           fe25519_add fe25519_sub fe25519_mul fe25519_sqr \
 	           sqtab_init reu_mul_init \
 	           x25_scalar x25_u x25_result \
-	           vic_blank vic_unblank bench_start bench_stop; do \
+	           vic_blank vic_unblank bench_start bench_stop \
+	           bench_cycles_start bench_cycles_stop bench_cycles; do \
 	  grep -q "\\b$$sym\\b" $(LIB_VERIFY_DIR)/stub.labels \
 	    || (echo "FAIL: expected symbol $$sym not in linked binary" && exit 1); \
 	done; \

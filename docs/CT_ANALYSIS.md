@@ -489,22 +489,22 @@ still relevant.
   (`$A0-$A2`), so post-PR-#35 it reports `1 jif` regardless of
   the actual cycle count — the IRQ-masking that PR #35 installed
   prevents the IRQ ISR from advancing the jiffy clock during the
-  call. Re-establishing an end-to-end scalarmult bench under the
-  new IRQ-masked contract is queued for a follow-up; Phase 7's
-  per-proc CT cycle spreads (measured via `bench_start /
-  bench_stop` on individual `fe25519_*` procs that do **not**
-  themselves mask IRQs) are the authoritative CT regression
-  guards. The 12,070-jif "pre-Phase-7" baseline cited above is
-  the pre-PR-#35 figure inherited from the v0.3.0 + state-defence
-  release notes; the post-Phase-7 number from the design (~14,400
-  jif under Phase 7's +2,326 jif estimate) is the best available
-  forward-looking budget. Wallclock under VICE warp:
-  ~17 s with VIC blanked, ~17.8 s without — consistent with a
-  cost in the 12k-15k jif range at typical NTSC warp ratios but
-  not a tight-enough proxy to confirm the design estimate either
-  way. (Measured at the v0.4.0 + Phase-7 working-tree tip:
-  16.5 s wall with VIC blanked, 17.8 s without; both report
-  jif=1 due to the IRQ mask, both PASS RFC 7748 vector 1.)
+  call. The v0.4.0 finalization re-instrumented the bench on a
+  CIA1 timer A→B chained 32-bit cycle counter (`bench_cycles_*`
+  in `src/util.s`), which is unaffected by the I-flag and yields
+  cycle-precise measurements regardless of the internal `sei`
+  wrap. Phase 7's per-proc CT cycle spreads (measured via
+  `bench_start / bench_stop` on individual `fe25519_*` procs that
+  do **not** themselves mask IRQs) remain the authoritative CT
+  regression guards. Measured end-to-end scalarmult on the
+  RFC 7748 basepoint-9 vector at v0.4.0 tip: **261,640,265
+  cycles ≈ 15,350 jif** with VIC blanked — +3,280 jif (+27.2 %)
+  over the v0.3.0 12,070-jif baseline and ~+950 jif (+6.6 %)
+  over the +2,326-jif Phase 7 design estimate. The overshoot
+  is attributable to the combined cost of the L25-L29 closures
+  plus the PR #36 defensive REU register init at scalarmult
+  entry, neither of which was separately scoped in the original
+  Phase 7 budget. RFC 7748 vector 1 PASS.
 
 ### Follow-ups
 
@@ -666,10 +666,14 @@ perf cost is the price paid for that guarantee):
   Four new CT cycle-count guards (`test_ct_mul_cycles`,
   `test_ct_mul_a24_cycles`, `test_ct_reduce_wide_cycles`,
   `test_fe_reduce_wide_bound`); per-proc spreads 0.000-0.01 jif,
-  all <1.0 jif threshold. End-to-end scalarmult bench broken
-  post-PR-#35 (jiffy clock masked under `php/sei...plp`); design
-  estimate +2,326 jif vs the 12,070-jif pre-PR-#35 baseline,
-  yielding a forward-looking ~14,400 jif post-Phase-7 budget.
+  all <1.0 jif threshold. End-to-end scalarmult bench
+  re-instrumented on a CIA1-timer 32-bit cycle counter
+  (`bench_cycles_*`) to survive the PR-#35 `php/sei...plp`
+  IRQ mask; measured **261,640,265 cycles ≈ 15,350 jif** on the
+  RFC 7748 basepoint-9 vector with VIC blanked (+3,280 jif vs
+  v0.3.0 12,070 jif baseline, ~+950 jif over the Phase 7 design
+  budget — attributable to L25-L29 closures plus the PR #36
+  defensive REU init).
 
 Issue [#20](https://github.com/JC-000/c64-x25519/issues/20) was the
 origin report for L1-L15. L16-L22 were discovered during the Phase 3
