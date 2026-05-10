@@ -18,11 +18,15 @@ header is `src/x25519.inc`; this file is the human-readable guide.
 - **REU:** **512 KB REU required** (a Commodore 1750 or equivalent,
   or any REU/compatible with at least 6 banks of 64 KB). The library
   pre-computes full 8x8->16 multiplication tables into REU banks 0-5.
-- **Zero page:** the library owns `$14-$2E`, `$40-$7F`, and `$FB-$FE`
-  while running. See `src/x25519.inc` for the full map. Each library-
-  owned ZP equate in `src/constants.s` is wrapped in `.ifndef` so a
-  host project composing multiple c64 crypto libraries can pre-define
-  its own ZP layout before `.include`'ing `constants.s`; see §4.2.
+- **Zero page:** the library owns `$14-$16`, `$1C`, `$1E-$2A`,
+  `$24-$25`, `$2C-$2F`, and `$40-$7F` while running (87 bytes
+  total, post-Phase-7). `$FB-$FE` is reserved for the test
+  harness only and is NOT part of the library's claimed ZP
+  surface. See `src/x25519.inc` for the full map. Each
+  library-owned ZP equate in `src/constants.s` is wrapped in
+  `.ifndef` so a host project composing multiple c64 crypto
+  libraries can pre-define its own ZP layout before
+  `.include`'ing `constants.s`; see §4.2.
 
 ## 2. Building
 
@@ -173,12 +177,17 @@ Wrapped equates (all inside `src/constants.s`):
 
 - General scratch: `zp_ptr1`, `zp_ptr2`, `zp_tmp1`, `zp_tmp2`
 - fe25519 working: `fe25519_src1`, `fe25519_src2`, `fe25519_dst`,
-  `fe_misc`, `fe_carry`, `fe_loop`, `fe_mul_i`, `fe_mul_j`
-- x25519 working: `x25_prev_bit`, `x25_bit_ctr`, `x25_byte_idx`,
-  `x25_bit_mask`, `fe_sqr_pairs`
-- mul_8x8 working (reused by fe25519): `poly_i`, `poly_j`,
-  `poly_carry`, `poly_tmp`
-- Wide product buffer: `fe_wide` (32-byte ZP region at `$40..$7F`)
+  `fe_carry`, `fe_loop`, `fe_mul_i`, `fe_mul_j`
+- Phase 7 CT scratch (`fe25519_add` / `fe25519_sub` / `fe_cmp_p_ct`
+  / `fe25519_reduce_final`): `fe_cmp_mask` (`$14`),
+  `fe_subp_rhs` (`$15`), `fe_add_carry_mask` (`$16`)
+- Phase 7 multiply chain: `mul_pending` (`$24`), `mul_bound`
+  (`$25`), `mul_ripple_start` (`$2F`)
+- x25519 working: `x25_prev_bit`, `x25_byte_idx`, `x25_bit_mask`,
+  `fe_sqr_pairs`
+- mul_8x8 working (reused by fe25519): `poly_carry`
+- Wide product buffer: `fe_wide` (32-byte ZP region at `$40..$7F`,
+  hard-asserted at link time — NOT host-overridable)
 
 Non-library equates are **not** wrapped: KERNAL routines (`chrout`,
 `getin`), hardware registers (`vic_*`, `cia1_*`, `sid_*`, `proc_port`),
@@ -256,10 +265,15 @@ your own field buffers, use `.align 32` followed by `.res 32, 0`.
 
 ```
 $0001           proc_port (BASIC ROM banked out)
-$0014-$007F     ZP slots owned by library while running
-$00A0-$00A2     jiffy clock (read by bench_*)
+$0014-$0016     fe_cmp_mask / fe_subp_rhs / fe_add_carry_mask (Phase 7 CT scratch)
+$001C           poly_carry (mul_8x8 / fe25519 reuse)
+$001E-$002A     fe25519_src1/src2/dst, fe_carry, fe_loop, fe_mul_i/j, x25_prev_bit, x25_byte_idx, x25_bit_mask
+$0024-$0025     mul_pending / mul_bound (Phase 7, in freed fe_misc range)
+$002C-$002F     x25 scratch + fe_sqr_pairs + mul_ripple_start
+$0040-$007F     fe_wide (32-byte ZP product accumulator; ZP-pinned by .assert)
+$00A0-$00A2     jiffy clock (read by bench_*; masked under x25519_scalarmult sei)
 $00C6           kbd buffer count (test harness only)
-$00FB-$00FE     zp_ptr1 / zp_ptr2 (general scratch)
+$00FB-$00FC     zp_ptr1 (test harness only — NOT part of library ZP claim)
 $0801-$08FF     BASIC stub + boot (test harness)
 $0900+          library code (mul_8x8, fe25519, x25519, ...)
 $1800-$1Axx     page-aligned field buffers (fe_tmp*, x25_*)
@@ -342,26 +356,31 @@ subject to the CT cycle-count regression guard
 (`tools/test_ct_square_cycles.py`, Phase 0) running in
 `make test-slow` / `make test-vice`.
 
-- **Full side-channel posture (v0.3.0).** All 24 catalogued leaks
-  (L1–L24 in `docs/CT_ANALYSIS.md`) are now closed. L1–L22 landed in
-  v0.2.0: branchless CT quarter-square in `mul_8x8`; inline
-  branchless CT mult66 rewrite of `fe25519_sqr` mult66 bodies;
-  zero-skip removal across both `fe25519_mul` and `fe25519_sqr`
-  (outer, inner, and DMA-hybrid); and the Phase 6 unconditional
-  per-body pending-carry chain plus end-of-inner ripple that
-  replaced the opportunistic carry-cascade short-circuits. L23a/b/c
-  landed in v0.3.0 (PR #31): the `@diag_prop` diagonal-term carry
-  path in `fe25519_sqr` rewritten as a Phase-6-style unconditional
-  body + unconditional ripple. L24a/b landed in v0.3.0 (PR #30):
-  two scalar-bit-dependent branches in the `x25519_scalarmult`
-  Montgomery ladder bit loop replaced by a branchless
-  `cmp/sbc/eor` bit-to-mask idiom, with `x25_prev_bit` migrated to
-  mask form. `fe25519_cswap` is verified CT-clean by inspection
-  (mask-time-invariant unrolled `abs,Y` inner loop; 32-byte
-  alignment hard-asserted in `src/data.s` guarantees no page-cross).
-  v0.3.0 is the first release with **full field-op + outer-ladder
-  side-channel posture**, suitable for network-facing deployments
-  where the scalar is a long-lived ECDH private key.
+- **Full side-channel posture (v0.4.0).** All 29 catalogued leak
+  families (L1-L29 in `docs/CT_ANALYSIS.md`) are now closed.
+  L1-L22 landed in v0.2.0 (branchless CT `mul_8x8` + `fe25519_sqr`
+  mult66 rewrite + zero-skip removal + Phase 6 carry-chain).
+  L23a/b/c landed in v0.3.0 (PR #31, `fe25519_sqr` `@diag_prop`
+  diagonal carry path Phase-6-style unconditional ripple).
+  L24a/b landed in v0.3.0 (PR #30, branchless `cmp/sbc/eor`
+  bit-to-mask in the `x25519_scalarmult` Montgomery ladder
+  bit loop). **L25 / L26a-d / L27a-f / L28a-k / L29a-e land in
+  v0.4.0 (Phase 7)** — closes the field-op surface beyond
+  `fe25519_sqr`: `fe25519_mul`, `fe_reduce_wide`,
+  `fe25519_mul_a24`, `fe25519_add`, `fe25519_sub`, `fe_cmp_p`,
+  `fe25519_reduce_final` all rewritten with the four Phase 7
+  closure templates (`lda#0/sbc#0/eor#$FF` mask + masked sub-p
+  tail; Phase-6 Option F per-body pending chain;
+  `dey/bne` cascades gated by `mul38_lo_tab[0]=0`;
+  `fe_carry`-threaded reduction stages). `fe25519_cswap` remains
+  CT-clean by inspection. v0.4.0 is the first release where the
+  **entire `fe25519_*` / `mul_8x8` / `x25519_scalarmult` surface
+  is CT-clean** for network-facing deployments where the scalar
+  is a long-lived ECDH private key. Per-proc CT cycle-count
+  guards in `make test-vice` (4 new in Phase 7 plus
+  `test_ct_square_cycles.py`) report spreads of 0.000-0.01 jif
+  across structurally distinct inputs, all well under the
+  1.0 jif threshold.
 - **No RNG.** Key generation is the caller's job. The library does
   not seed or consume randomness. `x25519_base` expects the scalar
   to already be in `x25_scalar`.

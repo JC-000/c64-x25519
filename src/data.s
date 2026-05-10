@@ -105,10 +105,19 @@ fe_p:
 ; --- fe25519_mul optimization buffers ---
 mul_cached_a:
         .byte 0                ; cached src1[i] for inlined multiply
+
+; mul_src2_buf is 33 bytes, NOT 32. Byte 32 is a load-bearing zero
+; (the "phantom slot") relied on by fe25519_sqr body B. Body B
+; processes cross-term pairs in an unrolled loop and the final
+; iteration of i=31 reads src2[32]; that read MUST observe a zero
+; byte to keep the cross-term sum honest. Since body B never
+; writes the slot back, .res 33, 0 above guarantees byte 32 stays
+; zero for the lifetime of the program — but a future caller MUST
+; NOT shrink this buffer to 32 bytes or repurpose byte 32 for
+; anything else, and any change here must be paired with a re-run
+; of tools/test_fe_sqr_stress.py and tools/test_ct_square_cycles.py.
 mul_src2_buf:
-        .res 33, 0           ; absolute copy of src2 for fast indexed access
-                              ; (33 bytes: byte 32 is zero-pad for fe25519_sqr unrolled
-                              ; cross-term loop phantom iteration safety)
+        .res 33, 0            ; 32-byte src2 copy + 1-byte phantom slot
 
 ; --- REU DMA target buffers (page-aligned for LDA abs,Y without penalty) ---
         .align 256             ; align to next page boundary

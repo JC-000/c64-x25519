@@ -85,39 +85,102 @@
 ; =============================================================================
 ; fe25519_add - (fe25519_dst) = (fe25519_src1) + (fe25519_src2) mod p
 ;
-; 32-byte addition with carry, then conditional subtract p if >= p.
-; Clobbers: A, X, Y
+; 32-byte addition, then unconditional masked subtract-p driven by the
+; combined "must reduce" mask = (add-carry-out) OR (raw-result >= p).
+; Clobbers: A, X, Y, fe_cmp_mask, fe_add_carry_mask, fe_subp_rhs.
+;
+; L29 closure: constant-time via masked sub-p. The pre-L29 version used
+; `bcs @must_reduce` and `bcc @done` after the compare — both branches
+; depended on (overflow OR dst-value)-derived data, which is secret in
+; the ladder hot path. The new flow performs:
+;
+;   1) 32-byte adc loop (always 32 bytes, no early exit).
+;   2) Convert add carry-out to a $00/$FF mask in fe_add_carry_mask via
+;      `lda #0 / sbc #0 / eor #$FF` (relies on dex/iny/bne not touching
+;      C between the final adc and the sbc).
+;   3) jsr fe_cmp_p_ct → 32-byte compare-with-p that returns its
+;      $00/$FF "dst >= p" mask in A and fe_cmp_mask.
+;   4) Combine: fe_cmp_mask := fe_cmp_mask OR fe_add_carry_mask, so the
+;      mask is $FF iff a sub-p MUST be applied.
+;   5) 32-byte unconditional masked sub-p loop. Per-byte:
+;        lda fe_p,y / and fe_cmp_mask / sta fe_subp_rhs
+;        lda dst,y  / sbc fe_subp_rhs / sta dst,y
+;      When mask = $00, fe_subp_rhs = 0 each byte and the loop is a
+;      no-op (modulo the carry chain, which sec primes correctly), so
+;      the result is unchanged. When mask = $FF, p is subtracted in
+;      full. Either way the instruction sequence is identical.
+;
+; Self-modifying code (mirrors fe25519_cswap): src1/src2/dst patched
+; into the abs,Y operands at proc entry. The patches read public ZP
+; pointers (fe25519_src1/src2/dst) so they are CT-neutral. The 32-byte
+; alignment contract (.assert (X & $1F) = 0 in data.s) guarantees
+; abs,Y over Y in [0,31] never crosses a page.
 ; =============================================================================
 .proc fe25519_add
+        ; Patch src1/src2/dst into abs,Y operands (both loops).
+        lda fe25519_src1
+        sta @add_ld_src1+1
+        lda fe25519_src1+1
+        sta @add_ld_src1+2
+        lda fe25519_src2
+        sta @add_ld_src2+1
+        lda fe25519_src2+1
+        sta @add_ld_src2+2
+        lda fe25519_dst
+        sta @add_st_dst+1
+        sta @sub_ld_dst+1
+        sta @sub_st_dst+1
+        lda fe25519_dst+1
+        sta @add_st_dst+2
+        sta @sub_ld_dst+2
+        sta @sub_st_dst+2
+
         clc
         ldy #0
         ldx #32
 @add_loop:
-        lda (fe25519_src1),y
-        adc (fe25519_src2),y
-        sta (fe25519_dst),y
+@add_ld_src1:
+        lda $ffff,y            ; PATCHED: src1 base
+@add_ld_src2:
+        adc $ffff,y            ; PATCHED: src2 base
+@add_st_dst:
+        sta $ffff,y            ; PATCHED: dst  base
         iny
-        dex                    ; DEX doesn't affect carry
-        bne @add_loop
-        bcs @must_reduce       ; carry out → result >= 2^256 > p
+        dex                    ; DEX/INY do not affect C
+        bne @add_loop          ; public counter X
 
-        ; Check if result >= p
-        jsr fe_cmp_p
-        bcc @done
+        ; Capture add carry-out into fe_add_carry_mask.
+        ; C=1 (overflow) → A=0  → eor $FF → $FF
+        ; C=0 (no over)  → A=$FF → eor $FF → $00
+        lda #0
+        sbc #0
+        eor #$FF
+        sta fe_add_carry_mask
 
-@must_reduce:
+        ; Compute "raw dst >= p" mask in fe_cmp_mask (and A).
+        jsr fe_cmp_p_ct
+
+        ; Combine: must-reduce iff overflow OR (dst >= p).
+        ora fe_add_carry_mask
+        sta fe_cmp_mask
+
+        ; Unconditional masked sub-p. mask=$00 → subtract 0 (no-op);
+        ; mask=$FF → subtract p. Identical instruction stream either way.
         sec
         ldy #0
         ldx #32
 @sub_p:
-        lda (fe25519_dst),y
-        sbc fe_p,y
-        sta (fe25519_dst),y
+        lda fe_p,y
+        and fe_cmp_mask
+        sta fe_subp_rhs
+@sub_ld_dst:
+        lda $ffff,y            ; PATCHED: dst base
+        sbc fe_subp_rhs
+@sub_st_dst:
+        sta $ffff,y            ; PATCHED: dst base
         iny
         dex
-        bne @sub_p
-
-@done:
+        bne @sub_p             ; public counter X
         rts
 .endproc
 
@@ -125,87 +188,211 @@
 ; =============================================================================
 ; fe25519_sub - (fe25519_dst) = (fe25519_src1) - (fe25519_src2) mod p
 ;
-; 32-byte subtraction. If borrow, add p.
-; Clobbers: A, X, Y
+; 32-byte subtraction, then unconditional masked add-p driven by the
+; "borrow occurred" mask.
+; Clobbers: A, X, Y, fe_cmp_mask, fe_subp_rhs.
+;
+; L29 closure: constant-time via masked add-p. The pre-L29 version used
+; `bcs @done` after the sub loop; the branch direction encoded sign of
+; (src1 - src2), which is secret. The new flow:
+;
+;   1) 32-byte sbc loop (always 32 bytes, no early exit).
+;   2) Convert final-borrow into a $00/$FF mask via `lda #0 / sbc #0`
+;      (no `eor #$FF`: SBC of #0 with C=0 yields $FF, with C=1 yields
+;      $00, which is exactly the "borrow → add p" polarity we want).
+;   3) 32-byte unconditional masked add-p loop. Per-byte:
+;        lda fe_p,y / and fe_cmp_mask / sta fe_subp_rhs
+;        lda dst,y  / adc fe_subp_rhs / sta dst,y
+;      Mask=$00 → adds 0 (no-op given clc); mask=$FF → adds p.
+;
+; SMC patches mirror fe25519_add (src1/src2/dst patched at entry).
 ; =============================================================================
 .proc fe25519_sub
+        ; Patch src1/src2/dst into abs,Y operands (both loops).
+        lda fe25519_src1
+        sta @sub_ld_src1+1
+        lda fe25519_src1+1
+        sta @sub_ld_src1+2
+        lda fe25519_src2
+        sta @sub_ld_src2+1
+        lda fe25519_src2+1
+        sta @sub_ld_src2+2
+        lda fe25519_dst
+        sta @sub_st_dst+1
+        sta @add_ld_dst+1
+        sta @add_st_dst+1
+        lda fe25519_dst+1
+        sta @sub_st_dst+2
+        sta @add_ld_dst+2
+        sta @add_st_dst+2
+
         sec
         ldy #0
         ldx #32
 @sub_loop:
-        lda (fe25519_src1),y
-        sbc (fe25519_src2),y
-        sta (fe25519_dst),y
+@sub_ld_src1:
+        lda $ffff,y            ; PATCHED: src1 base
+@sub_ld_src2:
+        sbc $ffff,y            ; PATCHED: src2 base
+@sub_st_dst:
+        sta $ffff,y            ; PATCHED: dst  base
         iny
         dex
-        bne @sub_loop
-        bcs @done              ; no borrow → done
+        bne @sub_loop          ; public counter X
 
-        ; Borrow: add p
+        ; Capture final-borrow directly into fe_cmp_mask.
+        ; C=1 (no borrow)   → A = 0 - 0 - 0 = $00 → mask=$00 (skip add)
+        ; C=0 (borrow)      → A = 0 - 0 - 1 = $FF → mask=$FF (add p)
+        lda #0
+        sbc #0
+        sta fe_cmp_mask
+
+        ; Unconditional masked add-p. mask=$00 → add 0; mask=$FF → add p.
         clc
         ldy #0
         ldx #32
 @add_p:
-        lda (fe25519_dst),y
-        adc fe_p,y
-        sta (fe25519_dst),y
+        lda fe_p,y
+        and fe_cmp_mask
+        sta fe_subp_rhs
+@add_ld_dst:
+        lda $ffff,y            ; PATCHED: dst base
+        adc fe_subp_rhs
+@add_st_dst:
+        sta $ffff,y            ; PATCHED: dst base
         iny
         dex
-        bne @add_p
-
-@done:
+        bne @add_p             ; public counter X
         rts
 .endproc
 
 
 ; =============================================================================
-; fe_cmp_p - Compare (fe25519_dst) with p
+; fe_cmp_p_ct - Constant-time compare (fe25519_dst) with p
 ;
-; C=1 if (fe25519_dst) >= p, C=0 if < p
-; Clobbers: A, Y
+; Output: A = $FF iff (fe25519_dst) >= p, else $00.
+;         fe_cmp_mask = same mask as A.
+; Clobbers: A, X, Y, fe_cmp_mask.
+;
+; L29 closure: constant-time replacement for the legacy fe_cmp_p, which
+; used a leading-byte-comparison early-exit (`bcc @less / bne @greater`)
+; whose loop trip count depended on dst's MSB pattern — a secret-leaky
+; control flow. The new variant performs a full 32-byte borrow-tracking
+; sub against fe_p (no early exit, public counter X) and converts the
+; final carry into a $00/$FF mask.
+;
+;   sbc dst[i] - p[i] - !C across i in [0..31]:
+;     C=1 at end iff dst >= p (no final borrow).
+;
+; The mask is computed via `lda #0 / sbc #0 / eor #$FF`:
+;   C=1 → A=0  → eor $FF → $FF (mask = "dst >= p, must subtract")
+;   C=0 → A=$FF → eor $FF → $00 (mask = "dst < p")
+;
+; Self-modifying code (mirrors fe25519_cswap): patches dst into the
+; abs,Y load operand at proc entry from public ZP fe25519_dst.
+;
+; Internal symbol — not exported. Called by fe25519_add and
+; fe25519_reduce_final.
 ; =============================================================================
-.proc fe_cmp_p
-        ldy #31
-@cmp_loop:
-        lda (fe25519_dst),y
-        cmp fe_p,y
-        bcc @less
-        bne @greater
-        dey
-        bpl @cmp_loop
-        sec                    ; equal → >= p
-        rts
-@less:
-        clc
-        rts
-@greater:
+.proc fe_cmp_p_ct
+        ; Patch dst into the abs,Y load.
+        lda fe25519_dst
+        sta @cmp_ld_dst+1
+        lda fe25519_dst+1
+        sta @cmp_ld_dst+2
+
         sec
+        ldy #0
+        ldx #32
+@cmp_loop:
+@cmp_ld_dst:
+        lda $ffff,y            ; PATCHED: dst base
+        sbc fe_p,y
+        iny
+        dex                    ; DEX/INY preserve C
+        bne @cmp_loop          ; public counter X
+
+        lda #0
+        sbc #0
+        eor #$FF               ; A = $FF iff dst >= p, else $00
+        sta fe_cmp_mask
         rts
 .endproc
 
 
 ; =============================================================================
 ; fe25519_reduce_final - Canonical reduction of (fe25519_dst) to [0, p-1]
-; Clobbers: A, X, Y
+;
+; Pre: post-fe_reduce_wide invariant guarantees R <= 2*p (Inv3 / W2),
+; so two unconditional iterations of (compare-with-p, masked subtract-p)
+; suffice to land R in [0, p).
+; Clobbers: A, X, Y, fe_cmp_mask, fe_subp_rhs.
+;
+; L29 closure: constant-time via masked sub-p. The pre-L29 version used
+; a `bcc @done` early-exit on the compare result, which leaked the
+; canonical-vs-non-canonical state of the input value. The new flow is:
+;
+;   for i in 0..1:
+;       jsr fe_cmp_p_ct              ; mask <- (dst >= p) ? $FF : $00
+;       <32-byte unconditional masked sub-p>
+;
+; Two iterations suffice because after iter 0 R is in [0, p+max(0,p-1)]
+; ⊆ [0, 2p); after iter 1 R must be in [0, p). A 3-iteration variant
+; was rejected by the maintainer in favor of relying on the R <= 2p
+; bound, gated by the regression test in tools/test_fe_reduce_wide_bound.py.
+;
+; SMC: dst patched into both sub_p loops at proc entry. fe_cmp_p_ct
+; performs its own dst patch internally on each call.
 ; =============================================================================
 .proc fe25519_reduce_final
-@check:
-        jsr fe_cmp_p
-        bcc @done
+        ; Patch dst into both masked-sub-p loops at entry (4 stores per
+        ; address byte × 2 iterations = 8 stores).
+        lda fe25519_dst
+        sta @sub_ld_dst1+1
+        sta @sub_st_dst1+1
+        sta @sub_ld_dst2+1
+        sta @sub_st_dst2+1
+        lda fe25519_dst+1
+        sta @sub_ld_dst1+2
+        sta @sub_st_dst1+2
+        sta @sub_ld_dst2+2
+        sta @sub_st_dst2+2
 
+        ; --- Iteration 1 ---
+        jsr fe_cmp_p_ct              ; A, fe_cmp_mask = mask
         sec
         ldy #0
         ldx #32
-@sub_p:
-        lda (fe25519_dst),y
-        sbc fe_p,y
-        sta (fe25519_dst),y
+@sub_p1:
+        lda fe_p,y
+        and fe_cmp_mask
+        sta fe_subp_rhs
+@sub_ld_dst1:
+        lda $ffff,y                  ; PATCHED: dst base
+        sbc fe_subp_rhs
+@sub_st_dst1:
+        sta $ffff,y                  ; PATCHED: dst base
         iny
         dex
-        bne @sub_p
-        jmp @check
+        bne @sub_p1                  ; public counter X
 
-@done:
+        ; --- Iteration 2 ---
+        jsr fe_cmp_p_ct
+        sec
+        ldy #0
+        ldx #32
+@sub_p2:
+        lda fe_p,y
+        and fe_cmp_mask
+        sta fe_subp_rhs
+@sub_ld_dst2:
+        lda $ffff,y                  ; PATCHED: dst base
+        sbc fe_subp_rhs
+@sub_st_dst2:
+        sta $ffff,y                  ; PATCHED: dst base
+        iny
+        dex
+        bne @sub_p2                  ; public counter X
         rts
 .endproc
 
@@ -376,6 +563,13 @@
 ; Clobbers: A, X, Y
 ; =============================================================================
 .proc fe25519_mul
+        ; H2 defensive REU register init (mirrors S2 in x25519_scalarmult).
+        ; Direct callers of public field ops must not be exposed to issue #33
+        ; (caller-controlled $DF04/$DF0A residue silently corrupting DMA).
+        lda #0
+        sta reu_reu_lo            ; $DF04
+        sta reu_addr_ctrl         ; $DF0A
+
         ; 1. Zero the 64-byte product buffer via REU DMA FETCH from bank 2
         jsr reu_clear_wide
 
@@ -401,12 +595,30 @@
         lda #0
         sta fe_mul_i
 @mul_outer:
+        ; --- Phase-6-style CT structure (L25/L26 closure) ---
+        ; sqr's sqr_pending/sqr_bound chain pattern, ported to mul. Reset the
+        ; pending-carry chain at the start of each outer-i. Compute the
+        ; public phantom-guard bound (mul_bound = 63 - i) for body D's
+        ; chain step. Both are public (depend only on fe_mul_i, not on
+        ; secret data). All four bodies run unconditionally; the L25
+        ; zero-skip on src1[i] is replaced by the same DMA-row[0]==0
+        ; invariant that closed L12-L15.
+        lda #0
+        sta mul_pending
+        lda #63
+        sec
+        sbc fe_mul_i
+        sta mul_bound
+
         ldy fe_mul_i
 @load_src1:
         lda mul_src2_buf,y     ; PATCHED at proc entry: abs = src1 base
-        bne @nonzero_i
-        jmp @skip_zero
-@nonzero_i:
+        ; CT: zero-skip `bne @nonzero_i / jmp @skip_zero` removed (L25).
+        ; src1[i]==0 is handled by mul_dma_lo[0]==mul_dma_hi[0]==0 from
+        ; reu_mul_init (same invariant that closes L12-L15). The DMA
+        ; fetch below loads bank-2 row 0 (all zeros), so every body's
+        ; `adc mul_dma_*,y` adds 0 with no carry. Body runs as no-op.
+
         ; DMA the multiplication row for src1[i] from REU (inlined).
         ; A already holds src1[i]; mul_cached_a store removed (dead in fe_mul).
         asl                    ; A = multiplier * 2, carry = bit 7
@@ -431,7 +643,10 @@
         sta @accum_st1_c+1
         sta @accum_ld1_d+1
         sta @accum_st1_d+1
-        ; For +1 accesses (high byte of product), base is fe_wide + i + 1
+        ; For +1 accesses (high byte of product) AND chain-step targets,
+        ; base = fe_wide + i + 1. Chain ld/st sites address fe_wide[(i+1)+X]
+        ; where X is the threaded body cursor (j+1 for body A, j+2 for B,
+        ; j+3 for C, j+4 for D - all post-inx values).
         clc
         adc #1
         sta @accum_ld2+1
@@ -442,18 +657,28 @@
         sta @accum_st2_c+1
         sta @accum_ld2_d+1
         sta @accum_st2_d+1
+        sta @chain_a_ld+1
+        sta @chain_a_st+1
+        sta @chain_b_ld+1
+        sta @chain_b_st+1
+        sta @chain_c_ld+1
+        sta @chain_c_st+1
+        sta @chain_d_ld+1
+        sta @chain_d_st+1
 
         ldx #0                 ; X = j, kept in register
 
         ; ===== UNROLLED 4x INNER LOOP =====
-        ; X register holds j throughout, avoiding ZP load/store
-        ; Direct DMA table accumulation (no ZP intermediaries)
-
+        ; X register holds j throughout, avoiding ZP load/store.
+        ; Direct DMA table accumulation (no ZP intermediaries).
+        ;
         ; Carry invariant: C=0 on every entry to @mul_inner. The back-branch
-        ; `bcc @mul_inner` keeps C=0; the initial entry falls through from
-        ; `adc #1` which does not overflow (A = fe_wide+i+1 <= $60); and the
-        ; rare carry_done_{a,b,c,d} tails each `clc` before jmp'ing to a
-        ; mid-loop `@next_j_X` label. That lets us drop the per-body clc.
+        ; `bcc @mul_inner` after `cpx #32` keeps C=0 when the loop continues
+        ; (X<32 -> cpx clears C). Initial entry falls through with C=0 from
+        ; the `adc #1` patch step (A = fe_wide+i+1 <= $60, never overflows).
+        ; Each chain step ends with `lda #0 / adc #0 / sta mul_pending` -
+        ; that final `adc #0` always produces C=0 (max 0+0+1=1, no overflow).
+        ; So C=0 is preserved across body->body within a single @mul_inner pass.
 @mul_inner:
         ; --- Body A: process src2[j] ---
 @ldy_src2_a:
@@ -470,9 +695,25 @@
         adc mul_dma_hi,y
 @accum_st2:
         sta fe_wide+1,x
-        bcs @do_prop_a
-@next_j_first:
-        inx                    ; advance j
+        ; --- Phase-6 chain step: body A (L26 closure) ---
+        ; Replaces `bcs @do_prop_a / @next_j_first: inx` with an unconditional
+        ; chain step that captures body A's carry-out, folds the prior
+        ; mul_pending bit, advances cursor X = j+1, and writes the combined
+        ; carry into fe_wide[(i+1)+(j+1)] = fe_wide[i+j+2] via SMC. New
+        ; mul_pending = overflow bit from that adc. No phantom guard needed
+        ; for body A: max chain target at i=31 is (31+1)+(28+1) = 61 < 64.
+        lda #0
+        adc #0                 ; A = body A's combined carry (0 or 1); C_out=0
+        clc                    ; redundant (C=0 from above); kept for clarity
+        adc mul_pending        ; A <= 2; C_out = 0 (max 1+1+0 = 2 < 256)
+        inx                    ; X = j+1 -> fe_wide+1,X targets [i+j+2]
+@chain_a_ld:
+        adc fe_wide+1,x        ; SMC: operand = <fe_wide+i+1>
+@chain_a_st:
+        sta fe_wide+1,x        ; SMC: operand = <fe_wide+i+1>
+        lda #0
+        adc #0                 ; new pending = overflow from chain adc; C_out=0
+        sta mul_pending
 
         ; --- Body B: process src2[j+1] ---
 @ldy_src2_b:
@@ -488,9 +729,21 @@
         adc mul_dma_hi,y
 @accum_st2_b:
         sta fe_wide+1,x
-        bcs @do_prop_b
-@next_j_second:
-        inx
+        ; --- Phase-6 chain step: body B (L26 closure) ---
+        ; X enters body B at j+1. Post-inx X = j+2 -> target fe_wide[i+j+3].
+        ; No phantom: max target at i=31 is 32 + (28+2) = 62 < 64.
+        lda #0
+        adc #0
+        clc
+        adc mul_pending
+        inx                    ; X = j+2 -> fe_wide+1,X targets [i+j+3]
+@chain_b_ld:
+        adc fe_wide+1,x
+@chain_b_st:
+        sta fe_wide+1,x
+        lda #0
+        adc #0
+        sta mul_pending
 
         ; --- Body C: process src2[j+2] ---
 @ldy_src2_c:
@@ -506,9 +759,21 @@
         adc mul_dma_hi,y
 @accum_st2_c:
         sta fe_wide+1,x
-        bcs @do_prop_c
-@next_j_third:
-        inx
+        ; --- Phase-6 chain step: body C (L26 closure) ---
+        ; X enters body C at j+2. Post-inx X = j+3 -> target fe_wide[i+j+4].
+        ; No phantom: max target at i=31 is 32 + (28+3) = 63 < 64.
+        lda #0
+        adc #0
+        clc
+        adc mul_pending
+        inx                    ; X = j+3 -> fe_wide+1,X targets [i+j+4]
+@chain_c_ld:
+        adc fe_wide+1,x
+@chain_c_st:
+        sta fe_wide+1,x
+        lda #0
+        adc #0
+        sta mul_pending
 
         ; --- Body D: process src2[j+3] ---
 @ldy_src2_d:
@@ -524,113 +789,96 @@
         adc mul_dma_hi,y
 @accum_st2_d:
         sta fe_wide+1,x
-        bcs @do_prop_d
-@next_j:
-        inx
+        ; --- Phase-6 chain step: body D with phantom guard (L26 closure) ---
+        ; X enters body D at j+3. Post-inx X = j+4. Chain target
+        ; fe_wide[(i+1)+(j+4)] = fe_wide[i+j+5]. Out of bounds when
+        ; i+j+5 >= 64. Last iteration j=28; max target = i+33. Triggers
+        ; only at i=31 (target = 64). Phantom guard:
+        ;   cpx mul_bound  ; mul_bound = 63 - i
+        ;   bcs skip       ; X >= 63-i  iff (i+1)+X >= 64
+        ; cpx clobbers C, so we explicitly `clc` after the bcs (fall-through
+        ; path). Skip path drops the carry write (mathematically zero -
+        ; product of two 32-byte values fits in 64 bytes; fe_wide[64] is
+        ; phantom) and resets mul_pending.
+        lda #0
+        adc #0
+        clc
+        adc mul_pending
+        inx                    ; X = j+4 -> fe_wide+1,X targets [i+j+5]
+        cpx mul_bound          ; public guard: X >= 63-i -> out of fe_wide
+        bcs @body_d_chain_skip ; only i=31 last iteration (j=28) ever takes this
+        clc                    ; restore C=0 after cpx (cpx clobbers C)
+@chain_d_ld:
+        adc fe_wide+1,x        ; SMC: operand = <fe_wide+i+1>
+@chain_d_st:
+        sta fe_wide+1,x        ; SMC: operand = <fe_wide+i+1>
+        lda #0
+        adc #0
+        sta mul_pending
+        jmp @body_d_chain_done
+@body_d_chain_skip:
+        ; Phantom slot (i=31, j=28, X=32): drop the (always-zero) carry;
+        ; clear mul_pending so end-of-inner ripple has nothing to flush.
+        ; End-of-inner computes mul_ripple_start = (i+1) + X = 32+32 = 64
+        ; -> count = 64-64 = 0 -> public skip of the ripple loop.
+        lda #0
+        sta mul_pending
+@body_d_chain_done:
+
+        ; Loop control: exit when X (= j+4 post-body-D-chain-inx) reaches 32.
+        ; cpx clobbers C; on the loop-continue path (X<32, C=0 from cpx) we
+        ; bypass the bcs and jmp back, leaving C=0 on entry to @mul_inner
+        ; (preserving the body's `adc mul_dma_lo,y` carry-in invariant).
+        ; Branch reversed (bcs @done / jmp @top) because the unrolled loop
+        ; body is too large for an 8-bit relative back-branch to reach
+        ; @mul_inner directly. The jmp is a 3-byte absolute, no range issue.
         cpx #32
-        bcc @mul_inner
-        ; fall through to @skip_zero
-        jmp @skip_zero
+        bcs @mul_inner_done
+        jmp @mul_inner
+@mul_inner_done:
+        ; fall through to end-of-inner ripple
 
-        ; --- Carry propagation blocks (rare path ~2%) ---
-        ; Placed outside the tight inner loop so the back-branch remains
-        ; within bcc range. Each block restores X to j and jumps back to
-        ; its corresponding @next_j_X label.
-@do_prop_a:
-        stx fe_mul_j
-        lda fe_mul_i
+        ; --- Phase-6 end-of-inner ripple (L26 closure) ---
+        ; Replaces the four @do_prop_X / @prop_carry_X / @carry_done_X blocks.
+        ; Flushes any residual mul_pending bit forward from
+        ; mul_ripple_start = (i+1) + X (where X = j_last+4 = 32, post-chain)
+        ; through fe_wide[63]. Count = 64 - mul_ripple_start, derived from
+        ; public state (fe_mul_i and the public X=32 loop terminator) - no
+        ; secret-dependent branch.
+        ;
+        ; Cascade primitive: `inx / dey / bne` (NOT `cpx / bcc` - cpx
+        ; clobbers C and would break the carry chain mid-ripple, which is
+        ; the exact v0.1.0 bug pattern at fe_reduce_wide @prop2 that
+        ; tools/test_fe_reduce_wide_carry.py is a permanent regression for).
+        ;
+        ; When mul_pending == 0, every iteration: A=0, C=0, adc fe_wide,x
+        ; yields fe_wide[x] (no change), C=0. Loop runs same #iterations as
+        ; the mul_pending==1 path -> CT-equivalent. When mul_pending == 1,
+        ; the +1 propagates with carry chain until a non-$FF byte stops it.
+        txa                    ; X = j_last+4 = 32 (or skip-preserved 32)
         clc
-        adc fe_mul_j
+        adc fe_mul_i
         clc
-        adc #2
-        tax
-        ; NOTE: `sec` below is load-bearing. cpx clobbers C, so we
-        ; re-establish C=1 each iteration to make `adc #0` = +1.
-        ; See feedback_6502_cpx_clobbers_carry. Do NOT remove.
-@prop_carry_a:
-        cpx #64
-        bcs @carry_done_a
+        adc #1                 ; A = (i+1) + X = mul_ripple_start
+        sta mul_ripple_start
+        tax                    ; X = ripple_start (public-derived)
+        lda #64
         sec
-        lda fe_wide,x
-        adc #0
+        sbc mul_ripple_start   ; A = 64 - start; C=0 if start > 64
+        bcc @mul_ripple_done   ; start>64 (defensive; phantom edge): public skip
+        tay                    ; Y = count in [0, 63]
+        beq @mul_ripple_done   ; count == 0 (i=31 phantom): public skip
+        lda mul_pending
+        clc
+@mul_ripple:
+        adc fe_wide,x
         sta fe_wide,x
+        lda #0
         inx
-        bcs @prop_carry_a
-@carry_done_a:
-        ldx fe_mul_j
-        clc                    ; restore C=0 invariant for clc-less bodies
-        jmp @next_j_first
+        dey
+        bne @mul_ripple
+@mul_ripple_done:
 
-@do_prop_b:
-        stx fe_mul_j
-        lda fe_mul_i
-        clc
-        adc fe_mul_j
-        clc
-        adc #2
-        tax
-        ; Load-bearing sec — see @prop_carry_a comment above.
-@prop_carry_b:
-        cpx #64
-        bcs @carry_done_b
-        sec
-        lda fe_wide,x
-        adc #0
-        sta fe_wide,x
-        inx
-        bcs @prop_carry_b
-@carry_done_b:
-        ldx fe_mul_j
-        clc                    ; restore C=0 invariant for clc-less bodies
-        jmp @next_j_second
-
-@do_prop_c:
-        stx fe_mul_j
-        lda fe_mul_i
-        clc
-        adc fe_mul_j
-        clc
-        adc #2
-        tax
-        ; Load-bearing sec — see @prop_carry_a comment above.
-@prop_carry_c:
-        cpx #64
-        bcs @carry_done_c
-        sec
-        lda fe_wide,x
-        adc #0
-        sta fe_wide,x
-        inx
-        bcs @prop_carry_c
-@carry_done_c:
-        ldx fe_mul_j
-        clc                    ; restore C=0 invariant for clc-less bodies
-        jmp @next_j_third
-
-@do_prop_d:
-        stx fe_mul_j
-        lda fe_mul_i
-        clc
-        adc fe_mul_j
-        clc
-        adc #2
-        tax
-        ; Load-bearing sec — see @prop_carry_a comment above.
-@prop_carry_d:
-        cpx #64
-        bcs @carry_done_d
-        sec
-        lda fe_wide,x
-        adc #0
-        sta fe_wide,x
-        inx
-        bcs @prop_carry_d
-@carry_done_d:
-        ldx fe_mul_j
-        clc                    ; restore C=0 invariant for clc-less bodies
-        jmp @next_j
-
-@skip_zero:
         inc fe_mul_i
         lda fe_mul_i
         cmp #32
@@ -649,7 +897,7 @@
         dey
         bpl @copy_result
 
-        ; NOTE: fe25519_reduce_final removed from fe25519_mul — callers that need
+        ; NOTE: fe25519_reduce_final removed from fe25519_mul - callers that need
         ; canonical [0,p) output must call fe25519_reduce_final explicitly.
         rts
 .endproc
@@ -663,15 +911,29 @@
 ; =============================================================================
 .proc fe_reduce_wide
         ; First pass: fe_wide[0..31] += fe_wide[32..63] * 38
+        ;
+        ; CT closure (P7-D3, L27a-f): the body runs unconditionally for every
+        ; byte. The former `beq @reduce1_zero` early-out leaked the Hamming
+        ; weight of the upper half (fe_wide[32..63]) through dispatch timing.
+        ; Safety relies on the data.s invariant that mul38_lo_tab[0] = 0 and
+        ; mul38_hi_tab[0] = 0, so a Y=0 lookup is a true no-op for the
+        ; product term (only the running fe_carry is folded in).
+        ;
+        ; Likewise, the secondary @reduce1_check / @prop2 / @prop3 carry
+        ; cascade is replaced with two unconditional public-count cascades
+        ; that always execute to completion. The cascade primitive is
+        ; `inx / dey / bne` (NOT `cpx / bcc`). cpx clobbers the carry flag,
+        ; which is the v0.1.0 carry-bug pattern preserved by
+        ; tools/test_fe_reduce_wide_carry.py.
         lda #0
         sta fe_carry
         ldx #0
 @reduce1:
-        ldy fe_wide+32,x       ; Y = byte value (table index)
-        beq @reduce1_zero
+        ldy fe_wide+32,x       ; Y = byte value (table index; may be 0)
 
-        ; Add product (Y*38) + running carry to fe_wide[x]
-        ; Table lookups chained directly to adds (Y preserved across)
+        ; Add product (Y*38) + running carry to fe_wide[x] — unconditional.
+        ; Y=0 path: mul38_lo_tab[0] = mul38_hi_tab[0] = 0 (data.s invariant),
+        ; so the product term is zero and only fe_carry is folded in.
         clc
         lda mul38_lo_tab,y
         adc fe_carry
@@ -691,26 +953,13 @@
         inx
         cpx #32
         bcc @reduce1
-        jmp @reduce1_check
+        ; Fall through unconditionally; X and the bound are public.
 
-@reduce1_zero:
-        ; byte is 0; just add running carry
-        clc
-        lda fe_wide,x
-        adc fe_carry
-        sta fe_wide,x
-        lda #0
-        adc #0
-        sta fe_carry
-        inx
-        cpx #32
-        bcc @reduce1
-
-@reduce1_check:
-        ; If carry remains, multiply by 38 and add to bottom
-        lda fe_carry
-        beq @done
-        tay                    ; Y = carry value
+        ; --- Section B (folded): add fe_carry*38 into fe_wide[0..1] ---
+        ; Always executed. fe_carry=0 case: mul38 tables yield 0, so this
+        ; degenerates to a no-op on fe_wide[0..1] and produces C=0 to feed
+        ; cascade #1 as a no-op. No branch on fe_carry value.
+        ldy fe_carry
         clc
         lda fe_wide
         adc mul38_lo_tab,y
@@ -718,35 +967,46 @@
         lda fe_wide+1
         adc mul38_hi_tab,y
         sta fe_wide+1
-        bcc @done
-        ldx #2
-@prop2:
-        ; Propagate a single +1 using inc/bne so the carry from adc need
-        ; not survive the cpx #32 loop bound check. Prior `adc #0` version
-        ; lost the carry through cpx on the second-and-later bytes, which
-        ; produced off-by-one results on specific inputs (byte k == $FF
-        ; followed by byte k+1 != $FF mid-propagation).
-        inc fe_wide,x
-        bne @done
-        inx
-        cpx #32
-        bcc @prop2
 
-        ; Extremely rare: yet another overflow
+        ; --- Cascade #1 (unconditional): ripple C from section B through
+        ; fe_wide[2..31]. 30 iterations, public count. Uses `inx / dey / bne`
+        ; primitive — `cpx` would clobber C and break the chain
+        ; (v0.1.0 carry-bug pattern; see test_fe_reduce_wide_carry.py). ---
+        ldx #2
+        ldy #30
+@ucasc1:
+        lda fe_wide,x
+        adc #0
+        sta fe_wide,x
+        inx
+        dey
+        bne @ucasc1
+
+        ; --- Section C (folded): capture cascade-1 residual carry (0 or 1)
+        ; and fold via the existing mul38 table. Y in {0,1} maps to
+        ; mul38_lo_tab[Y] in {0,38}; mul38_hi_tab[Y] = 0 in both cases, so
+        ; cascade #2 picks up the ripple from byte 1 onward. ---
+        lda #0
+        adc #0                 ; A = 0 or 1 (cascade-1 residual)
+        tay
         clc
         lda fe_wide
-        adc #38
+        adc mul38_lo_tab,y
         sta fe_wide
-        bcc @done
-        ldx #1
-@prop3:
-        inc fe_wide,x
-        bne @done
-        inx
-        cpx #32
-        bcc @prop3
 
-@done:
+        ; --- Cascade #2 (unconditional): ripple C from section C through
+        ; fe_wide[1..31]. 31 iterations, public count. Same `inx / dey / bne`
+        ; primitive. ---
+        ldx #1
+        ldy #31
+@ucasc2:
+        lda fe_wide,x
+        adc #0
+        sta fe_wide,x
+        inx
+        dey
+        bne @ucasc2
+
         rts
 .endproc
 
@@ -822,6 +1082,13 @@ mul38_hi:  .byte 0
 ; Clobbers: A, X, Y
 ; =============================================================================
 .proc fe25519_sqr
+        ; H2 defensive REU register init (mirrors S2 in x25519_scalarmult).
+        ; Direct callers of public field ops must not be exposed to issue #33
+        ; (caller-controlled $DF04/$DF0A residue silently corrupting DMA).
+        lda #0
+        sta reu_reu_lo            ; $DF04
+        sta reu_addr_ctrl         ; $DF0A
+
         ; 1. Zero the 64-byte product buffer via REU DMA FETCH from bank 2
         jsr reu_clear_wide
 
@@ -1470,8 +1737,53 @@ sqr_ripple_start:  .byte 0
 ; Clobbers: A, X, Y
 ; =============================================================================
 .proc fe25519_mul_a24
-        ; Zero fe_wide[0..34]
-        ldx #34
+        ; ---------------------------------------------------------------
+        ; CT closure for L28a-k (P7-D4):
+        ;   Outer-i loop: drop the `beq @skip_zero_a24` (L28a) and the
+        ;   `bcc/inc/inc` 2-byte cascade (L28b/L28c). Body runs
+        ;   unconditionally; safety relies on a24_b{0,1,2,3}[0] = 0
+        ;   (verified in src/data.s — `.repeat 256, i / .byte <(121665*i)`
+        ;   has all-zero entries for i=0). The 2-byte cascade is replaced
+        ;   with two unconditional `adc #0` absorptions at fe_wide+i+4 and
+        ;   fe_wide+i+5. Magnitude argument: at the start of iteration i,
+        ;   the partial sum S_{i-1} = sum_{j<i} 121665*src1[j]*256^j is
+        ;   bounded by 121665*256^i < 2^(8i+17), so bits 8(i+4)..
+        ;   8(i+5)+7 of S_{i-1} are all zero, i.e. fe_wide+i+4 = 0 and
+        ;   fe_wide+i+5 = 0 entering iteration i. The 4-byte add adds at
+        ;   most 2^25 starting at byte i, with at most 1 carry into
+        ;   fe_wide+i+4. With fe_wide+i+4 = 0 entering, that absorption
+        ;   leaves fe_wide+i+4 ∈ {0,1} and C=0; subsequent absorption at
+        ;   fe_wide+i+5 (also 0) is a no-op. So the unconditional 2-byte
+        ;   cascade always fully absorbs the iteration's carry-out without
+        ;   loss, deterministically.
+        ;
+        ;   Reduction stages (L28d-k): three stages execute unconditionally
+        ;   (mul38_lo_tab[0] = mul38_hi_tab[0] = 0 invariant makes the
+        ;   secret-byte-zero case a no-op without a `beq` dispatch). Each
+        ;   stage's main 2-byte add is followed by a `lda #0/adc #0/sta
+        ;   fe_carry` to capture the residual carry into fe_carry; before
+        ;   the next stage's main add, the prior fe_carry is folded into
+        ;   the byte AT THE CORRECT POSITION via `clc/lda/adc fe_carry/sta`,
+        ;   then re-captured. After all 3 stages, a final
+        ;   `inx/dey/bne` ripple from byte 5 to byte 31 absorbs any
+        ;   remaining residual through the high bytes. (`inx/dey/bne` —
+        ;   NOT `cpx/bcc`, since cpx clobbers C, breaking the carry chain;
+        ;   this is the v0.1.0 carry-bug pattern in fe_reduce_wide.)
+        ; ---------------------------------------------------------------
+
+        ; Zero fe_wide[0..36] - widened by 2 vs. the pre-L28 path so the
+        ; unconditional 2-byte cascade at iteration i=31 (which writes
+        ; fe_wide+35, fe_wide+36 = $63, $64) lands on zero scratch.
+        ; fe_wide is the 64-byte ZP buffer at $40-$7F (src/constants.s),
+        ; well within range.
+        ; H2 defensive REU register init (mirrors S2 in x25519_scalarmult).
+        ; Direct callers of public field ops must not be exposed to issue #33
+        ; (caller-controlled $DF04/$DF0A residue silently corrupting DMA).
+        lda #0
+        sta reu_reu_lo            ; $DF04
+        sta reu_addr_ctrl         ; $DF0A
+
+        ldx #36
         lda #0
 @zero:
         sta fe_wide,x
@@ -1482,12 +1794,14 @@ sqr_ripple_start:  .byte 0
 @outer:
         stx fe_mul_i
 
+        ; --- L28a-c closure: unconditional outer-i body ---
         ldy fe_mul_i
         lda (fe25519_src1),y
-        beq @skip_zero_a24
-        tay                    ; Y = src1[i] (nonzero)
+        tay                    ; Y = src1[i]; tables[0]=0 if zero (L28a safe)
 
-        ; fe_wide[i..i+3] += 121665 * src1[i]  (4-byte product via table)
+        ; fe_wide[i..i+3] += 121665 * src1[i]  (4-byte product via table).
+        ; Body is unconditional; for src1[i]=0 the four `adc a24_bN,y` add
+        ; zero and the 2-byte cascade simply re-stores zero bytes.
         ldx fe_mul_i
         clc
         lda fe_wide,x
@@ -1502,19 +1816,40 @@ sqr_ripple_start:  .byte 0
         lda fe_wide+3,x
         adc a24_b3,y
         sta fe_wide+3,x
-        bcc @skip_zero_a24
-        inc fe_wide+4,x
-        bne @skip_zero_a24
-        inc fe_wide+5,x
-@skip_zero_a24:
+        ; --- L28b/c closure: unconditional 2-byte cascade ---
+        lda fe_wide+4,x        ; cascade absorption step 1
+        adc #0
+        sta fe_wide+4,x
+        lda fe_wide+5,x        ; cascade absorption step 2
+        adc #0
+        sta fe_wide+5,x
+        ; (See header magnitude argument: fe_wide+i+4 = fe_wide+i+5 = 0 at
+        ;  iteration entry, so the C-out from step 2 is always 0 and
+        ;  dropping it is correctness-preserving.)
+
         ldx fe_mul_i
         inx
-        cpx #32
+        cpx #32                ; CPX on PUBLIC loop index — CT-clean
         bcc @outer
 
-        ; Reduce: fe_wide[32..34] * 38 → add to fe_wide[0..31]
+        ; --- L28d-k closure: 3 reduction stages with fe_carry threading ---
+        ; Stage K's main carry-out is owed to byte (K+1) (the byte just
+        ; above the main add range). Naïve `clc` between stages drops it,
+        ; so we save into fe_carry, fold positionally before the next
+        ; stage's main, and absorb the final residual via end-of-reduction
+        ; ripple. Pattern mirrors fe_reduce_wide's @ucasc1/@ucasc2 closure
+        ; (P7-D3 / L27a-f): unconditional bodies, fe_carry-threaded
+        ; pending bit, public-count `inx/dey/bne` ripple.
+
+        ; Initialize fe_carry = 0 (no pending into byte 2 yet).
+        lda #0
+        sta fe_carry
+
+        ; ---- Stage 1: fe_wide[0..1] += 38 * fe_wide+32 ----
+        ; mul38_lo_tab[0] = mul38_hi_tab[0] = 0 (data.s invariant), so
+        ; fe_wide+32=0 makes this stage a functional no-op without a
+        ; `beq` early-exit (closes L28d).
         ldy fe_wide+32
-        beq @r_b33
         lda mul38_lo_tab,y
         sta poly_prod_lo
         lda mul38_hi_tab,y
@@ -1526,18 +1861,30 @@ sqr_ripple_start:  .byte 0
         lda fe_wide+1
         adc poly_prod_hi
         sta fe_wide+1
-        bcc @r_b33
-        ldx #2
-@prop_b32:
-        inc fe_wide,x
-        bne @r_b33
-        inx
-        cpx #32
-        bcc @prop_b32
+        ; Capture stage 1's main carry-out (positionally at byte 2) into
+        ; fe_carry. fe_carry was 0 entering, so A = 0 + 0 + C = C ∈ {0,1}.
+        lda fe_carry
+        adc #0
+        sta fe_carry
 
-@r_b33:
+        ; ---- Bridge before Stage 2: fold fe_carry into fe_wide+2 ----
+        ; The prior fe_carry is owed to byte 2 (stage 1 main's C-out).
+        ; Add it now so the byte is positionally correct before stage 2's
+        ; main add reads fe_wide+2.
+        clc
+        lda fe_wide+2
+        adc fe_carry
+        sta fe_wide+2
+        ; Capture residual (only set if fe_wide+2 was $FF and fe_carry=1).
+        ; This residual is now positionally at byte 3.
+        lda #0
+        adc #0
+        sta fe_carry
+
+        ; ---- Stage 2: fe_wide[1..2] += 38 * fe_wide+33 ----
+        ; (closes L28e/f/g — three former branches collapsed into the
+        ;  unconditional body.)
         ldy fe_wide+33
-        beq @r_b34
         lda mul38_lo_tab,y
         sta poly_prod_lo
         lda mul38_hi_tab,y
@@ -1549,18 +1896,30 @@ sqr_ripple_start:  .byte 0
         lda fe_wide+2
         adc poly_prod_hi
         sta fe_wide+2
-        bcc @r_b34
-        ldx #3
-@prop_b33:
-        inc fe_wide,x
-        bne @r_b34
-        inx
-        cpx #32
-        bcc @prop_b33
+        ; Combine stage 2's main carry-out (positionally at byte 3) with
+        ; the prior fe_carry residual (also positionally at byte 3).
+        ; fe_carry ∈ {0,1}, C ∈ {0,1}; sum ≤ 2.
+        lda fe_carry
+        adc #0
+        sta fe_carry           ; fe_carry now ∈ {0,1,2}, all owed to byte 3
 
-@r_b34:
+        ; ---- Bridge before Stage 3: fold fe_carry into fe_wide+3 ----
+        clc
+        lda fe_wide+3
+        adc fe_carry
+        sta fe_wide+3
+        ; Capture residual at byte 4. fe_wide+3 + fe_carry (≤2): max
+        ; carry-out is 1 (need fe_wide+3 ≥ $FE).
+        lda #0
+        adc #0
+        sta fe_carry
+
+        ; ---- Stage 3: fe_wide[2..3] += 38 * fe_wide+34 ----
+        ; (closes L28h/i/j/k — four former branches collapsed.)
+        ; Note fe_wide+34 ∈ {0,1} after the outer loop (P = 121665*X <
+        ; 2^273, byte 34 has only bit 0), so 38*fe_wide+34 ≤ 38 (1 byte).
+        ; mul38_hi_tab[0] = mul38_hi_tab[1] = 0, so poly_prod_hi = 0.
         ldy fe_wide+34
-        beq @r_done_a24
         lda mul38_lo_tab,y
         sta poly_prod_lo
         lda mul38_hi_tab,y
@@ -1572,17 +1931,35 @@ sqr_ripple_start:  .byte 0
         lda fe_wide+3
         adc poly_prod_hi
         sta fe_wide+3
-        bcc @r_done_a24
-        ldx #4
-@prop_b34:
-        inc fe_wide,x
-        bne @r_done_a24
-        inx
-        cpx #32
-        bcc @prop_b34
+        ; Combine stage 3's main carry-out (positionally at byte 4) with
+        ; prior fe_carry residual (also at byte 4).
+        lda fe_carry
+        adc #0
+        sta fe_carry           ; fe_carry ∈ {0,1,2}, all owed to byte 4
 
-@r_done_a24:
-        ; Copy to (fe25519_dst)
+        ; ---- Final ripple: absorb fe_carry through fe_wide[4..31] ----
+        ; Add fe_carry to fe_wide+4, then propagate any new carry through
+        ; bytes 5..31 via unconditional `inx/dey/bne` ripple.
+        ; Magnitude: total reduction adds ≤ 38*255 + 38*255 + 38 ≤ 19,418
+        ; ≈ 2^15 across bytes 0..3 of fe_wide, plus the original fe_wide
+        ; value < 2^256. So the ripple chain length to escape would
+        ; require many consecutive $FF bytes — public-count loop
+        ; deterministically absorbs.
+        clc
+        lda fe_wide+4
+        adc fe_carry
+        sta fe_wide+4
+        ldx #5
+        ldy #27
+@final_ripple:
+        lda fe_wide,x
+        adc #0
+        sta fe_wide,x
+        inx
+        dey
+        bne @final_ripple
+
+        ; Copy to (fe25519_dst). PUBLIC loop bound (#31) — CT-clean.
         ldy #31
 @copy_a24:
         lda fe_wide,y

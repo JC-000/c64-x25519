@@ -50,6 +50,8 @@ test-slow: $(PRG)
 	python3 tools/test_fe_mul_stress.py; \
 	python3 tools/test_fe_sqr_stress.py; \
 	python3 tools/test_ct_square_cycles.py; \
+	python3 tools/test_ct_mul_cycles.py; \
+	python3 tools/test_ct_mul_a24_cycles.py; \
 	python3 tools/test_fe_reduce_wide_carry.py; \
 	python3 tools/test_opt_sqr.py; \
 	python3 tools/test_opt_karatsuba.py; \
@@ -68,6 +70,8 @@ test-vice: $(PRG)
 	python3 tools/test_fe_mul_stress.py; \
 	python3 tools/test_fe_sqr_stress.py; \
 	python3 tools/test_ct_square_cycles.py; \
+	python3 tools/test_ct_mul_cycles.py; \
+	python3 tools/test_ct_mul_a24_cycles.py; \
 	python3 tools/test_fe_reduce_wide_carry.py
 
 # Reference-only self-test (no VICE, no build required).

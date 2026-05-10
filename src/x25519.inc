@@ -127,24 +127,41 @@
 ; ZERO-PAGE USAGE (the library OWNS these slots while running)
 ; ----------------------------------------------------------------------------
 ;
-;   $14-$15  lmul0          (mul_8x8 sqtab pointer)
-;   $16-$17  lmul1          (mul_8x8 sqtab_hi pointer)
-;   $1A-$1D  poly_i/j/carry/tmp  (mul_8x8 scratch)
-;   $1E-$1F  fe25519_src1        (caller-set pointer to operand 1)
-;   $20-$21  fe25519_src2        (caller-set pointer to operand 2)
-;   $22-$23  fe25519_dst         (caller-set pointer to destination)
-;   $24-$25  fe_misc        (internal pointer)
-;   $26      fe_carry       (cswap mask / carry byte)
-;   $27      fe_loop        (internal loop counter)
-;   $28-$29  fe_mul_i, fe_mul_j  (multiply indices)
-;   $2A-$2D  x25_prev_bit, x25_bit_ctr, x25_byte_idx, x25_bit_mask
-;   $2E      fe_sqr_pairs   (fe25519_sqr unrolled cross-loop counter)
-;   $40-$7F  fe_wide        (64-byte product accumulator; ZP for speed)
-;   $FB-$FE  zp_ptr1/zp_ptr2 (general scratch, used by main.s helpers)
+; Live ZP surface (post-Phase-7, L1-L29 CT-clean): 87 bytes at
+;   $14-$16, $1C, $1E-$2A, $24-$25, $2C-$2F, $40-$7F.
+;
+;   $14      fe_cmp_mask          (Phase 7: fe_cmp_p_ct $00/$FF mask)
+;   $15      fe_subp_rhs          (Phase 7: per-iter (p_byte AND mask) scratch)
+;   $16      fe_add_carry_mask    (Phase 7: fe25519_add carry-out mask)
+;   $1C      poly_carry           (mul_8x8 / fe25519 reuse)
+;   $1E-$1F  fe25519_src1         (caller-set pointer to operand 1)
+;   $20-$21  fe25519_src2         (caller-set pointer to operand 2)
+;   $22-$23  fe25519_dst          (caller-set pointer to destination)
+;   $24      mul_pending          (Phase 7: Option F 1-bit carry chain)
+;   $25      mul_bound            (Phase 7: public phantom guard, = 63 - fe_mul_i)
+;   $26      fe_carry             (cswap mask / carry byte)
+;   $27      fe_loop              (internal loop counter)
+;   $28-$29  fe_mul_i, fe_mul_j   (multiply indices)
+;   $2A      x25_prev_bit         (mask form, $00/$FF)
+;   $2C-$2D  x25_byte_idx, x25_bit_mask
+;   $2E      fe_sqr_pairs         (fe25519_sqr unrolled cross-loop counter)
+;   $2F      mul_ripple_start     (Phase 7: public end-of-inner ripple start)
+;   $40-$7F  fe_wide              (64-byte product accumulator; ZP-pinned by .assert)
+;
+;   $FB-$FE  zp_ptr1/zp_ptr2 — TEST HARNESS ONLY (used by main.s helpers,
+;                              NOT part of the library's claimed ZP surface).
 ;
 ; The library does NOT preserve any of these across calls. If your host
-; program uses any of $14-$7F or $FB-$FE, save it before calling and
-; restore after.
+; program uses any of the listed slots, save it before calling and
+; restore after, OR pre-define the equate before .include'ing
+; constants.s (see docs/LIBRARY.md §4.2 for the host override protocol).
+;
+; CT certification: with Phase 7 landed, every catalogued
+; secret-data-dependent branch and (zp),y page-cross leak
+; (L1 through L29) in the X25519 library is fixed. The library is
+; CT-clean across the entire fe25519_* / mul_8x8 / x25519_scalarmult
+; surface for network-facing use. See docs/CT_ANALYSIS.md for the
+; full leak catalogue and Phase 7 closure mechanism.
 ;
 ; ----------------------------------------------------------------------------
 ; STATIC MEMORY OWNED BY THE LIBRARY
