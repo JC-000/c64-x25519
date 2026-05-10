@@ -88,15 +88,20 @@
                          ; ($1A-$2E, $40-$7F).  See A2/A5 memos.
 
         ; --- Defensive REU register init (issue #33) ---
-        ; reu_clear_wide (x25519_init.s:316-336) and the inlined per-row
-        ; DMA in fe25519_mul (fe25519.s:412-418) both rely on
-        ; reu_reu_lo == 0 and reu_addr_ctrl == 0 latched by reu_mul_init's
-        ; tail.  A caller that touched $DF04 or $DF0A after init (e.g. a
-        ; sibling REU consumer) leaves those registers non-zero, causing
-        ; reu_clear_wide to DMA from the wrong REU offset and fill fe_wide
-        ; with garbage instead of zeros.  Result: deterministic-but-wrong
-        ; scalarmult output (not a hang).  Re-establish them explicitly
-        ; so caller REU register state cannot affect us.
+        ; The inlined per-row DMA in fe25519_mul/_sqr/_mul_a24 relies on
+        ; reu_reu_lo == 0 and reu_addr_ctrl == 0 being latched by the
+        ; tail of reu_mul_init. A caller that touched $DF04 or $DF0A
+        ; after init (e.g. a sibling REU consumer) leaves those
+        ; registers non-zero, causing the per-row DMA to read from
+        ; the wrong REU offset. Result: deterministic-but-wrong
+        ; scalarmult output (not a hang). Re-establish them here so
+        ; caller REU register state cannot affect us.
+        ;
+        ; (Post-W2: reu_clear_wide is now a CPU clear that no longer
+        ;  uses these registers, but the per-row DMA inside
+        ;  fe25519_mul/sqr/mul_a24 still does, and each of those
+        ;  routines also has its own defensive H2 init at entry —
+        ;  belt-and-braces for callers that bypass scalarmult.)
         lda #0
         sta reu_reu_lo            ; $df04
         sta reu_addr_ctrl         ; $df0a
@@ -117,9 +122,13 @@
         jsr fe25519_zero
 
         ; x_3 = u (mask high bit per RFC 7748 decodeUCoordinate)
-        lda x25_u+31
-        and #$7f
-        sta x25_u+31
+        ;
+        ; W4 H1 fix: do NOT write the masked byte back to x25_u+31.
+        ; The previous code did `sta x25_u+31` which silently mutated
+        ; the caller's u-buffer — a surprising side effect, especially
+        ; for hosts that hold the peer's public key in x25_u between
+        ; multiple ECDH operations. Apply the mask only on the working
+        ; copy (x25_x3) after fe25519_copy.
         lda #<(x25_u)
         sta fe25519_src1
         lda #>(x25_u)
@@ -129,6 +138,11 @@
         lda #>(x25_x3)
         sta fe25519_dst+1
         jsr fe25519_copy
+        ; Now mask the high bit on the working copy only — x25_u
+        ; remains exactly as the caller provided it.
+        lda x25_u+31
+        and #$7f
+        sta x25_x3+31
 
         ; z_3 = 1
         lda #<(x25_z3)
@@ -282,7 +296,11 @@
         lda #>(x25_result)
         sta fe25519_dst+1
         jsr fe25519_mul             ; x25_result = x_2 * z_2^(-1) mod p
-        jsr fe25519_reduce_final    ; Final output must be canonical
+        jsr fe25519_reduce_final    ; KEEP: the wire result MUST be
+                                    ; canonical regardless of the
+                                    ; pairwise pruning above. Skipping
+                                    ; this would expose ≤2p form on the
+                                    ; network, which fails interop.
 
         plp              ; restore caller's processor status (I flag incl.)
         rts
@@ -340,7 +358,13 @@
         lda #>(fe25519_tmp3)
         sta fe25519_dst+1
         jsr fe25519_sqr             ; fe25519_tmp3 = AA
-        jsr fe25519_reduce_final    ; AA feeds into fe25519_sub/fe25519_add
+        ; W4 pairwise-safe pruning: reduce_final dropped here. The very
+        ; next consumer of AA (fe25519_sub for E = AA - BB) is paired
+        ; with a partner operand (BB) that is canonical: BB's
+        ; reduce_final immediately below is retained. Per Inv3, fe25519
+        ; output bound ≤ 2p plus one canonical partner is sufficient
+        ; for the masked reduce_final inside fe25519_sub to produce a
+        ; canonical result without an explicit reduce here.
 
         ; BB = B^2 → fe25519_tmp4
         lda #<(x25_b)
@@ -352,7 +376,11 @@
         lda #>(fe25519_tmp4)
         sta fe25519_dst+1
         jsr fe25519_sqr             ; fe25519_tmp4 = BB
-        jsr fe25519_reduce_final    ; BB feeds into fe25519_sub
+        jsr fe25519_reduce_final    ; KEEP: BB is the canonical partner of
+                                    ; AA in `E = AA - BB` and `x_2 = AA*BB`.
+                                    ; AA's reduce was dropped above per the
+                                    ; pairwise rule; one canonical partner
+                                    ; per pair is sufficient.
 
         ; E = AA - BB → x25_e
         lda #<(fe25519_tmp3)
@@ -406,7 +434,11 @@
         lda #>(x25_da)
         sta fe25519_dst+1
         jsr fe25519_mul             ; x25_da = D * A
-        jsr fe25519_reduce_final    ; DA feeds into fe25519_add/fe25519_sub
+        ; W4 pairwise-safe pruning: reduce_final dropped here. DA is
+        ; consumed only as `DA + CB` and `DA - CB`; CB's reduce_final
+        ; is retained below as the canonical partner. Per Inv3 bound,
+        ; one canonical operand per pair suffices for the next
+        ; fe25519_add/sub to produce a correct, canonical result.
 
         ; CB = C * B → x25_cb
         lda #<(fe25519_tmp1)
@@ -422,7 +454,10 @@
         lda #>(x25_cb)
         sta fe25519_dst+1
         jsr fe25519_mul             ; x25_cb = C * B
-        jsr fe25519_reduce_final    ; CB feeds into fe25519_add/fe25519_sub
+        jsr fe25519_reduce_final    ; KEEP: CB is the canonical partner
+                                    ; of DA in `DA + CB` and `DA - CB`.
+                                    ; DA's reduce was dropped above per
+                                    ; the pairwise rule.
 
         ; x_3 = (DA + CB)^2
         lda #<(x25_da)
@@ -444,7 +479,11 @@
         lda #>(x25_x3)
         sta fe25519_src1+1
         jsr fe25519_sqr             ; x25_x3 = (DA + CB)^2
-        jsr fe25519_reduce_final    ; x_3 is output, feeds into add in next iteration
+        ; W4 pairwise-safe pruning: reduce_final dropped here. Next
+        ; iteration consumes x_3 only as `C = x_3 + z_3` and
+        ; `D = x_3 - z_3`; z_3's reduce_final below is retained as
+        ; the canonical partner. The final cswap before fe25519_inv
+        ; preserves the ≤ 2p bound (cswap is byte-wise).
 
         ; z_3 = x_1 * (DA - CB)^2
         ; x_1 is the original u-coordinate (x25_u)
@@ -478,7 +517,11 @@
         lda #>(x25_z3)
         sta fe25519_src2+1
         jsr fe25519_mul             ; x25_z3 = x_1 * (DA - CB)^2
-        jsr fe25519_reduce_final    ; z_3 is output, feeds into add/sub in next iteration
+        jsr fe25519_reduce_final    ; KEEP: z_3 is the canonical partner
+                                    ; of x_3 in next iteration's
+                                    ; `C = x_3 + z_3` / `D = x_3 - z_3`.
+                                    ; x_3's reduce was dropped above per
+                                    ; the pairwise rule.
 
         ; x_2 = AA * BB
         lda #<(fe25519_tmp3)
@@ -494,7 +537,12 @@
         lda #>(x25_x2)
         sta fe25519_dst+1
         jsr fe25519_mul             ; x25_x2 = AA * BB
-        jsr fe25519_reduce_final    ; x_2 is output, feeds into add/sub in next iteration
+        ; W4 pairwise-safe pruning: reduce_final dropped here. Next
+        ; iteration consumes x_2 only as `A = x_2 + z_2` and
+        ; `B = x_2 - z_2`; z_2's reduce_final below is retained as
+        ; the canonical partner. The final scalarmult-tail x_2*z_2^-1
+        ; ends with reduce_final on the wire result, so x_2's transient
+        ; non-canonical state never escapes the ladder.
 
         ; z_2 = E * (AA + a24*E)
         ; First: a24*E → fe25519_tmp1
@@ -531,7 +579,11 @@
         lda #>(x25_z2)
         sta fe25519_dst+1
         jsr fe25519_mul             ; x25_z2 = E * (AA + a24*E)
-        jsr fe25519_reduce_final    ; z_2 is output, feeds into add/sub in next iteration
+        jsr fe25519_reduce_final    ; KEEP: z_2 is the canonical partner
+                                    ; of x_2 in next iteration's
+                                    ; `A = x_2 + z_2` / `B = x_2 - z_2`.
+                                    ; x_2's reduce was dropped above per
+                                    ; the pairwise rule.
 
         rts
 .endproc

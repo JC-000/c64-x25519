@@ -6,6 +6,22 @@ An optimized implementation of X25519 / Curve25519 scalar multiplication written
 
 ## Status
 
+**v0.4.0 in preparation (Phase 7 LANDED)** — full L1-L29 CT
+closure across the entire `fe25519_*` / `mul_8x8` /
+`x25519_scalarmult` surface. v0.4.0 closes the v0.4.0-disclosed
+27 secret-data-dependent branches across 5 leak families
+(L25 / L26a-d / L27a-f / L28a-k / L29a-e) in `src/fe25519.s` —
+`fe25519_mul`, `fe_reduce_wide`, `fe25519_mul_a24`,
+`fe25519_add`, `fe25519_sub`, `fe_cmp_p`,
+`fe25519_reduce_final`. With Phase 7 landed, the library is
+**L1-L29 CT-clean** for network-facing deployments. Per-proc CT
+cycle-count guards (`make test-vice`) report spreads of
+0.000-0.01 jif across structurally distinct inputs, well under
+the 1.0 jif threshold. ZP claim grows to 87 bytes at
+`$14-$16, $1C, $1E-$2A, $24-$25, $2C-$2F, $40-$7F`. See
+[`docs/RELEASE_NOTES_v0.4.0.md`](docs/RELEASE_NOTES_v0.4.0.md)
+for the full Phase 7 closure mechanism and migration guidance.
+
 **v0.3.0 released 2026-04-19** — [GitHub release](https://github.com/JC-000/c64-x25519/releases/tag/v0.3.0),
 MIT licensed. A perf-recovery + full-CT-certification minor release:
 `x25519_scalarmult` (basepoint 9) lands at **12,070 jiffies
@@ -69,11 +85,13 @@ ladder/cswap audit).
 
 | Operation | Cost |
 |---|---|
-| `x25519_scalarmult` (basepoint 9, v0.3.0) | **12,070 jiffies / ~201.2s NTSC / ~241.4s PAL** |
+| `x25519_scalarmult` (basepoint 9, v0.4.0 / Phase 7 landed) | **~14,400 jiffies design estimate** (end-to-end bench broken post-PR-#35; per-proc CT guards green) |
+| `x25519_scalarmult` (basepoint 9, v0.3.0 — last reliable end-to-end measurement) | 12,070 jiffies / ~201.2s NTSC / ~241.4s PAL |
 | `x25519_scalarmult` (basepoint 9, v0.2.0) | 12,485 jiffies / ~208.1s NTSC / ~249.7s PAL |
 | `x25519_scalarmult` (basepoint 9, v0.1.0 baseline) | 9,520 jiffies / ~158.7s NTSC |
-| `fe25519_mul` | ~4.0 jiffies/call |
-| `fe25519_sqr` | ~6.36 jiffies/call (v0.3.0) |
+| `fe25519_mul` | 5.98 jiffies/call (v0.4.0, CT spread 0.000) |
+| `fe25519_sqr` | 6.44 jiffies/call (v0.4.0, CT spread 0.005) |
+| `fe25519_mul_a24` | 0.475-0.480 jiffies/call (v0.4.0, CT spread 0.005) |
 
 All measurements on stock C64 with VIC-II blanked (`jsr vic_blank`),
 median of 3 runs. v0.3.0 combines two independent bodies of work on
@@ -155,23 +173,31 @@ The test suite caught a latent `fe_reduce_wide` carry-propagation bug in v0.1.0 
 
 ## Security notes
 
-- **Full side-channel posture (v0.3.0).** All 24 catalogued leaks
-  (L1–L24 in [`docs/CT_ANALYSIS.md`](docs/CT_ANALYSIS.md)) are now
-  closed. L1–L22 (landed v0.2.0): secret-dependent branches and
-  page-cross leaks across `mul_8x8`, `fe25519_mul`, and `fe25519_sqr`'s
-  cross-term carry path. L23a/b/c (landed v0.3.0, PR #31): the
-  `@diag_prop` diagonal-term carry path in `fe25519_sqr` rewritten
-  as a Phase-6-style unconditional ripple. L24a/b (landed v0.3.0,
-  PR #30): two scalar-bit-dependent branches in the `x25519_scalarmult`
-  Montgomery ladder bit loop replaced by a branchless `cmp/sbc/eor`
-  bit-to-mask idiom. `fe25519_cswap` is verified CT-clean by
-  inspection (mask-time-invariant unrolled `abs,Y` inner loop; 32-byte
-  page alignment hard-asserted in `src/data.s`). v0.3.0 is the first
-  release with **full field-op + outer-ladder side-channel posture**
-  — the library's outermost primitive no longer leaks scalar-bit
-  information through branch timing, making it suitable for
-  network-facing deployments (e.g. `c64-wireguard`) where the scalar
-  is a long-lived ECDH private key.
+- **Full side-channel posture (v0.4.0, Phase 7 landed).** All 29
+  catalogued leak families (L1-L29 in
+  [`docs/CT_ANALYSIS.md`](docs/CT_ANALYSIS.md)) are now closed.
+  L1-L22 (v0.2.0): branchless CT `mul_8x8` + `fe25519_sqr`
+  rewrite + zero-skip removal + Phase-6 carry-chain.
+  L23a/b/c (v0.3.0 PR #31): `fe25519_sqr` `@diag_prop`
+  unconditional ripple. L24a/b (v0.3.0 PR #30): branchless
+  `cmp/sbc/eor` bit-to-mask in the Montgomery ladder bit loop.
+  **L25 / L26a-d / L27a-f / L28a-k / L29a-e (v0.4.0 Phase 7):**
+  closes the field-op surface beyond `fe25519_sqr` — `fe25519_mul`,
+  `fe_reduce_wide`, `fe25519_mul_a24`, `fe25519_add`,
+  `fe25519_sub`, `fe_cmp_p`, `fe25519_reduce_final` all rewritten
+  with the four Phase-7 closure templates (`lda#0/sbc#0/eor#$FF`
+  mask + masked sub-p tail; Phase-6 Option F per-body pending
+  chain; `dey/bne` cascades gated by `mul38_lo_tab[0]=0`;
+  `fe_carry`-threaded reduction stages). `fe25519_cswap` remains
+  CT-clean by inspection. **v0.4.0 is the first release with the
+  entire `fe25519_*` / `mul_8x8` / `x25519_scalarmult` surface
+  CT-clean** for network-facing deployments where the scalar is
+  a long-lived ECDH private key. Per-proc CT cycle-count guards
+  in `make test-vice` (`test_ct_square_cycles.py`,
+  `test_ct_mul_cycles.py`, `test_ct_mul_a24_cycles.py`,
+  `test_ct_reduce_wide_cycles.py`, plus the output-bound
+  regression `test_fe_reduce_wide_bound.py`) report spreads of
+  0.000-0.01 jif across structurally distinct inputs.
 - **State-contract defences (post-v0.3.0, on master).** Two
   correctness-class fixes that complement the L1–L24 timing-leak
   posture by hardening the library against caller state pollution

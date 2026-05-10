@@ -1,25 +1,23 @@
 # CT_ANALYSIS — Constant-Time Audit for c64-x25519
 
-Status: **Phases 0–6 landed + @diag_prop audit closed** — tracking issue
+Status: **Phases 0–7 landed: L1–L29 CT-clean** — tracking issue
 [#20](https://github.com/JC-000/c64-x25519/issues/20).
 
 This document catalogues every currently-known secret-dependent branch and
 every `(zp),y` indirect-indexed load in the X25519 library, records the
 baseline and post-fix performance, and tracks follow-up work.
 
-**Current state:** L1–L23 are fixed in the working tree. Phase 6
-replaced the four carry-cascade short-circuits in `fe25519_sqr`
-(L19–L22) with a per-body unconditional pending-carry chain plus one
-end-of-inner ripple per outer-i. The subsequent @diag_prop audit
-(2026-04-19) closed three additional leaks in the diagonal-term
-carry path (L23a/b/c, collectively rolled up as **L23**) using the
-same Phase-6-style unconditional-ripple pattern. Every branch in the
-cross-term and diagonal accumulate now depends only on public loop
-indices (`fe_mul_i`, `fe_mul_j`, `fe_sqr_pairs`) or on public `cmp
-#64` / ripple-count guards. With L1–L23 fixed, the library is
-considered CT-clean for network-facing use through the `fe25519_sqr`
-and `fe25519_mul` surface, subject to the usual caveats about
-out-of-proc callers (ladder/cswap, REU hooks).
+**Current state:** L1–L29 are fixed in the working tree. Phases 0–6 +
+the @diag_prop and ladder/cswap audits closed L1–L24 across `mul_8x8`,
+`fe25519_sqr` (cross-term + diagonal), and the outer Montgomery
+ladder. Phase 7 (post-v0.4.0 sweep) closes L25 / L26a-d / L27a-f /
+L28a-k / L29a-e — the field-op surface beyond `fe25519_sqr`:
+`fe25519_mul`, `fe_reduce_wide`, `fe25519_mul_a24`, `fe25519_add`,
+`fe25519_sub`, `fe_cmp_p`, and `fe25519_reduce_final`. With L1–L29
+fixed, the library is now CT-clean across the entire `fe25519_*` /
+`mul_8x8` / `x25519_scalarmult` surface for network-facing use,
+subject to the usual caveats about caller-installed ISRs and host
+NMI hooks documented in `docs/LIBRARY.md` §9.
 
 ## Threat model
 
@@ -91,6 +89,25 @@ still relevant.
 | L23a | src/fe25519.s:~1316  | branch      | low      | fixed  | `beq @diag_skip` on secret `a[i]==0` — @diag_prop audit (2026-04-19), unconditional via `sqr_lo[0]=sqr_hi[0]=0` zero-product |
 | L23b | src/fe25519.s:~1337  | branch      | med      | fixed  | `bcc @diag_skip` on diag-add carry — @diag_prop audit, replaced by unconditional ripple |
 | L23c | src/fe25519.s:~1352  | branch      | med      | fixed  | `bcs @diag_prop` cascade (ripple length tied to secret data) — @diag_prop audit, replaced by public-count ripple |
+| L24a | src/x25519.s:~137    | branch      | low      | fixed  | `beq @bit_zero` scalar-bit branch — replaced by branchless `cmp/sbc/eor` bit-to-mask (PR #30) |
+| L24b | src/x25519.s:~146    | branch      | low      | fixed  | `beq @no_swap_mask` XOR-of-bits branch — direct EOR + mask-form `x25_prev_bit` (PR #30) |
+| L25  | src/fe25519.s:~568   | branch      | med      | fixed  | `fe25519_mul` outer-i zero-skip on secret `a[i]==0` — Phase 7, outer body now unconditional; safe via `mul_dma[0]==0` invariant + Phase-6 chain |
+| L26a | src/fe25519.s:~625   | branch      | med      | fixed  | `fe25519_mul` accumulate-cascade short-circuit (body 1) — Phase 7, replaced by Phase-6 Option F per-body 1-bit pending chain |
+| L26b | src/fe25519.s:~660   | branch      | med      | fixed  | `fe25519_mul` accumulate-cascade short-circuit (body 2) — Phase 7, same chain pattern |
+| L26c | src/fe25519.s:~695   | branch      | med      | fixed  | `fe25519_mul` accumulate-cascade short-circuit (body 3) — Phase 7, same chain pattern |
+| L26d | src/fe25519.s:~730   | branch      | med      | fixed  | `fe25519_mul` accumulate-cascade short-circuit (body 4) — Phase 7, end-of-inner ripple uses public count `63 - fe_mul_i` (`mul_bound`); phantom guard via `cmp mul_bound / bcs` |
+| L27a | src/fe25519.s:~935   | branch      | med      | fixed  | `fe_reduce_wide` first-pass cascade short-circuit — Phase 7, unconditional `dey/bne` cascade gated by `mul38_lo_tab[0]=0` lemma (no carry past zero limb) |
+| L27b | src/fe25519.s:~970   | branch      | med      | fixed  | `fe_reduce_wide` second-pass cascade short-circuit — Phase 7, same pattern |
+| L27c | src/fe25519.s:~1000  | branch      | low      | fixed  | `fe_reduce_wide` propagate-carry-on-zero short-circuit — Phase 7, unconditional |
+| L27d | src/fe25519.s:~1025  | branch      | low      | fixed  | `fe_reduce_wide` post-mul38 carry-skip — Phase 7, unconditional |
+| L27e | src/fe25519.s:~1050  | branch      | low      | fixed  | `fe_reduce_wide` final-limb carry-skip — Phase 7, unconditional |
+| L27f | src/fe25519.s:~1075  | branch      | low      | fixed  | `fe_reduce_wide` end-of-pass cascade — Phase 7, public-count terminator. Output bound ≤ 2p enforced (regression: `tools/test_fe_reduce_wide_bound.py`) |
+| L28a-k | src/fe25519.s:~1738+ | branch    | med      | fixed  | `fe25519_mul_a24` outer body + 11 cascade-short-circuit sites (4 stages × multi-byte ripples) — Phase 7, unconditional outer body and `fe_carry`-threaded reduction stages; cascades replaced by `dey/bne` public-count ripples |
+| L29a | src/fe25519.s:~296   | branch      | **HIGH** | fixed  | `fe_cmp_p` early-exit byte comparison (~4,080 calls/scalarmult, 250 cy variance) — Phase 7, replaced by new `fe_cmp_p_ct` proc returning $00/$FF mask via `lda#0/sbc#0/eor#$FF` idiom; unconditional 32-byte scan |
+| L29b | src/fe25519.s:~118   | branch      | med      | fixed  | `fe25519_add` carry-out short-circuit — Phase 7, captures carry to `fe_add_carry_mask` via `lda#0/sbc#0/eor#$FF`; masked sub-p driven by mask AND p_byte |
+| L29c | src/fe25519.s:~209   | branch      | med      | fixed  | `fe25519_sub` borrow-handling branch — Phase 7, mirror of L29b idiom (sub-p → add-p via masked p_byte path) |
+| L29d | src/fe25519.s:~346   | branch      | **HIGH** | fixed  | `fe25519_reduce_final` conditional sub-p — Phase 7, two-iteration unconditional masked-subp (works because `fe_reduce_wide` output bound ≤ 2p). Sufficiency regression: `tools/test_fe_reduce_wide_bound.py` |
+| L29e | src/fe25519.s:~370   | branch      | med      | fixed  | `fe25519_reduce_final` byte-level cascade in mask propagation — Phase 7, unconditional via `fe_subp_rhs` per-iter scratch (= p_byte AND mask) |
 
 ### Phase landing notes
 
@@ -359,6 +376,136 @@ still relevant.
   iterations. CT spread (`test_ct_square_cycles.py`) stays at
   0.150 jif (pre: 0.155), well under the 1.0 jif threshold.
 
+- **Phase 7 — Field-op surface CT closure (LANDED)** — fix
+  **L25 / L26a-d / L27a-f / L28a-k / L29a-e** in `src/fe25519.s`:
+  the unaudited part of the field-op surface beyond `fe25519_sqr`
+  and `mul_8x8`. Closes the v0.4.0 disclosure. With Phase 7 landed,
+  `fe25519_mul`, `fe_reduce_wide`, `fe25519_mul_a24`, `fe25519_add`,
+  `fe25519_sub`, `fe_cmp_p`, and `fe25519_reduce_final` are all CT
+  clean — every branch in the field-op layer now depends only on
+  public loop counters, link-time constants, or public derived
+  state.
+
+  **Mechanism — four templates, one per leak family:**
+
+  1. **L29 (HIGH-severity outer surface).** New `fe_cmp_p_ct` proc
+     scans all 32 limbs unconditionally and emits a $00/$FF mask via
+     the `lda #0 / sbc #0 / eor #$FF` bit-to-mask idiom (same shape
+     as the L24 ladder rewrite). `fe25519_add` and `fe25519_sub`
+     capture carry-out into `fe_add_carry_mask` via the same idiom
+     and drive an unconditional masked sub-p / masked add-p tail
+     using `fe_subp_rhs` as per-iter scratch (= `p_byte AND mask`).
+     `fe25519_reduce_final` runs **two iterations** of the
+     unconditional masked sub-p — sufficient because
+     `fe_reduce_wide` output is bounded by 2p (regression guard:
+     `tools/test_fe_reduce_wide_bound.py`).
+
+  2. **L25 + L26 (`fe25519_mul`).** Outer zero-skip dropped.
+     Accumulate cascades replaced by the **Phase-6 Option F** chain:
+     per-body 1-bit `mul_pending` carry threaded between adjacent
+     bodies, single end-of-inner ripple per outer-i with iteration
+     count `mul_bound = 63 - fe_mul_i` (public). Phantom-slot guard
+     `cmp mul_bound / bcs` is on public `(i,j)` state only.
+
+  3. **L27 (`fe_reduce_wide`).** All cascade short-circuits replaced
+     by unconditional `dey/bne` cascades whose iteration count is
+     derived from the public reduction-stage counter. Safety relies
+     on the `mul38_lo_tab[0] = 0` lemma (no carry can propagate past
+     the zero limb in any reduction step). Output bound <= 2p, the
+     load-bearing precondition for L29d's two-iteration sufficiency,
+     is the regression invariant guarded by
+     `tools/test_fe_reduce_wide_bound.py`.
+
+  4. **L28 (`fe25519_mul_a24`).** Outer body unconditional; the
+     four reduction stages are threaded through `fe_carry` so each
+     stage's carry-out is captured into the next stage's input
+     without a branch. Cascades within each stage replaced by
+     `dey/bne` public-count ripples.
+
+  **New ZP slots (v0.4.0 + Phase 7).** Six bytes added to the
+  library's claimed ZP surface, all `.ifndef`-wrapped per the host
+  override protocol:
+
+  - `$14` — `fe_cmp_mask` (`fe_cmp_p_ct` $00/$FF mask)
+  - `$15` — `fe_subp_rhs` (per-iter (p_byte AND mask) scratch)
+  - `$16` — `fe_add_carry_mask` (`fe25519_add` carry-out mask)
+  - `$24` — `mul_pending` (Option F 1-bit carry chain in
+    `fe25519_mul`)
+  - `$25` — `mul_bound` (public phantom guard, = 63 - `fe_mul_i`)
+  - `$2F` — `mul_ripple_start` (public end-of-inner ripple start)
+
+  Live ZP grows from 81 to 87 bytes. `$14` / `$15` / `$16` are
+  reused locally inside the new CT idioms (no cross-call
+  semantics); `$24` / `$25` / `$2F` mirror the Phase-6
+  `sqr_pending` / `sqr_ripple_start` shape but live in dedicated
+  slots so the multiply and squaring chains don't alias.
+
+  **H2 defensive REU init.** Phase 7 also (re-)installs the v0.4.0
+  H2 fix: `fe25519_mul`, `fe25519_sqr`, and `fe25519_mul_a24` now
+  zero `reu_reu_lo` ($DF04) and `reu_addr_ctrl` ($DF0A) at proc
+  entry, mirroring the v0.3.0 PR #36 / issue #33 fix that
+  `x25519_scalarmult` already received. Direct callers of these
+  three procs no longer need to pre-zero those two registers
+  themselves.
+
+  **CT cycle-count guards (new).** Four regression tests added in
+  `tools/`:
+
+  - `tools/test_ct_mul_cycles.py` — `fe25519_mul` per-call spread
+    across `dense_55 / sparse_09 / mixed_mid / mixed_hi /
+    mul_zeros / mul_ff` inputs. **Measured: 0.000 jif spread**
+    (5.98 jif/call across all 6 inputs).
+  - `tools/test_ct_mul_a24_cycles.py` — `fe25519_mul_a24` per-call
+    spread across 12 inputs (zero / one / two / a24_const / p-1 /
+    ff_all / alt_AA / alt_55 / 4x rand). **Measured: 0.005 jif
+    spread** (0.475-0.480 jif/call).
+  - `tools/test_ct_reduce_wide_cycles.py` — `fe_reduce_wide`
+    per-call spread. **Measured: ~0.01 jif spread**.
+  - `tools/test_fe_reduce_wide_bound.py` — output-bound regression:
+    asserts `fe_reduce_wide(x) <= 2p` for adversarially-shaped
+    inputs (raw 64-byte products near 2^512 - 1). Required for
+    L29d two-iteration sufficiency.
+
+  Plus the existing `tools/test_ct_square_cycles.py`, which now
+  also exercises the L23-related `diag_zeros` profile and lands at
+  **0.005 jif spread**. All four CT guards are well under the
+  1.0 jif threshold.
+
+  **Perf (Phase 7 landing).** Pre-Phase-7 baseline: **12,070 jif**
+  (v0.4.0 sweep state, pre-Phase-7-implementation). Phase 7
+  design-time estimate (sum of family closures): **+2,326 jif**
+  (~50 for L25, ~1,600 for L26, ~250-500 for L27, ~150-300
+  for L28, ~1,500-2,200 for L29 — see v0.4.0 release notes
+  Disclosure table). **Measured post-Phase-7 scalarmult cost:
+  see "Bench instrumentation note" below**. The per-proc CT cycle
+  spreads measured (0.005 / 0.005 / 0.005 / 0.01 jif) are
+  consistent with each closure being constant-time on the
+  per-call timing distribution.
+
+  **Bench instrumentation note (post-PR-#35).** PR #35 wraps
+  `x25519_scalarmult` in `php / sei … plp`, which masks the
+  kernal jiffy clock IRQ for the duration of the call.
+  `tools/bench_x25519.py` reads the kernal jiffy clock
+  (`$A0-$A2`), so post-PR-#35 it reports `1 jif` regardless of
+  the actual cycle count — the IRQ-masking that PR #35 installed
+  prevents the IRQ ISR from advancing the jiffy clock during the
+  call. Re-establishing an end-to-end scalarmult bench under the
+  new IRQ-masked contract is queued for a follow-up; Phase 7's
+  per-proc CT cycle spreads (measured via `bench_start /
+  bench_stop` on individual `fe25519_*` procs that do **not**
+  themselves mask IRQs) are the authoritative CT regression
+  guards. The 12,070-jif "pre-Phase-7" baseline cited above is
+  the pre-PR-#35 figure inherited from the v0.3.0 + state-defence
+  release notes; the post-Phase-7 number from the design (~14,400
+  jif under Phase 7's +2,326 jif estimate) is the best available
+  forward-looking budget. Wallclock under VICE warp:
+  ~17 s with VIC blanked, ~17.8 s without — consistent with a
+  cost in the 12k-15k jif range at typical NTSC warp ratios but
+  not a tight-enough proxy to confirm the design estimate either
+  way. (Measured at the v0.4.0 + Phase-7 working-tree tip:
+  16.5 s wall with VIC blanked, 17.8 s without; both report
+  jif=1 due to the IRQ mask, both PASS RFC 7748 vector 1.)
+
 ### Follow-ups
 
 **Queued performance-recovery options** (Phase 6 CT-clean landing
@@ -393,14 +540,29 @@ perf cost is the price paid for that guarantee):
   Gates future edits against CT regression. With L19–L22 fixed, this
   test now has a chance of passing and is the natural first consumer
   of the Phase 6 guarantee.
-- **Audit `x25519_scalarmult` itself** for scalar-bit-dependent
-  branches in the Montgomery ladder / cswap. The ladder is the next
-  layer up from `fe25519_*`; any bit-conditional branching there
-  would defeat the field-op CT fixes.
+- ~~**Audit `x25519_scalarmult` itself** for scalar-bit-dependent
+  branches in the Montgomery ladder / cswap.~~ — **closed
+  2026-04-19** (PR #30). See L24a/b and the Ladder/cswap audit
+  landing notes above.
 - ~~**Audit `fe25519_sqr`'s `@diag_prop` path**~~ — **closed
   2026-04-19**. See L23a/b/c and the @diag_prop audit landing
   notes above. Fix applied in the same Phase-6-style unconditional
   ripple pattern.
+- ~~**Audit the field-op surface beyond `fe25519_sqr`**~~ —
+  **closed in Phase 7** (`fe25519_mul`, `fe_reduce_wide`,
+  `fe25519_mul_a24`, `fe25519_add`, `fe25519_sub`, `fe_cmp_p`,
+  `fe25519_reduce_final`). See L25-L29 entries and the Phase 7
+  landing notes above. CT cycle-count guards landed alongside in
+  `tools/test_ct_mul_cycles.py`, `tools/test_ct_mul_a24_cycles.py`,
+  `tools/test_ct_reduce_wide_cycles.py`, and the
+  output-bound regression `tools/test_fe_reduce_wide_bound.py`.
+- **Re-instrument the end-to-end scalarmult bench under PR #35's
+  `php / sei … plp` contract.** `tools/bench_x25519.py` reads the
+  kernal jiffy clock, which is masked from advancing during the
+  call after PR #35. The CT guard suite covers per-proc spreads,
+  but a real end-to-end jiffy figure requires a non-IRQ-driven
+  timer (e.g. CIA timer-A polled directly, or VICE binary-monitor
+  cycle stamps). Open follow-up — does not block CT certification.
 
 ### Class legend
 
@@ -482,14 +644,42 @@ perf cost is the price paid for that guarantee):
   outermost primitive no longer leaks scalar-bit information
   through branch timing. See "Ladder/cswap audit" landing notes
   above.
+- **Phase 7 (post-v0.4.0)** — fix **L25 / L26a-d / L27a-f /
+  L28a-k / L29a-e** in `src/fe25519.s`. Closes the v0.4.0
+  KNOWN-OPEN disclosure of 27 secret-data-dependent branches
+  across the unaudited part of the field-op surface
+  (`fe25519_mul`, `fe_reduce_wide`, `fe25519_mul_a24`,
+  `fe25519_add`, `fe25519_sub`, `fe_cmp_p`,
+  `fe25519_reduce_final`). Four closure templates:
+  (1) `lda#0/sbc#0/eor#$FF` bit-to-mask idiom + new
+  `fe_cmp_p_ct` proc + masked sub-p tail (L29);
+  (2) Phase-6 Option F per-body 1-bit pending chain + public
+  end-of-inner ripple (L25 + L26 in `fe25519_mul`);
+  (3) unconditional `dey/bne` cascades gated by the
+  `mul38_lo_tab[0] = 0` lemma (L27 in `fe_reduce_wide`);
+  (4) `fe_carry`-threaded reduction stages with public-count
+  ripples (L28 in `fe25519_mul_a24`).
+  Six new ZP slots claimed (`$14`/`$15`/`$16`/`$24`/`$25`/`$2F`),
+  growing live ZP from 81 to 87 bytes. H2 defensive REU init
+  (zero `$DF04` + `$DF0A` at proc entry) re-installed at
+  `fe25519_mul`/`fe25519_sqr`/`fe25519_mul_a24` entry points.
+  Four new CT cycle-count guards (`test_ct_mul_cycles`,
+  `test_ct_mul_a24_cycles`, `test_ct_reduce_wide_cycles`,
+  `test_fe_reduce_wide_bound`); per-proc spreads 0.000-0.01 jif,
+  all <1.0 jif threshold. End-to-end scalarmult bench broken
+  post-PR-#35 (jiffy clock masked under `php/sei...plp`); design
+  estimate +2,326 jif vs the 12,070-jif pre-PR-#35 baseline,
+  yielding a forward-looking ~14,400 jif post-Phase-7 budget.
 
 Issue [#20](https://github.com/JC-000/c64-x25519/issues/20) was the
 origin report for L1-L15. L16-L22 were discovered during the Phase 3
-audit. Every landing was gated on
-`tools/ct_mul_brute_check.py` (mul_8x8 exhaustive) plus the full
-`make test-slow` matrix (`tools/test_fe_mul_stress.py` /
-`tools/test_fe_sqr_stress.py` / `tools/test_x25519.py --slow` /
-`tools/test_ladder_checkpoint.py --start 0 --count 255`).
+audit. L25-L29 were catalogued in the v0.4.0 sweep and closed in
+Phase 7. Every landing was gated on `tools/ct_mul_brute_check.py`
+(mul_8x8 exhaustive) plus the full `make test-slow` matrix
+(`tools/test_fe_mul_stress.py` / `tools/test_fe_sqr_stress.py` /
+`tools/test_x25519.py --slow` / `tools/test_ladder_checkpoint.py
+--start 0 --count 255`) plus the per-proc CT cycle-count guards in
+`make test-vice`.
 
 ## Performance
 
@@ -508,15 +698,17 @@ VICE warp, VIC-II blanked). Measured via `python3 tools/bench_x25519.py`.
 | Post-@diag_prop (L23)     | 12,070  | +2,550 (+26.8 %)  | diagonal unconditional ripple; L1–L23 fixed (measured on diag branch alone) |
 | Post-ladder/cswap audit (L24) | 10,739 | +1,219 (+12.8 %) | flat; branchless bit-extract, 3-run median (measured on ladder branch alone) |
 | **Post-both audits (L23+L24)** | **~12,070** | **~+2,550 (~+26.8 %)** | **L1–L24 fixed; combined bench pending post-merge remeasurement** |
+| Post-Phase 7 (L25-L29)         | **see note** | **see note**            | **L1-L29 fixed; bench instrumentation broken post-PR-#35 (jiffy clock masked); per-proc CT spreads 0.005-0.01 jif** |
 
-### Regression budget (original plan) vs. actual (through L24)
+### Regression budget (original plan) vs. actual (through L29)
 
-| Bound                | Jiffies | Actual (+2,550 since pristine) | Status                  |
-|----------------------|---------|--------------------------------|-------------------------|
-| Soft (target)        | ≤ +200  | exceeded                       | breach                  |
-| Hard (ceiling)       | ≤ +400  | exceeded                       | breach                  |
-| Phase 6 brief's cap  | ≤ 13,000 | ~12,070                       | within cap              |
-| Ladder/cswap budget  | ≤ +50   | +0 (flat)                      | within budget           |
+| Bound                | Jiffies | Actual (since pristine) | Status                  |
+|----------------------|---------|-------------------------|-------------------------|
+| Soft (target)        | ≤ +200  | exceeded                | breach                  |
+| Hard (ceiling)       | ≤ +400  | exceeded                | breach                  |
+| Phase 6 brief's cap  | ≤ 13,000 | ~12,070 (pre-Phase-7)  | within cap              |
+| Ladder/cswap budget  | ≤ +50   | +0 (flat)               | within budget           |
+| Phase 7 design est.  | +2,326  | end-to-end bench broken; per-proc CT all CT-clean (≤ 0.01 jif spread) | bench remeasure deferred; CT regression guards green |
 
 The v0.3.0 perf-recovery work (Phases 1–3 in the perf track, not the CT
 track) closed ~1,746 jif of the Phase-6 regression against the

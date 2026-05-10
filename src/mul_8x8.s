@@ -10,13 +10,15 @@
 .include "constants.s"
 
 .export sqtab_init, mul_8x8, poly_prod_lo, poly_prod_hi
-.export sqtab_lo, sqtab_hi
+
+; Quarter-square table addresses (page-aligned for speed). Defined as
+; linker-level SYMBOLS in cfg/x25519.cfg (and cfg/x25519-example.cfg)
+; so that downstream hosts can relocate the SQTAB region without
+; touching this source file. Hosts that move the tables MUST update
+; both the SYMBOLS block and the SQTAB MEMORY entry in their cfg.
+.import sqtab_lo, sqtab_hi
 
 .segment "CODE"
-
-; Quarter-square table addresses (page-aligned for speed)
-sqtab_lo        = $7800         ; 512 bytes: low bytes of floor(n^2/4)
-sqtab_hi        = $7a00         ; 512 bytes: high bytes of floor(n^2/4)
 
 ; =============================================================================
 ; sqtab_init - Build quarter-square lookup table at $7800-$7BFF
