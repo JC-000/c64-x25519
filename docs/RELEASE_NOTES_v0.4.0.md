@@ -1,10 +1,8 @@
 # c64-x25519 v0.4.0 — input-buffer preservation, field-op REU defence, ZP narrowing, Phase 7 LANDED (full L1-L29 CT closure)
 
-**Status:** DRAFT. Final version / date / commit list / tarball SHA
-to be filled in by the maintainer at tag time. **Phase 7 landed in
-the working tree** — this release marks the field-op surface
-beyond `fe25519_sqr` as fully CT-clean (L25 / L26a-d / L27a-f /
-L28a-k / L29a-e closed).
+**Status:** Released 2026-05-10. **Phase 7 landed** — this release
+marks the field-op surface beyond `fe25519_sqr` as fully CT-clean
+(L25 / L26a-d / L27a-f / L28a-k / L29a-e closed).
 
 ## What this is
 
@@ -433,20 +431,27 @@ Behavioural changes vs v0.3.0:
 > `docs/CT_ANALYSIS.md` Phase 7 section for the per-site
 > catalogue and closure mechanism walkthrough.
 
-## Full commit list (v0.3.0..master)
+## Full commit list (v0.3.0..v0.4.0)
 
-**TODO at tag time.** Reproduce with
-`git log --format="%h %s" v0.3.0..master`.
+Reproduce with `git log --format="%h %s" v0.3.0..v0.4.0`:
+
+- `47c0ad2` feat(v0.4.0): CIA-timer scalarmult bench + wire CT tests + record measured perf (#39)
+- `e11d153` feat(v0.4.0): full L1-L29 CT closure + resolution sweep (#38)
+- `e538330` chore: untrack per-project Serena state; memories now centralized
+- `83e1b3a` docs(post-#36): update LIBRARY.md, README, and Serena memories
+- `aba4f95` fix(state): defensive REU register init at scalarmult entry (issue #33) (#36)
+- `35351c9` feat(ct/defence): wrap x25519_scalarmult in php/sei...plp (#35)
+- `c0f20b1` docs: fill v0.3.0 tarball SHA256 + size (#32)
 
 ## Tarball
 
-**TODO at tag time.** Build with the project's tarball script;
-fill in size and SHA256 from `shasum -a 256` after build.
+**c64-x25519-v0.4.0.tar.gz** — source distribution (ca65/ld65-compatible assembly + docs + linker config example + LICENSE + ORIGIN.txt.template)
 
-- File: `c64-x25519-v0.4.0.tar.gz`
-- Size: TODO
-- SHA256: TODO
-- Download: `https://github.com/JC-000/c64-x25519/releases/download/v0.4.0/c64-x25519-v0.4.0.tar.gz`
+- Size: **77,365 bytes**
+- SHA256: `74e3d252760c15de34c35a2e3419bab4de999f2fb084182fe3b6c423047192fe`
+- Download: https://github.com/JC-000/c64-x25519/releases/download/v0.4.0/c64-x25519-v0.4.0.tar.gz
+
+Built reproducibly from the v0.4.0 tag with `git archive --prefix=c64-x25519-v0.4.0/ --format=tar v0.4.0 <vendoring file list> | gzip -n -9`. The file list is the one in the v0.3.0-to-v0.4.0 migration block above: `src/*.s`, `src/x25519.inc`, `cfg/x25519-example.cfg`, `docs/LIBRARY.md`, `docs/CT_ANALYSIS.md`, `docs/RELEASE_NOTES_v0.4.0.md`, `LICENSE`, `ORIGIN.txt.template`.
 
 Downstream vendoring: extract into your project, fill in
 `ORIGIN.txt` from the template, and run `ca65` against `src/*.s`.
