@@ -451,7 +451,7 @@ Reproduce with `git log --format="%h %s" v0.3.0..v0.4.0`:
 - SHA256: `74e3d252760c15de34c35a2e3419bab4de999f2fb084182fe3b6c423047192fe`
 - Download: https://github.com/JC-000/c64-x25519/releases/download/v0.4.0/c64-x25519-v0.4.0.tar.gz
 
-Built reproducibly from the v0.4.0 tag with `git archive --prefix=c64-x25519-v0.4.0/ --format=tar v0.4.0 <vendoring file list> | gzip -n -9`. The file list is the one in the v0.3.0-to-v0.4.0 migration block above: `src/*.s`, `src/x25519.inc`, `cfg/x25519-example.cfg`, `docs/LIBRARY.md`, `docs/CT_ANALYSIS.md`, `docs/RELEASE_NOTES_v0.4.0.md`, `LICENSE`, `ORIGIN.txt.template`.
+Built reproducibly from the v0.4.0 tag. Recipe is checked in at `tools/build_release.sh`; invoke with `tools/build_release.sh v0.4.0` (or `make dist VERSION=v0.4.0`). The file list is the one in the v0.3.0-to-v0.4.0 migration block above: `src/*.s`, `src/x25519.inc`, `cfg/x25519-example.cfg`, `docs/LIBRARY.md`, `docs/CT_ANALYSIS.md`, `docs/RELEASE_NOTES_v0.4.0.md`, `LICENSE`, `ORIGIN.txt.template`. Determinism: `git archive` is byte-deterministic for a given commit, and `gzip -n` drops the gzip header timestamp, so the same tag always reproduces this SHA256.
 
 Downstream vendoring: extract into your project, fill in
 `ORIGIN.txt` from the template, and run `ca65` against `src/*.s`.

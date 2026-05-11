@@ -32,7 +32,7 @@ CA65_OBJS = $(BUILD_DIR)/main.o $(LIB_OBJS)
 
 LIBX25519 = $(LIB_DIR)/libx25519.a
 
-.PHONY: all clean test test-slow test-ref test-vice lib lib-verify
+.PHONY: all clean test test-slow test-ref test-vice lib lib-verify dist
 
 all: $(PRG)
 
@@ -162,6 +162,25 @@ lib-verify: lib $(LIB_VERIFY_PRG)
 	done; \
 	bytes=$$(wc -c < $(LIB_VERIFY_PRG)); \
 	echo "OK: $(LIB_VERIFY_PRG) is $$bytes bytes, all expected symbols present"
+
+# --- Reproducible release tarball --------------------------------------------
+#
+# `make dist VERSION=v0.4.0` builds c64-x25519-<VERSION>.tar.gz from the named
+# git tag, with the canonical v0.4.0+ vendoring file set, and prints byte
+# size + SHA256. Deterministic: same VERSION always produces a byte-identical
+# tarball (git archive is content-deterministic; gzip -n drops the timestamp).
+# The recorded SHA256 in docs/RELEASE_NOTES_<VERSION>.md must match this
+# script's output for that VERSION.
+#
+# Used at release time to produce the artifact uploaded to the GitHub Release
+# page. See tools/build_release.sh for the full recipe.
+
+dist:
+	@if [ -z "$(VERSION)" ]; then \
+	  echo "usage: make dist VERSION=v0.4.0" >&2; \
+	  exit 1; \
+	fi
+	@tools/build_release.sh $(VERSION)
 
 $(LIB_VERIFY_PRG): $(LIB_VERIFY_STUB) $(LIBX25519) cfg/x25519-example.cfg | $(LIB_VERIFY_DIR)
 	$(CA65) -I $(SRC_DIR) -o $(LIB_VERIFY_DIR)/stub.o $(LIB_VERIFY_STUB)
