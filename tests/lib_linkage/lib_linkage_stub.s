@@ -63,3 +63,10 @@ public_refs:
         .addr vic_blank, vic_unblank
         .addr bench_start, bench_stop, bench_ticks
         .addr bench_cycles_start, bench_cycles_stop, bench_cycles
+
+; Version constants — integer equates, referenced via .word so ld65 pulls
+; lib_version.o into the archive resolution. .byte would fail because
+; ca65 cannot prove the import fits in a byte until link time.
+public_version_refs:
+        .word LIB_VERSION_MAJOR, LIB_VERSION_MINOR
+        .word LIB_VERSION_PATCH, LIB_ABI_VERSION
