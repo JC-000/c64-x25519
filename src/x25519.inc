@@ -143,8 +143,8 @@
 ; ZERO-PAGE USAGE (the library OWNS these slots while running)
 ; ----------------------------------------------------------------------------
 ;
-; Live ZP surface (post-Phase-7, L1-L29 CT-clean): 87 bytes at
-;   $14-$16, $1C, $1E-$2A, $24-$25, $2C-$2F, $40-$7F.
+; Live ZP surface (post-Phase-7, L1-L29 CT-clean): 85 bytes at
+;   $14-$16, $1C, $1E-$2A, $2C-$2F, $40-$7F.
 ;
 ;   $14      fe_cmp_mask          (Phase 7: fe_cmp_p_ct $00/$FF mask)
 ;   $15      fe_subp_rhs          (Phase 7: per-iter (p_byte AND mask) scratch)

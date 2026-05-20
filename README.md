@@ -17,8 +17,8 @@ closure across the entire `fe25519_*` / `mul_8x8` /
 **L1-L29 CT-clean** for network-facing deployments. Per-proc CT
 cycle-count guards (`make test-vice`) report spreads of
 0.000-0.01 jif across structurally distinct inputs, well under
-the 1.0 jif threshold. ZP claim grows to 87 bytes at
-`$14-$16, $1C, $1E-$2A, $24-$25, $2C-$2F, $40-$7F`. See
+the 1.0 jif threshold. ZP claim grows to 85 bytes at
+`$14-$16, $1C, $1E-$2A, $2C-$2F, $40-$7F`. See
 [`docs/RELEASE_NOTES_v0.4.0.md`](docs/RELEASE_NOTES_v0.4.0.md)
 for the full Phase 7 closure mechanism and migration guidance.
 
