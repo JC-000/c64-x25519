@@ -27,7 +27,7 @@
 ; ----------------------------------------------------------------------------
 ;
 ;   LIB_VERSION_MAJOR   semver major (currently 0)
-;   LIB_VERSION_MINOR   semver minor (currently 4)
+;   LIB_VERSION_MINOR   semver minor (currently 5)
 ;   LIB_VERSION_PATCH   semver patch (currently 0)
 ;   LIB_ABI_VERSION     coarse ABI compat level (currently 1)
 ;
@@ -35,8 +35,8 @@
 ; unsupported library version:
 ;
 ;     .import LIB_VERSION_MAJOR, LIB_VERSION_MINOR
-;     .if LIB_VERSION_MAJOR <> 0 .or LIB_VERSION_MINOR < 4
-;         .error "this consumer needs c64-x25519 v0.4 or later"
+;     .if LIB_VERSION_MAJOR <> 0 .or LIB_VERSION_MINOR < 5
+;         .error "this consumer needs c64-x25519 v0.5 or later"
 ;     .endif
 ;
 ; ----------------------------------------------------------------------------

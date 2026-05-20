@@ -15,14 +15,17 @@
 # script must reproduce the SHA256 recorded in the matching
 # docs/RELEASE_NOTES_<tag>.md.
 #
-# File list: the canonical v0.4.0+ vendoring set per
-# docs/RELEASE_NOTES_v0.4.0.md. For older tags (v0.1.0 / v0.2.0 /
-# v0.3.0) the file list differed (no CT_ANALYSIS.md before v0.2.0,
-# etc.) — historical tarball SHAs from those releases cannot be
-# reproduced by this script. New releases (v0.4.0 and beyond) use
-# this recipe.
+# File list: the canonical v0.5.0+ vendoring set. Adds three config
+# files over the v0.4.0 list (lib_version.s, zp_config.s,
+# reu_config.s) for c64-lib-contract §1/§2/§3/§5 compliance. For
+# older tags (v0.1.0 / v0.2.0 / v0.3.0) the file list differed (no
+# CT_ANALYSIS.md before v0.2.0, etc.) — historical tarball SHAs from
+# those releases cannot be reproduced by this script. v0.4.0 also
+# used a smaller file list (no contract files); attempting to
+# reproduce its tarball with this script will produce a different
+# SHA. New releases (v0.5.0 and beyond) use this recipe.
 #
-# Make convenience target: `make dist VERSION=v0.4.0`.
+# Make convenience target: `make dist VERSION=v0.5.0`.
 
 set -euo pipefail
 
@@ -54,6 +57,7 @@ git archive \
   "$TAG" \
   src/constants.s src/data.s src/fe25519.s src/main.s src/mul_8x8.s \
   src/util.s src/x25519.s src/x25519_init.s src/x25519.inc \
+  src/lib_version.s src/zp_config.s src/reu_config.s \
   cfg/x25519-example.cfg \
   docs/LIBRARY.md docs/CT_ANALYSIS.md "$NOTES" \
   LICENSE ORIGIN.txt.template \

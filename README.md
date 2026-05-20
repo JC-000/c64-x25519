@@ -6,19 +6,53 @@ An optimized implementation of X25519 / Curve25519 scalar multiplication written
 
 ## Status
 
-**v0.4.0 in preparation (Phase 7 LANDED)** — full L1-L29 CT
+**v0.5.0 in preparation — c64-lib-contract §1/§2/§3/§5 adoption.**
+A library-ingestion release with no CT or correctness changes.
+v0.5.0 ships the four sections of [c64-lib-contract](https://github.com/JC-000/c64-lib-contract)
+that consumer projects (c64-https, c64-wireguard) need to compose
+c64-x25519 alongside sibling crypto libraries without source
+patching:
+
+- **§1 Version identification** ([#45](https://github.com/JC-000/c64-x25519/issues/45) / [#47](https://github.com/JC-000/c64-x25519/pull/47)): new
+  `src/lib_version.s` exports `LIB_VERSION_MAJOR/_MINOR/_PATCH`
+  and `LIB_ABI_VERSION` for assemble-time consumer guards.
+- **§2 Zero-page contract** ([#44](https://github.com/JC-000/c64-x25519/issues/44) / [#48](https://github.com/JC-000/c64-x25519/pull/48)): every consumer-
+  overridable ZP slot moved to a dedicated `src/zp_config.s` with
+  `.exportzp` declarations, so consumer modules can `.importzp`
+  individual slots without dragging in BASIC/KERNAL hardware
+  equates via `constants.s`.
+- **§3 REU layout contract** ([#43](https://github.com/JC-000/c64-x25519/issues/43) / [#49](https://github.com/JC-000/c64-x25519/pull/49)): new `src/reu_config.s`
+  exports `X25519_REU_BANK` (default `0`) and `X25519_REU_OFFSET`
+  (default `$0000`), `.ifndef`-guarded for `ca65 -D` override.
+  13 bank-immediate sites in `x25519_init.s` rewritten to
+  `+X25519_REU_BANK` so consumers can relocate the six-bank mul-
+  table claim without source patches.
+- **§5 Aggregate manifest equates** ([#46](https://github.com/JC-000/c64-x25519/issues/46) / [#50](https://github.com/JC-000/c64-x25519/pull/50)): four exports for
+  consumer-side cfg fit/collision checks: `LIB_X25519_ZP_USAGE_BYTES = 85`,
+  `LIB_X25519_REU_BANKS_USED = $3F << X25519_REU_BANK`,
+  `LIB_X25519_RESIDENT_BYTES = 9275`, `LIB_X25519_COLD_BYTES = 0`.
+
+All changes are pure-additive: no symbol removals, no behaviour
+change at default configuration. v0.4.0 consumers can adopt v0.5.0
+without source edits. The §4 (segment naming) and §6 (build target
+variants) sections of the contract are deferred (no current
+consumer requires them). See
+[`docs/RELEASE_NOTES_v0.5.0.md`](docs/RELEASE_NOTES_v0.5.0.md) for
+the full adoption story.
+
+**v0.4.0 released 2026-05-10** — Phase 7 LANDED: full L1-L29 CT
 closure across the entire `fe25519_*` / `mul_8x8` /
-`x25519_scalarmult` surface. v0.4.0 closes the v0.4.0-disclosed
+`x25519_scalarmult` surface. v0.4.0 closed the v0.4.0-disclosed
 27 secret-data-dependent branches across 5 leak families
 (L25 / L26a-d / L27a-f / L28a-k / L29a-e) in `src/fe25519.s` —
 `fe25519_mul`, `fe_reduce_wide`, `fe25519_mul_a24`,
 `fe25519_add`, `fe25519_sub`, `fe_cmp_p`,
-`fe25519_reduce_final`. With Phase 7 landed, the library is
-**L1-L29 CT-clean** for network-facing deployments. Per-proc CT
-cycle-count guards (`make test-vice`) report spreads of
-0.000-0.01 jif across structurally distinct inputs, well under
-the 1.0 jif threshold. ZP claim grows to 85 bytes at
-`$14-$16, $1C, $1E-$2A, $2C-$2F, $40-$7F`. See
+`fe25519_reduce_final`. The library is **L1-L29 CT-clean** for
+network-facing deployments. Per-proc CT cycle-count guards
+(`make test-vice`) report spreads of 0.000-0.01 jif across
+structurally distinct inputs, well under the 1.0 jif threshold.
+ZP claim grew to 85 bytes at `$14-$16, $1C, $1E-$2A, $2C-$2F,
+$40-$7F`. See
 [`docs/RELEASE_NOTES_v0.4.0.md`](docs/RELEASE_NOTES_v0.4.0.md)
 for the full Phase 7 closure mechanism and migration guidance.
 
@@ -125,9 +159,17 @@ make test-slow    # full RFC 7748 + differential tests via VICE
 
 ## Integrating into your own project
 
-c64-x25519 is designed to be **vendored as source** into downstream C64 projects rather than linked as a system library. The current **v0.4.0** release hosts a downloadable tarball asset; new integrations should pin to it. Verify the SHA256 before extracting.
+c64-x25519 is designed to be **vendored as source** into downstream C64 projects rather than linked as a system library. The current **v0.5.0** release hosts a downloadable tarball asset; new integrations should pin to it. Verify the SHA256 before extracting.
 
-**v0.4.0 (current — recommended for new integrations):**
+**v0.5.0 (current — recommended for new integrations):**
+
+```
+curl -LO https://github.com/JC-000/c64-x25519/releases/download/v0.5.0/c64-x25519-v0.5.0.tar.gz
+echo "DRAFT_SHA_TBD  c64-x25519-v0.5.0.tar.gz" | sha256sum -c
+mkdir -p vendor && tar -xzf c64-x25519-v0.5.0.tar.gz -C vendor/
+```
+
+**v0.4.0 (pinned — pre-c64-lib-contract, full L1-L29 CT):**
 
 ```
 curl -LO https://github.com/JC-000/c64-x25519/releases/download/v0.4.0/c64-x25519-v0.4.0.tar.gz
@@ -135,7 +177,7 @@ echo "74e3d252760c15de34c35a2e3419bab4de999f2fb084182fe3b6c423047192fe  c64-x255
 mkdir -p vendor && tar -xzf c64-x25519-v0.4.0.tar.gz -C vendor/
 ```
 
-> **Note on the legacy v0.1.0 / v0.2.0 / v0.3.0 download URLs below.** The release-page asset uploads for v0.1.0, v0.2.0, and v0.3.0 were lost in a remote-history reset and are not currently hosted (the `releases/download/v0.X.0/...` URLs return HTTP 404). The git tags themselves remain intact and the source can be reconstructed via `git archive` from the tag, but the resulting tarball will not byte-match the SHA256 values recorded below — those SHAs are kept as a record of the originally-published artifacts. For a current-recipe reproducible build of any v0.4.0+ release from its tag, see `tools/build_release.sh` (or `make dist VERSION=v0.4.0`).
+> **Note on the legacy v0.1.0 / v0.2.0 / v0.3.0 download URLs below.** The release-page asset uploads for v0.1.0, v0.2.0, and v0.3.0 were lost in a remote-history reset and are not currently hosted (the `releases/download/v0.X.0/...` URLs return HTTP 404). The git tags themselves remain intact and the source can be reconstructed via `git archive` from the tag, but the resulting tarball will not byte-match the SHA256 values recorded below — those SHAs are kept as a record of the originally-published artifacts. For a current-recipe reproducible build of any v0.5.0+ release from its tag, see `tools/build_release.sh` (or `make dist VERSION=v0.5.0`). Note: v0.4.0's tarball used a smaller file list (no contract files); `make dist VERSION=v0.4.0` no longer reproduces its recorded SHA — the v0.4.0 entry above shows the SHA of the originally-published artifact, which remains downloadable.
 
 **v0.3.0 (pinned — pre-Phase-7, L1-L24 closed):**
 
