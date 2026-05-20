@@ -33,6 +33,11 @@ patching:
   `LIB_X25519_RESIDENT_BYTES = 9224`, `LIB_X25519_COLD_BYTES = 0`.
   (Bank 2 dropped + 51 CODE bytes reclaimed in v0.6 prep after the
   REU usage audit — see [`docs/REU_USAGE_ANALYSIS.md`](docs/REU_USAGE_ANALYSIS.md).)
+  A second v0.6-prep `make lib-x25519-1764` build variant lowers the
+  minimum REU spec to 256 KB (stock 1764) by gating out the
+  doubled-table cluster in banks 3/4/5; that variant reports
+  `LIB_X25519_REU_BANKS_USED = $03` and `LIB_X25519_RESIDENT_BYTES = 9046`
+  at +16.2 % scalarmult cost.
 
 All changes are pure-additive: no symbol removals, no behaviour
 change at default configuration. v0.4.0 consumers can adopt v0.5.0

@@ -299,7 +299,12 @@ def main():
 
     rng = random.Random(25519)
 
+    # make clean BEFORE make: ca65 doesn't track CA65FLAGS as a
+    # dependency, so re-running this script after a different CA65FLAGS
+    # invocation (e.g. the SQR_DMA_K=0 A/B in docs/REU_USAGE_ANALYSIS.md)
+    # would otherwise reuse stale .o files and measure the wrong build.
     print("Building...")
+    subprocess.run(["make", "clean"], capture_output=True, cwd=PROJECT_ROOT)
     subprocess.run(["make"], capture_output=True, cwd=PROJECT_ROOT)
     if not os.path.exists(PRG_PATH):
         print("Build failed"); sys.exit(1)

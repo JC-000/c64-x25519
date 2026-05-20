@@ -88,7 +88,9 @@ def main():
     seed = 25519
     rng = random.Random(seed)
 
-    # Build
+    # `make clean && make` so a previous CA65FLAGS-override invocation
+    # (e.g. SQR_DMA_K=0 for the A/B in docs/REU_USAGE_ANALYSIS.md)
+    # doesn't leave stale .o files that would be silently re-used.
     print("Building...")
     subprocess.run(["make", "clean"], capture_output=True, cwd=PROJECT_ROOT)
     result = subprocess.run(["make"], capture_output=True, text=True,

@@ -102,9 +102,25 @@
         lda #%10110000         ; execute + autoload + STASH
         sta reu_command
 
+.if ::SQR_DMA_K
         ; --- Generate pre-doubled tables for fe25519_sqr (8f+8g) ---
         ; Overwrite mul_dma_lo/hi with 2*a*b (17-bit), and fill mul_dma_carry
         ; with the 17th bit. Regular tables were already stashed above.
+        ;
+        ; Whole block gated on `SQR_DMA_K > 0`. When SQR_DMA_K = 0
+        ; (the v0.6 1764-variant build, see make lib-x25519-1764),
+        ; fe25519_sqr never dispatches to the DMA path so banks 3/4/5
+        ; are unused at runtime. Skipping the generation here drops
+        ; ~600 ms of init wall-clock per cold boot AND truly frees the
+        ; banks (otherwise the stash still runs even though the data
+        ; is never read back). With this guard:
+        ;
+        ;   default build (SQR_DMA_K=22) → banks 0,1,3,4,5 written.
+        ;   K=0 build                    → banks 0,1 only.
+        ;
+        ; The corresponding LIB_X25519_REU_BANKS_USED manifest mask
+        ; flips from $3B to $03 in src/lib_version.s under the same
+        ; guard, so consumer collision checks see the smaller claim.
         ldx #0
 @dbl_gen:
         lda mul_dma_hi,x
@@ -186,6 +202,7 @@
         sta reu_addr_ctrl
         lda #%10110000
         sta reu_command
+.endif  ; SQR_DMA_K (non-zero)
 
         inc reu_init_a
         beq @init_done         ; if wrapped to 0, done

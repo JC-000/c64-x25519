@@ -286,33 +286,49 @@ making Group A even more clearly the keep.
    code-address shift inside the CODE segment after the removed bytes).
    Row in `docs/perf_history.csv` tagged `v0.6-prep+groupC`.
 
-2. **Group B decision is a judgment call, not a slam-dunk.** The
-   measured trade is **+16.2 % scalarmult slowdown in exchange for
-   192 KB REU and lowered hardware floor (1750 → 1764)**. The
-   pre-measurement analysis predicted +5.6 %, which would have made
-   this a comfortable yes; +16 % is borderline.
+2. **Group B: SHIPPED as a build variant, not a default flip.**
+   Default stays at `SQR_DMA_K = 22` for the 1750/512KB owners who
+   already integrate at this perf point. A new `make lib-x25519-1764`
+   target produces a parallel archive under `build-1764/lib/` that:
+   - Builds every `.s -> .o` with `-D SQR_DMA_K=0` (forces mult66
+     inline path in `fe25519_sqr`).
+   - `.if ::SQR_DMA_K` gate in `src/x25519_init.s:reu_mul_init` skips
+     the `@dbl_gen` loop + the three doubled-table stash blocks, so
+     banks 3/4/5 are never written at init time and the ~600 ms init
+     overhead is reclaimed (CODE −178 B in `x25519_init.o`).
+   - `.if ::SQR_DMA_K` gate in `src/lib_version.s` emits
+     `LIB_X25519_REU_BANKS_USED = $03 << X25519_REU_BANK` (banks 0, 1
+     only) and `LIB_X25519_RESIDENT_BYTES = 9046` so consumer cfg
+     collision checks reflect the smaller claim.
+   - `make lib-verify` runs against the variant archive and passes
+     all expected symbols.
 
-   Arguments for shipping `SQR_DMA_K = 0` as the new default:
-   - C64 1764 owners outnumber 1750/512KB-mod owners by a large margin.
-   - +41 s NTSC on a 4-min ECDH op is in the "annoying but not
-     prohibitive" range.
-   - Banks 3–5 are otherwise unrecoverable for sibling crypto libs.
+   Measured trade (`v0.6-prep+1764` row in `docs/perf_history.csv`):
 
-   Arguments against:
+   | Metric | default | 1764 variant | Δ |
+   |---|---:|---:|---|
+   | `LIB_X25519_REU_BANKS_USED` | `$3B` (5 banks) | `$03` (2 banks) | −192 KB REU |
+   | `LIB_X25519_RESIDENT_BYTES` | 9,224 B | 9,046 B | −178 B CODE |
+   | `x25519_scalarmult` cy | 261,681,380 | 304,179,528 | +42,498,148 (+16.2 %) |
+   | `fe25519_sqr` cy/call | 102,023 | 135,381 | +33,358 (+32.7 %) |
+   | RFC 7748 vec-0 | PASS | PASS | — |
+   | Min REU spec | 512 KB (1750) | 256 KB (1764) | hardware floor lowered |
+
+   Why a build variant rather than a default flip:
    - The library is already at +27.2 % vs v0.3.0 because of CT
-     closure; another +16 % stacks ugly in the release-notes table
-     (cumulative +47 % vs v0.3.0 baseline).
-   - The K knob is *already* host-overridable via `-D SQR_DMA_K=0`.
-     A 1764 owner can compile the smaller variant themselves; the
-     library doesn't need to default to it.
+     closure; another +16 % at default would stack to +47 % vs the
+     v0.3.0 baseline in the release-notes table.
+   - 1750 / 512KB-modded REU owners shouldn't pay the perf cost just
+     because 1764 compatibility matters elsewhere.
+   - Aligns with c64-lib-contract §6 build-variant pattern.
 
-   **Possible compromise:** keep `SQR_DMA_K = 22` as default but
-   ship a `make lib-x25519-1764` build target that flips the knob,
-   skips the doubled-table init, and exports
-   `LIB_X25519_REU_BANKS_USED = $03`. Lowers the hardware floor for
-   downstream consumers without penalizing the 1750/maxed-REU
-   path. Aligns with c64-lib-contract §6 build-variant pattern that
-   was already deferred in `follow_ups`.
+   How a downstream consumer adopts the variant:
+   ```sh
+   make lib-x25519-1764         # produces build-1764/lib/libx25519.a
+   cp -r build-1764/lib/* vendor/c64-x25519/   # vendor into your tree
+   # link against build-1764/lib/libx25519.a; the manifest equates in
+   # build-1764/lib/lib_version.o report the smaller REU claim.
+   ```
 
 3. **Either way, fix the stale 763 sqr/scalarmult comment in
    `bench_fe_mul.py:148` and any matching language elsewhere.** The
