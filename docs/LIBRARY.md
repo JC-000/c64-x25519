@@ -19,8 +19,8 @@ header is `src/x25519.inc`; this file is the human-readable guide.
   or any REU/compatible with at least 6 banks of 64 KB). The library
   pre-computes full 8x8->16 multiplication tables into REU banks 0-5.
 - **Zero page:** the library owns `$14-$16`, `$1C`, `$1E-$2A`,
-  `$24-$25`, `$2C-$2F`, and `$40-$7F` while running (87 bytes
-  total, post-Phase-7). `$FB-$FE` is reserved for the test
+  `$2C-$2F`, and `$40-$7F` while running (85 bytes total,
+  post-Phase-7). `$FB-$FE` is reserved for the test
   harness only and is NOT part of the library's claimed ZP
   surface. See `src/x25519.inc` for the full map. Each
   library-owned ZP equate in `src/constants.s` is wrapped in

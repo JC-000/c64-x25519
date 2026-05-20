@@ -8,7 +8,7 @@
 ; from main.s.
 ;
 ; Live ZP surface owned by the library while running (post-Phase-7 +
-; W3 ZP audit, 87 bytes total):
+; W3 ZP audit, 85 bytes total):
 ;   $14-$16        fe_cmp_mask / fe_subp_rhs / fe_add_carry_mask
 ;   $1C            poly_carry
 ;   $1E-$2A        fe25519_src1/src2/dst, mul_pending/mul_bound,
