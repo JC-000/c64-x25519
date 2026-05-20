@@ -71,6 +71,20 @@ public_version_refs:
         .word LIB_VERSION_MAJOR, LIB_VERSION_MINOR
         .word LIB_VERSION_PATCH, LIB_ABI_VERSION
 
+; ZP slot exports from src/zp_config.s. .importzp + .byte references
+; force ld65 to pull zp_config.o out of the archive.
+.importzp fe25519_src1, fe25519_src2, fe25519_dst
+.importzp fe_carry, poly_carry
+public_zp_refs:
+        .byte fe25519_src1, fe25519_src2, fe25519_dst
+        .byte fe_carry, poly_carry
+
+; REU layout equates from src/reu_config.s. .word reference forces ld65
+; to pull reu_config.o out of the archive.
+.import X25519_REU_BANK, X25519_REU_OFFSET
+public_reu_refs:
+        .word X25519_REU_BANK, X25519_REU_OFFSET
+
 ; Manifest aggregate equates (c64-lib-contract §5). Same .word reference
 ; trick to force ld65 archive-member resolution of lib_version.o.
 .import LIB_X25519_ZP_USAGE_BYTES, LIB_X25519_REU_BANKS_USED
@@ -78,9 +92,3 @@ public_version_refs:
 public_manifest_refs:
         .word LIB_X25519_ZP_USAGE_BYTES, LIB_X25519_REU_BANKS_USED
         .word LIB_X25519_RESIDENT_BYTES, LIB_X25519_COLD_BYTES
-
-; REU layout equates from src/reu_config.s. Same .word reference pattern
-; so ld65 pulls reu_config.o out of the archive.
-.import X25519_REU_BANK, X25519_REU_OFFSET
-public_reu_refs:
-        .word X25519_REU_BANK, X25519_REU_OFFSET

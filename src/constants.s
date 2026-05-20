@@ -106,100 +106,19 @@ cassette_buf    = $0334         ; cassette buffer (safe scratch area)
 
 ; --- Zero page variables ---
 ; General purpose pointers
-.ifndef zp_ptr1
-  zp_ptr1         = $fb           ; 2-byte pointer
-.endif
-.ifndef zp_tmp1
-  zp_tmp1         = $02           ; temp byte
-.endif
-.ifndef zp_tmp2
-  zp_tmp2         = $03           ; temp byte
-.endif
-
-; fe25519 field arithmetic working variables
-.ifndef fe25519_src1
-  fe25519_src1         = $1e           ; 2-byte pointer to operand 1
-.endif
-.ifndef fe25519_src2
-  fe25519_src2         = $20           ; 2-byte pointer to operand 2
-.endif
-.ifndef fe25519_dst
-  fe25519_dst          = $22           ; 2-byte pointer to destination
-.endif
-; fe25519_mul Phase-6-style CT carry-chain scratch (L25/L26 closure).
-; Mirrors fe25519_sqr's sqr_pending/sqr_bound/sqr_ripple_start, but in ZP
-; for shorter encodings (zp store = 3 cyc, abs = 4 cyc). Lifetime is
-; per-call: written before every read, dead after fe25519_mul returns.
-;     mul_pending     - 0/1 overflow bit threaded between body chain steps
-;                       within a single outer-i. Reset at @mul_outer entry.
-;     mul_bound       - public phantom guard: 63 - fe_mul_i. Body D's
-;                       chain step does `cpx mul_bound / bcs skip` so that
-;                       only i=31 last iteration drops its (always-zero)
-;                       phantom carry. Public-derived; cpx is CT-safe.
-;     mul_ripple_start - public start position of end-of-inner ripple,
-;                       computed from fe_mul_i + final X. Read once.
-.ifndef mul_pending
-  mul_pending     = $24           ; 0/1 carry chain bit (was: fe_misc)
-.endif
-.ifndef mul_bound
-  mul_bound       = $25           ; 63 - fe_mul_i, public phantom guard
-.endif
-.ifndef fe_carry
-  fe_carry        = $26           ; carry/borrow byte
-.endif
-.ifndef fe_loop
-  fe_loop         = $27           ; loop counter
-.endif
-.ifndef fe_mul_i
-  fe_mul_i        = $28           ; multiply outer index
-.endif
-.ifndef fe_mul_j
-  fe_mul_j        = $29           ; multiply inner index
-.endif
-
-; X25519 working variables
-.ifndef x25_prev_bit
-  x25_prev_bit    = $2a           ; previous k_t for swap
-.endif
-.ifndef x25_byte_idx
-  x25_byte_idx    = $2c           ; byte index in scalar
-.endif
-.ifndef x25_bit_mask
-  x25_bit_mask    = $2d           ; current bit mask
-.endif
-.ifndef fe_sqr_pairs
-  fe_sqr_pairs    = $2e           ; fe25519_sqr unrolled cross-loop pair counter
-.endif
-.ifndef mul_ripple_start
-  mul_ripple_start = $2f          ; fe25519_mul end-of-inner ripple start (public)
-.endif
-
-; (lmul0/lmul1 removed after Phase 2 CT rewrite: fe25519_sqr no longer
-;  uses indirect-indexed sqtab pointers. $14-$16 reclaimed by L29 CT
-;  field-op masks below; $17 remains free.)
-
-; fe_cmp_p_ct / fe25519_add / fe25519_sub / fe25519_reduce_final scratch
-; (L29 closure). These are the constant-time-replacement equivalents of
-; the prior branchful fe_cmp_p / add-then-cond-sub / sub-then-cond-add /
-; reduce_final loop. The mask-and-rhs scratch slots are written before
-; every use, so their post-call state is undefined per the library's
-; ZP contract.
-.ifndef fe_cmp_mask
-  fe_cmp_mask     = $14           ; $00/$FF "result >= p" mask from fe_cmp_p_ct
-.endif
-.ifndef fe_subp_rhs
-  fe_subp_rhs     = $15           ; per-iter (p_byte AND mask) scratch
-.endif
-.ifndef fe_add_carry_mask
-  fe_add_carry_mask = $16         ; $00/$FF carry-out mask from fe25519_add
-.endif
-
-; mul_8x8 / fe25519 reuse: only poly_carry remains live after the W3 ZP audit.
-; (poly_i $1A / poly_j $1B / poly_tmp $1D were declared but never read in any
-;  src/*.s — removed in v0.4.0 to narrow the library's claimed ZP surface.)
-.ifndef poly_carry
-  poly_carry      = $1c           ; carry byte
-.endif
+; Public ZP slot inventory lives in src/zp_config.s (per c64-lib-contract
+; SPEC §2). We .include it here so every translation unit that includes
+; constants.s transparently gets the equates, but we suppress the .exportzp
+; emission via ZP_CONFIG_NO_EXPORTS so that only zp_config.s's own .o
+; emits the public symbols (avoids ld65 "exported from multiple files").
+;
+; A host that wants to override a slot can either:
+;   - pass --asm-define <slot>=$<addr> on the ca65 command line (every
+;     library translation unit must see the same value), OR
+;   - pre-define the symbol in a wrapper .s file before .include'ing
+;     zp_config.s directly.
+ZP_CONFIG_NO_EXPORTS = 1
+.include "zp_config.s"
 
 ; fe_wide product buffer pinned to zero page ($40..$7F)
 ;
