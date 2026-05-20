@@ -63,3 +63,9 @@ public_refs:
         .addr vic_blank, vic_unblank
         .addr bench_start, bench_stop, bench_ticks
         .addr bench_cycles_start, bench_cycles_stop, bench_cycles
+
+; REU layout equates from src/reu_config.s. Referenced via .word so ld65
+; pulls reu_config.o out of the archive.
+.import X25519_REU_BANK, X25519_REU_OFFSET
+public_reu_refs:
+        .word X25519_REU_BANK, X25519_REU_OFFSET

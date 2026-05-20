@@ -250,3 +250,7 @@
 .import x25_scalar, x25_u, x25_result, x25_basepoint
 .import vic_blank, vic_unblank, bench_start, bench_stop, bench_ticks
 .import bench_cycles_start, bench_cycles_stop, bench_cycles
+
+; REU layout equates (c64-lib-contract §3). Default 0; override via
+; ca65 -D X25519_REU_BANK=$N when rebuilding the library from source.
+.import X25519_REU_BANK, X25519_REU_OFFSET
