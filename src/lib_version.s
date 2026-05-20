@@ -6,8 +6,8 @@
 ; Consumers import these for assembly-time compatibility checks:
 ;
 ;   .import LIB_VERSION_MAJOR, LIB_VERSION_MINOR, LIB_VERSION_PATCH
-;   .if LIB_VERSION_MAJOR <> 0 .or LIB_VERSION_MINOR < 4
-;       .error "c64-x25519 v0.4 or newer is required"
+;   .if LIB_VERSION_MAJOR <> 0 .or LIB_VERSION_MINOR < 5
+;       .error "c64-x25519 v0.5 or newer is required"
 ;   .endif
 ;
 ; Versioning policy: semver 2.0.0 - https://semver.org/
@@ -31,7 +31,7 @@
 ; =============================================================================
 
 LIB_VERSION_MAJOR = 0
-LIB_VERSION_MINOR = 4
+LIB_VERSION_MINOR = 5
 LIB_VERSION_PATCH = 0
 LIB_ABI_VERSION   = 1
 
@@ -64,9 +64,9 @@ LIB_ABI_VERSION   = 1
 ;     ------------------------------------------------------------
 ;                                                          85 B total
 ;   (Prior in-source comments and README claimed "87 bytes" via a
-;   stale double-count of $24-$25 within the $1E-$2A range; 85 is
-;   the correct count. Those textual references will be cleaned up
-;   separately; this equate is authoritative for §5.)
+;   stale double-count of $24-$25 within the $1E-$2A range; PR #51
+;   landed the textual cleanup so README / constants.s / x25519.inc
+;   / LIBRARY.md now agree with this equate.)
 ;
 ; LIB_X25519_REU_BANKS_USED
 ;   Bitmask of REU banks claimed for the precomputed multiplication
@@ -89,6 +89,11 @@ LIB_ABI_VERSION   = 1
 ;                               at fixed $7800-$7BFF)
 ;       --------------------------------------------------------------
 ;                            ≈ 9275 B total
+;   (Refreshed 2026-05-20 for v0.5.0; values unchanged from initial
+;   measurement at v0.5.0 cut-time. The three config .o files
+;   ─ lib_version.o, zp_config.o, reu_config.o ─ contain only
+;   equate declarations + .export directives and emit no CODE/DATA
+;   bytes, so they don't shift this total.)
 ;
 ; LIB_X25519_COLD_BYTES
 ;   Approximate code + data footprint that a consumer MAY overlay-page

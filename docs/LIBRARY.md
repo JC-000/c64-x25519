@@ -244,7 +244,7 @@ The library exports four integer equates per
 | Symbol | Current value | Semantics |
 |---|---|---|
 | `LIB_VERSION_MAJOR` | `0` | semver major (breaking ABI change) |
-| `LIB_VERSION_MINOR` | `4` | semver minor (additive ABI change) |
+| `LIB_VERSION_MINOR` | `5` | semver minor (additive ABI change) |
 | `LIB_VERSION_PATCH` | `0` | semver patch (no ABI change) |
 | `LIB_ABI_VERSION`   | `1` | coarse ABI compat level — tracks MAJOR |
 
@@ -253,8 +253,8 @@ against an unsupported library version:
 
 ```ca65
 .import LIB_VERSION_MAJOR, LIB_VERSION_MINOR
-.if LIB_VERSION_MAJOR <> 0 .or LIB_VERSION_MINOR < 4
-    .error "this consumer needs c64-x25519 v0.4 or later"
+.if LIB_VERSION_MAJOR <> 0 .or LIB_VERSION_MINOR < 5
+    .error "this consumer needs c64-x25519 v0.5 or later"
 .endif
 ```
 
