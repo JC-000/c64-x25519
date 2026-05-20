@@ -175,6 +175,15 @@ See [`docs/LIBRARY.md`](docs/LIBRARY.md) §4 and §4.1 for the full integration 
 
 Per the [c64-lib-contract](https://github.com/JC-000/c64-lib-contract) ABI contract, consumers can additionally `.import LIB_VERSION_MAJOR, LIB_VERSION_MINOR, LIB_VERSION_PATCH, LIB_ABI_VERSION` and `.if`-guard at assemble time against an unsupported library version — a defense-in-depth assert on top of git-submodule SHA pinning. See `docs/LIBRARY.md` §4.3.
 
+**REU bank base override.** Per [c64-lib-contract §3](https://github.com/JC-000/c64-lib-contract/blob/master/SPEC.md#3-reu-layout-contract), the six contiguous REU banks the library claims (mul tables + carry table + zero block) can be relocated at assemble time:
+
+```sh
+ca65 -D X25519_REU_BANK=3 -o build/x25519_init.o src/x25519_init.s
+# ...rebuild every library .o with the same -D value, then re-archive.
+```
+
+`X25519_REU_BANK` defaults to `0` (banks 0–5). Setting it to `3` shifts the library's claim to banks 3–8, leaving banks 0–2 free for a sibling REU consumer. Every library translation unit must be assembled with the same value because the bank constant is baked in at assemble time. The library's standalone `make` / `make lib` build always uses the default; consumer projects rebuild from source with the override. See `docs/LIBRARY.md` §4.4.
+
 Upstream maintainers can also reproduce the release tarball locally via `make lib` (which builds `build/lib/libx25519.a` and individual `.o` files for in-tree verification) — this is not what downstream projects consume.
 
 ## Testing and audit posture

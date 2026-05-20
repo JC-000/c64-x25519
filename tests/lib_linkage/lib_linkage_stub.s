@@ -70,3 +70,9 @@ public_refs:
 public_version_refs:
         .word LIB_VERSION_MAJOR, LIB_VERSION_MINOR
         .word LIB_VERSION_PATCH, LIB_ABI_VERSION
+
+; REU layout equates from src/reu_config.s. Same .word reference pattern
+; so ld65 pulls reu_config.o out of the archive.
+.import X25519_REU_BANK, X25519_REU_OFFSET
+public_reu_refs:
+        .word X25519_REU_BANK, X25519_REU_OFFSET

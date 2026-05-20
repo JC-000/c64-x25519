@@ -17,7 +17,8 @@ LIB_OBJS = $(BUILD_DIR)/x25519_init.o \
            $(BUILD_DIR)/x25519.o \
            $(BUILD_DIR)/data.o \
            $(BUILD_DIR)/util.o \
-           $(BUILD_DIR)/lib_version.o
+           $(BUILD_DIR)/lib_version.o \
+           $(BUILD_DIR)/reu_config.o
 
 # Separate compilation: each .s file produces its own .o
 CA65_SRCS = $(SRC_DIR)/main.s \
@@ -28,7 +29,8 @@ CA65_SRCS = $(SRC_DIR)/main.s \
             $(SRC_DIR)/x25519.s \
             $(SRC_DIR)/data.s \
             $(SRC_DIR)/util.s \
-            $(SRC_DIR)/lib_version.s
+            $(SRC_DIR)/lib_version.s \
+            $(SRC_DIR)/reu_config.s
 
 CA65_OBJS = $(BUILD_DIR)/main.o $(LIB_OBJS)
 
@@ -86,8 +88,10 @@ test-ref:
 
 # --- ca65 build ----------------------------------------------------------
 
-# Each .s file compiles to its own .o (constants.s is .include'd, not assembled)
-$(BUILD_DIR)/%.o: $(SRC_DIR)/%.s $(SRC_DIR)/constants.s | $(BUILD_DIR)
+# Each .s file compiles to its own .o (constants.s is .include'd by every
+# unit; reu_config.s is .include'd transitively via constants.s and is also
+# its own translation unit for the public .export emission).
+$(BUILD_DIR)/%.o: $(SRC_DIR)/%.s $(SRC_DIR)/constants.s $(SRC_DIR)/reu_config.s | $(BUILD_DIR)
 	$(CA65) -o $@ $<
 
 $(PRG): $(CA65_OBJS) $(CC65_CFG) | $(BUILD_DIR)
@@ -160,7 +164,8 @@ lib-verify: lib $(LIB_VERIFY_PRG)
 	           vic_blank vic_unblank bench_start bench_stop \
 	           bench_cycles_start bench_cycles_stop bench_cycles \
 	           LIB_VERSION_MAJOR LIB_VERSION_MINOR LIB_VERSION_PATCH \
-	           LIB_ABI_VERSION; do \
+	           LIB_ABI_VERSION \
+	           X25519_REU_BANK X25519_REU_OFFSET; do \
 	  grep -q "\\b$$sym\\b" $(LIB_VERIFY_DIR)/stub.labels \
 	    || (echo "FAIL: expected symbol $$sym not in linked binary" && exit 1); \
 	done; \
