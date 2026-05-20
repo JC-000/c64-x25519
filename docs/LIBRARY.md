@@ -218,6 +218,32 @@ being assembled twice if `.include`'d from multiple compilation
 units. Host overrides must be defined *before* the first `.include
 "constants.s"`.
 
+## 4.3 Version constants
+
+The library exports four integer equates per
+[c64-lib-contract §1](https://github.com/JC-000/c64-lib-contract/blob/master/SPEC.md#1-version-identification):
+
+| Symbol | Current value | Semantics |
+|---|---|---|
+| `LIB_VERSION_MAJOR` | `0` | semver major (breaking ABI change) |
+| `LIB_VERSION_MINOR` | `4` | semver minor (additive ABI change) |
+| `LIB_VERSION_PATCH` | `0` | semver patch (no ABI change) |
+| `LIB_ABI_VERSION`   | `1` | coarse ABI compat level — tracks MAJOR |
+
+Consumers should `.import` these and `.if`-guard at assemble time
+against an unsupported library version:
+
+```ca65
+.import LIB_VERSION_MAJOR, LIB_VERSION_MINOR
+.if LIB_VERSION_MAJOR <> 0 .or LIB_VERSION_MINOR < 4
+    .error "this consumer needs c64-x25519 v0.4 or later"
+.endif
+```
+
+The guard fires before the 30-minute link/test cycle, complementing
+git-submodule SHA pinning with a defense-in-depth assert. The
+equates live in `src/lib_version.s`.
+
 ## 5. Public API
 
 See `src/x25519.inc` for the full reference with calling conventions
