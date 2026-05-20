@@ -43,8 +43,17 @@
 ; INITIALIZATION (must be called once before any X25519 / fe25519 op)
 ; ----------------------------------------------------------------------------
 ;
-;   sqtab_init      Build 1024-byte quarter-square table at $7800-$7BFF
-;                   used by mul_8x8. No inputs. Clobbers: A, X, Y.
+;   sqtab_init      Build 1024-byte quarter-square table at
+;                   LIB_SHARED_SQTAB_BASE (default $7800-$7BFF) used by
+;                   mul_8x8. No inputs. Clobbers: A, X, Y. When
+;                   c64-lib-contract §8.1 SHARED_SQTAB_INIT is defined
+;                   at build time, this routine is a no-op stub —
+;                   another library in the link is expected to provide
+;                   the canonical mul_tables_init.
+;
+;   mul_tables_init Contract-§8.1 canonical alias for sqtab_init. Same
+;                   address; either name resolves to the same proc.
+;                   Multi-lib hosts should prefer this name.
 ;
 ;   reu_mul_init    Build full 8x8->16 multiplication tables in REU banks 0-5
 ;                   (256 lo + 256 hi bytes per a, plus pre-doubled tables for
@@ -291,7 +300,7 @@
 ; =============================================================================
 
 ; Imports for downstream use — .include this file to get all public symbols.
-.import sqtab_init, reu_mul_init
+.import sqtab_init, mul_tables_init, reu_mul_init
 .import x25519_clamp, x25519_scalarmult, x25519_base
 .import fe25519_add, fe25519_sub, fe25519_mul, fe25519_sqr
 .import fe25519_copy, fe25519_zero, fe25519_one, fe25519_cswap
@@ -307,3 +316,9 @@
 ; REU layout equates (c64-lib-contract §3). Default 0; override via
 ; ca65 -D X25519_REU_BANK=$N when rebuilding the library from source.
 .import X25519_REU_BANK, X25519_REU_OFFSET
+
+; Shared-primitives manifest (c64-lib-contract §5 / §8.1). Bitmask of
+; the §8.x primitives c64-x25519 consumes. Use for assemble-time
+; collision detection when composing c64-x25519 with another lib that
+; also consumes one of the same primitives. See LIBRARY.md §4.7.
+.import LIB_X25519_SHARED_PRIMITIVES, LIB_SHARED_PRIMITIVES_SQTAB

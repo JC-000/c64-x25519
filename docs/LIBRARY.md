@@ -347,7 +347,80 @@ the current library implementation places each table at offset 0
 within its bank, so the override has no effect today. It exists so
 consumers can assert against it; a future release may honor it.
 
-## 4.6 The `lib-x25519-1764` build variant (v0.6+)
+## 4.6 Shared quarter-square table (c64-lib-contract §8.1)
+
+c64-x25519 v0.6 adopts the **c64-lib-contract §8.1 shared-primitives
+clause** for the 8×8 quarter-square multiplication table. The 1024-
+byte `sqtab_lo` / `sqtab_hi` region is now placed via a single shared
+equate that every adopter agrees on, so multi-lib PRGs link one
+canonical table instead of N copies at N addresses.
+
+The shared equate, defaulted in `src/constants.s`:
+
+```ca65
+.ifndef LIB_SHARED_SQTAB_BASE
+  LIB_SHARED_SQTAB_BASE = $7800
+.endif
+sqtab_lo = LIB_SHARED_SQTAB_BASE
+sqtab_hi = LIB_SHARED_SQTAB_BASE + $0200
+.assert (sqtab_lo & $00ff) = 0, error, "must be page-aligned"
+.assert sqtab_hi = sqtab_lo + $0200, error, "SMC dispatch contract"
+```
+
+Override base via `ca65 --asm-define LIB_SHARED_SQTAB_BASE=$N`
+(applied to every library translation unit). The asserts catch any
+override that breaks page-alignment or the +`$0200` lo→hi delta that
+`mul_8x8`'s SMC dispatch depends on.
+
+### Canonical init entry
+
+```
+mul_tables_init  = sqtab_init     ; (alias, same proc)
+```
+
+Both names resolve to the same routine. `mul_tables_init` is the
+c64-lib-contract canonical name; `sqtab_init` is the library's
+historical name. New code should use `mul_tables_init`.
+
+### `SHARED_SQTAB_INIT` migration gate
+
+When a multi-lib PRG wants exactly one of the linked libraries to own
+the table-build, pass `-D SHARED_SQTAB_INIT=1` to every c64-x25519
+translation unit at build time. With that define set:
+
+- c64-x25519's `sqtab_init` / `mul_tables_init` body collapses to an
+  immediate `rts`. The public symbol still resolves, so existing
+  callers don't break.
+- The host program is responsible for calling some other library's
+  `mul_tables_init` (e.g., c64-https's canonical implementation)
+  before any c64-x25519 field op runs.
+
+Standalone builds (no `-D SHARED_SQTAB_INIT`) build the table
+themselves, as before. **This is the default**; nothing changes for a
+single-lib consumer.
+
+### `LIB_X25519_SHARED_PRIMITIVES` manifest
+
+The library exports a §5 manifest bitmask of the shared primitives it
+consumes:
+
+```ca65
+LIB_SHARED_PRIMITIVES_SQTAB  = $0001     ; c64-lib-contract §8.1 bit
+LIB_X25519_SHARED_PRIMITIVES = LIB_SHARED_PRIMITIVES_SQTAB
+```
+
+A consumer composing c64-x25519 with another sqtab-using library can
+detect the unhandled-double-build case at assemble time:
+
+```ca65
+.import LIB_X25519_SHARED_PRIMITIVES
+.import LIB_OTHER_SHARED_PRIMITIVES
+.assert (LIB_X25519_SHARED_PRIMITIVES .and \
+         LIB_OTHER_SHARED_PRIMITIVES) = 0, error, \
+        "both libs claim a §8 primitive; define SHARED_SQTAB_INIT in one"
+```
+
+## 4.7 The `lib-x25519-1764` build variant (v0.6+)
 
 For consumers targeting a stock 1764 (256 KB REU) instead of the
 default 1750 (512 KB), `make lib-x25519-1764` produces a parallel

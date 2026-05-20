@@ -2,28 +2,84 @@
 ; mul_8x8.s - Quarter-square 8x8→16 multiply + table init
 ;
 ; Extracted from poly1305 for standalone X25519.
-; Quarter-square table: sqtab_lo/hi at $7800-$7BFF (1024 bytes)
+; Quarter-square table: sqtab_lo/hi at LIB_SHARED_SQTAB_BASE +$0000/$0200
+; (default base $7800; 1024 bytes total).
 ; Identity: a*b = floor((a+b)^2/4) - floor((a-b)^2/4)
+;
+; c64-lib-contract §8.1 shared-primitive adoption (v0.6):
+; ---------------------------------------------------------------------------
+; The sqtab base address is published as the source-level equate
+; LIB_SHARED_SQTAB_BASE (default $7800), `.ifndef`-guarded so a
+; multi-lib consumer can override it via
+; `ca65 --asm-define LIB_SHARED_SQTAB_BASE=$N`. Page-alignment +
+; page-delta are hard `.assert`-checked at link time.
+;
+; Why source equate rather than linker-export: mul_8x8 (and the
+; mult66 path inside fe25519_sqr) self-modifies the hi byte of
+; `lda sqtab_lo,x` opcodes at runtime (`@ct_load_lo` / `@ct_load_hi`
+; below). ld65 can't rewrite opcode bytes at link time, so the base
+; address must be known at assemble time. The equate form lets a
+; consumer pin it; the linker no longer needs to know about
+; sqtab_lo / sqtab_hi.
+;
+; Idempotent shared init: a consumer that defines `SHARED_SQTAB_INIT`
+; at build time signals that some other library in the link will
+; provide the canonical `mul_tables_init` entry, and `sqtab_init`'s
+; body in this file becomes a no-op stub. Without the gate (the
+; standalone-build default), `sqtab_init` builds its own table as
+; before. Either way, `mul_tables_init` is exported as a contract-
+; canonical alias for `sqtab_init`.
 ; =============================================================================
 
 .setcpu "6502"
 .include "constants.s"
 
-.export sqtab_init, mul_8x8, poly_prod_lo, poly_prod_hi
+.export sqtab_init, mul_tables_init, mul_8x8, poly_prod_lo, poly_prod_hi
 
-; Quarter-square table addresses (page-aligned for speed). Defined as
-; linker-level SYMBOLS in cfg/x25519.cfg (and cfg/x25519-example.cfg)
-; so that downstream hosts can relocate the SQTAB region without
-; touching this source file. Hosts that move the tables MUST update
-; both the SYMBOLS block and the SQTAB MEMORY entry in their cfg.
-.import sqtab_lo, sqtab_hi
+; sqtab_lo / sqtab_hi / LIB_SHARED_SQTAB_BASE are now defined in
+; constants.s as `.ifndef`-guarded equates (c64-lib-contract §8.1
+; shared-primitive adoption). Every translation unit that `.include`s
+; constants.s sees the same values, so no `.import` or `.export`
+; needed across TUs — each module derives the addresses locally. A
+; multi-lib consumer passes `-D LIB_SHARED_SQTAB_BASE=$N` to every
+; ca65 invocation; every lib agrees on the canonical base.
 
 .segment "CODE"
 
 ; =============================================================================
-; sqtab_init - Build quarter-square lookup table at $7800-$7BFF
+; sqtab_init / mul_tables_init - Build quarter-square lookup table
+;
+; Two names for the same entry point. `sqtab_init` is the historical
+; library name; `mul_tables_init` is the c64-lib-contract §8.1
+; canonical name for the shared primitive. Both point at the same
+; body. Callers can use whichever fits their integration shape:
+;
+;   jsr sqtab_init        ; legacy / standalone-build path
+;   jsr mul_tables_init   ; multi-lib / contract-§8 path
+;
+; When the consumer defines `SHARED_SQTAB_INIT` at build time, the
+; body below is gated out — c64-x25519 trusts that some other library
+; in the link will provide a `mul_tables_init` that populates the
+; canonical `LIB_SHARED_SQTAB_BASE` region before any field op runs.
+; The local `sqtab_init` / `mul_tables_init` symbols still resolve
+; (returning immediately), so existing callers don't break.
+;
+; Idempotency: the body is a deterministic table build over the same
+; `LIB_SHARED_SQTAB_BASE` region; calling it twice from different
+; library initializers in a multi-lib PRG is wasteful but not
+; incorrect. The contract §8.1 expectation is that the host calls
+; the canonical init exactly once.
 ; =============================================================================
+mul_tables_init = sqtab_init    ; canonical contract-§8.1 alias
+
 .proc sqtab_init
+.ifdef SHARED_SQTAB_INIT
+        ; Consumer signaled that another translation unit provides the
+        ; canonical `mul_tables_init`. Skip our table build to avoid
+        ; clobbering the shared region with a second copy of the same
+        ; values (correctness-preserving but wasteful).
+        rts
+.else
         lda #0
         sta sq_acc              ; accumulator = 0
         sta sq_acc+1
@@ -93,6 +149,7 @@
         beq @done
         jmp @loop
 @done:  rts
+.endif  ; SHARED_SQTAB_INIT
 .endproc
 
 ; Temporaries for sqtab_init

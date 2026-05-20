@@ -54,7 +54,7 @@ start:
 ; the relocation entries for each address, which is what ld65 needs
 ; to see to resolve the archive members.
 public_refs:
-        .addr sqtab_init, reu_mul_init
+        .addr sqtab_init, mul_tables_init, reu_mul_init
         .addr x25519_clamp, x25519_scalarmult, x25519_base
         .addr fe25519_add, fe25519_sub, fe25519_mul, fe25519_sqr
         .addr fe25519_copy, fe25519_zero, fe25519_one, fe25519_cswap
@@ -89,6 +89,9 @@ public_reu_refs:
 ; trick to force ld65 archive-member resolution of lib_version.o.
 .import LIB_X25519_ZP_USAGE_BYTES, LIB_X25519_REU_BANKS_USED
 .import LIB_X25519_RESIDENT_BYTES, LIB_X25519_COLD_BYTES
+; c64-lib-contract §8.1 shared-primitives bitmask (v0.6+).
+.import LIB_X25519_SHARED_PRIMITIVES, LIB_SHARED_PRIMITIVES_SQTAB
 public_manifest_refs:
         .word LIB_X25519_ZP_USAGE_BYTES, LIB_X25519_REU_BANKS_USED
         .word LIB_X25519_RESIDENT_BYTES, LIB_X25519_COLD_BYTES
+        .word LIB_X25519_SHARED_PRIMITIVES, LIB_SHARED_PRIMITIVES_SQTAB
