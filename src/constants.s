@@ -139,6 +139,33 @@ fe_wide         = $40
   SQR_DMA_K        = 22          ; outer i < K uses pre-doubled DMA tables
 .endif
 
+; --- c64-lib-contract §8.1: shared 8x8 quarter-square multiply table ---
+; LIB_SHARED_SQTAB_BASE is the page-aligned base of the 1024-byte
+; quarter-square lookup table. sqtab_lo lives at base+$0000,
+; sqtab_hi at base+$0200 (512 B each). Default is $7800 to match
+; the v0.5.0 / pre-§8 layout; a multi-lib consumer overrides via
+; `ca65 --asm-define LIB_SHARED_SQTAB_BASE=$<addr>` (passed to every
+; translation unit so every module agrees on the canonical address).
+;
+; Page-alignment + page-delta are hard-asserted below — a
+; misconfigured override fails at assemble time, not at runtime with
+; a silent table corruption (the failure mode that motivated the
+; SPEC §8 work; see c64-nist-curves' 2026-05-17 incident).
+;
+; Why this lives in constants.s rather than being .export'd: every
+; lib in a multi-lib link defines the equate via `.ifndef`, so
+; duplicate `.export sqtab_lo` across libs would collide at link
+; time. The equate-in-shared-header pattern lets each TU compute
+; the address locally; every TU gets the same answer because every
+; TU sees the same `-D LIB_SHARED_SQTAB_BASE` value.
+.ifndef LIB_SHARED_SQTAB_BASE
+  LIB_SHARED_SQTAB_BASE = $7800
+.endif
+sqtab_lo = LIB_SHARED_SQTAB_BASE
+sqtab_hi = LIB_SHARED_SQTAB_BASE + $0200
+.assert (sqtab_lo & $00ff) = 0, error, "LIB_SHARED_SQTAB_BASE must be page-aligned"
+.assert sqtab_hi = sqtab_lo + $0200, error, "sqtab_hi must equal sqtab_lo + $0200 (SMC dispatch contract; see c64-lib-contract SPEC §8.1)"
+
 ; --- REU (Ram Expansion Unit) registers ---
 .ifndef reu_status
   reu_status      = $df00         ; status register

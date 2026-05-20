@@ -136,6 +136,24 @@ LIB_ABI_VERSION   = 1
 ;   principle be reclaimed after sqtab_init / reu_mul_init return; a
 ;   future release that splits it into a dedicated segment will bump
 ;   this equate.
+;
+; LIB_X25519_SHARED_PRIMITIVES
+;   c64-lib-contract §5 + §8.1 append-only bitmask. One bit per
+;   contract-§8 shared primitive the library consumes:
+;     bit $0001  LIB_SHARED_PRIMITIVES_SQTAB  — 8x8 quarter-square
+;                                                multiply table
+;   c64-x25519 consumes the sqtab primitive (mul_8x8 + the mult66
+;   path inside fe25519_sqr both read sqtab_lo / sqtab_hi). A
+;   consumer composing c64-x25519 with another sqtab-using library
+;   asserts:
+;     .import LIB_X25519_SHARED_PRIMITIVES, LIB_<other>_SHARED_PRIMITIVES
+;     .assert (LIB_X25519_SHARED_PRIMITIVES .and \
+;              LIB_<other>_SHARED_PRIMITIVES \
+;              .and ~LIB_X25519_SHARED_PRIMITIVES) = 0, error, \
+;              "double-claim on a shared primitive — one lib must \
+;               build with SHARED_SQTAB_INIT defined"
+;   to catch the case where both libs would build the same table
+;   without a SHARED_SQTAB_INIT cutover.
 ; =============================================================================
 
 ; X25519_REU_BANK comes in via the `.include "constants.s"` at the top
@@ -155,7 +173,16 @@ LIB_X25519_RESIDENT_BYTES = 9046
 .endif
 LIB_X25519_COLD_BYTES     = 0
 
+; c64-lib-contract §5 / §8.1 shared-primitives bitmask. Bit allocation
+; is append-only — bits are never reused even if a primitive is later
+; deprecated, so old consumer cfg `.assert`s keep parsing. Bit $0001
+; is c64-lib-contract SPEC §8.1's allocation for the sqtab primitive.
+LIB_SHARED_PRIMITIVES_SQTAB = $0001
+LIB_X25519_SHARED_PRIMITIVES = LIB_SHARED_PRIMITIVES_SQTAB
+
 .export LIB_X25519_ZP_USAGE_BYTES: abs
 .export LIB_X25519_REU_BANKS_USED: abs
 .export LIB_X25519_RESIDENT_BYTES: abs
 .export LIB_X25519_COLD_BYTES:     abs
+.export LIB_X25519_SHARED_PRIMITIVES: abs
+.export LIB_SHARED_PRIMITIVES_SQTAB: abs

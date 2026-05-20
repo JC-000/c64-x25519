@@ -23,7 +23,9 @@
 
 ; --- Imports from mul_8x8.s ---
 .import poly_prod_lo, poly_prod_hi
-.import sqtab_lo, sqtab_hi
+; sqtab_lo / sqtab_hi are now `.ifndef`-guarded equates in constants.s
+; (c64-lib-contract §8.1 shared-primitive adoption) — visible here via
+; the `.include "constants.s"` at the top of this file. No .import.
 
 ; --- Imports from x25519_init.s ---
 .import reu_clear_wide, reu_fetch_doubled_row
