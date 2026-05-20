@@ -70,3 +70,11 @@ public_refs:
 public_version_refs:
         .word LIB_VERSION_MAJOR, LIB_VERSION_MINOR
         .word LIB_VERSION_PATCH, LIB_ABI_VERSION
+
+; ZP slot exports from src/zp_config.s. .importzp + .byte references
+; force ld65 to pull zp_config.o out of the archive.
+.importzp fe25519_src1, fe25519_src2, fe25519_dst
+.importzp fe_carry, poly_carry
+public_zp_refs:
+        .byte fe25519_src1, fe25519_src2, fe25519_dst
+        .byte fe_carry, poly_carry

@@ -28,9 +28,11 @@
 ; Makefile's object list.
 
 ; --- Export ZP/constant symbols for VICE label file ---
-; These are equates from constants.s; exporting once here makes them
-; appear in ld65 -Ln output for the Python test harness.
-.exportzp fe25519_src1, fe25519_src2, fe25519_dst
+; fe25519_src1/_src2/_dst (and the other public ZP slots) are now
+; exported by src/zp_config.s per c64-lib-contract §2; do NOT re-export
+; them here or ld65 errors on "Duplicate external identifier".
+; fe_wide stays in constants.s (pinned CT/SMC invariant; not movable),
+; so it's still exported here to land in the VICE label file.
 .exportzp fe_wide
 .export cassette_buf
 .export main_loop                 ; needed by tools/test_issue33_adversarial.py
