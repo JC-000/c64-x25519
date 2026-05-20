@@ -142,12 +142,16 @@ def main():
         avg_sqr = sum(sqr_ticks) / len(sqr_ticks)
         print(f"  Average: {avg_sqr:.1f} jiffies ({avg_sqr * 1000 / 60:.0f} ms)")
 
-        # Estimate full X25519 time
-        # 255 ladder steps × (4 mul + 1 mul_a24 + 2 sqr + 4 add/sub) per step
-        # + 1 inversion (~253 sqr + 11 mul)
-        # Total: ~255*4 + 11 = 1031 muls, 255*2 + 253 = 763 sqrs
-        est_muls = 1031
-        est_sqrs = 763
+        # Estimate full X25519 time.
+        # Measured 2026-05-20 via SQR_DMA_K=0 A/B (docs/REU_USAGE_ANALYSIS.md):
+        # the scalarmult Δcy / sqr Δcy ratio resolves to exactly 1,274 sqrs
+        # per scalarmult, not 763. Breakdown: 255 ladder steps ×
+        # (5 mul + 1 mul_a24 + 4 sqr) + 1 inversion (254 sqr + 11 mul) =
+        # 1,286 muls + 1,274 sqrs. (Prior 2-sqr-per-step / 763-sqr comment
+        # came from an older ladder before AA / BB / (DA+CB)^2 / (DA-CB)^2
+        # all became fe25519_sqr calls.)
+        est_muls = 1286
+        est_sqrs = 1274
         est_total = est_muls * avg_mul + est_sqrs * avg_sqr
         est_sec = est_total / 60  # NTSC
         print(f"\n--- Estimated full X25519 time ---")

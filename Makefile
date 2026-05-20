@@ -3,6 +3,12 @@ CA65 = ca65
 LD65 = ld65
 CC65_CFG = cfg/x25519.cfg
 
+# Extra ca65 flags. Threaded through every .o build rule so callers can
+# rebuild with experimental constants without editing source — e.g.:
+#   CA65FLAGS="-D SQR_DMA_K=0" make clean all
+# Used by the v0.6 REU A/B experiment (docs/REU_USAGE_ANALYSIS.md).
+CA65FLAGS ?=
+
 SRC_DIR = src
 BUILD_DIR = build
 LIB_DIR = $(BUILD_DIR)/lib
@@ -38,7 +44,8 @@ CA65_OBJS = $(BUILD_DIR)/main.o $(LIB_OBJS)
 
 LIBX25519 = $(LIB_DIR)/libx25519.a
 
-.PHONY: all clean test test-slow test-ref test-vice lib lib-verify dist
+.PHONY: all clean test test-slow test-ref test-vice lib lib-verify dist \
+        bench-record perf-diff
 
 all: $(PRG)
 
@@ -95,7 +102,7 @@ test-ref:
 # constants.s and are also their own translation units for the public
 # .exportzp / .export emission).
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.s $(SRC_DIR)/constants.s $(SRC_DIR)/zp_config.s $(SRC_DIR)/reu_config.s | $(BUILD_DIR)
-	$(CA65) -o $@ $<
+	$(CA65) $(CA65FLAGS) -o $@ $<
 
 $(PRG): $(CA65_OBJS) $(CC65_CFG) | $(BUILD_DIR)
 	$(LD65) -C $(CC65_CFG) -o $(PRG) -Ln $(LABELS).raw $(CA65_OBJS)
@@ -178,6 +185,31 @@ lib-verify: lib $(LIB_VERIFY_PRG)
 	done; \
 	bytes=$$(wc -c < $(LIB_VERIFY_PRG)); \
 	echo "OK: $(LIB_VERIFY_PRG) is $$bytes bytes, all expected symbols present"
+
+# --- Performance history tracking --------------------------------------------
+#
+# `make bench-record` builds the library, runs the two bench scripts with
+# JSON sidecars enabled, reads the LIB_X25519_* manifest equates out of
+# build/labels.txt, and appends one row to docs/perf_history.csv tagged
+# with the current git SHA + LIB_VERSION. `make perf-diff` then prints a
+# markdown table of the last two rows so a release reviewer can eyeball
+# the RAM-vs-perf trade.
+#
+# Requires VICE on PATH. The scalarmult bench takes ~5-15 min wall-clock
+# at warp; the fe-ops bench is ~3 min. Both write JSON next to the CSV.
+#
+# Notes:
+#   - The bench writes the CSV row even on uncommitted (dirty) checkouts;
+#     tools/bench_record.py marks the git_sha column with a `-dirty`
+#     suffix so the row is identifiable but not mistaken for an
+#     authoritative release measurement.
+
+bench-record: $(PRG)
+	@set -e; \
+	python3 tools/bench_record.py
+
+perf-diff:
+	@python3 tools/perf_diff.py
 
 # --- Reproducible release tarball --------------------------------------------
 #

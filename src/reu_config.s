@@ -12,12 +12,13 @@
 ; Bank allocation at the default base
 ; -----------------------------------
 ;
-; c64-x25519 claims six contiguous REU banks for its precomputed
-; multiplication tables, allocated as follows (relative to X25519_REU_BANK):
+; c64-x25519 claims five REU banks for its precomputed multiplication
+; tables, allocated as follows (relative to X25519_REU_BANK):
 ;
 ;   bank + 0   ; 8x8->16 mul tables, lo+hi, for a = 0..127   (full bank)
 ;   bank + 1   ; 8x8->16 mul tables, lo+hi, for a = 128..255 (full bank)
-;   bank + 2   ; 64-byte zero block (reu_clear_wide legacy stash)
+;   bank + 2   ; unused (legacy zero stash removed in v0.6 prep — free
+;              ;         for sibling consumers within the reserved range)
 ;   bank + 3   ; 17th-bit carry bytes for doubled tables     (256 bytes/row)
 ;   bank + 4   ; pre-doubled mul tables, lo+hi, a = 0..127   (full bank)
 ;   bank + 5   ; pre-doubled mul tables, lo+hi, a = 128..255 (full bank)
@@ -25,8 +26,9 @@
 ; The library also uses bank + 7 transiently during `reu_probe` (sentinel
 ; round-trip), which is restored before the probe returns.
 ;
-; Total reserved range: 6 contiguous banks. Probe transiently touches a
-; 7th bank but does not claim it.
+; Total claimed range: 5 banks (bank + 2 is held within the bank-allocation
+; window but not touched). Probe transiently touches a 7th bank but does
+; not claim it.
 ;
 ; Default override
 ; ----------------

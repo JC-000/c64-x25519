@@ -29,8 +29,10 @@ patching:
   table claim without source patches.
 - **§5 Aggregate manifest equates** ([#46](https://github.com/JC-000/c64-x25519/issues/46) / [#50](https://github.com/JC-000/c64-x25519/pull/50)): four exports for
   consumer-side cfg fit/collision checks: `LIB_X25519_ZP_USAGE_BYTES = 85`,
-  `LIB_X25519_REU_BANKS_USED = $3F << X25519_REU_BANK`,
-  `LIB_X25519_RESIDENT_BYTES = 9275`, `LIB_X25519_COLD_BYTES = 0`.
+  `LIB_X25519_REU_BANKS_USED = $3B << X25519_REU_BANK` (banks 0, 1, 3, 4, 5),
+  `LIB_X25519_RESIDENT_BYTES = 9224`, `LIB_X25519_COLD_BYTES = 0`.
+  (Bank 2 dropped + 51 CODE bytes reclaimed in v0.6 prep after the
+  REU usage audit — see [`docs/REU_USAGE_ANALYSIS.md`](docs/REU_USAGE_ANALYSIS.md).)
 
 All changes are pure-additive: no symbol removals, no behaviour
 change at default configuration. v0.4.0 consumers can adopt v0.5.0

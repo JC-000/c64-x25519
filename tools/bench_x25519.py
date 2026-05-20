@@ -16,7 +16,11 @@ Uses jsr() with event-based binary monitor checkpoints for reliable
 long-running computation in warp mode.
 
 Usage:
-    python3 tools/bench_x25519.py [--no-verify] [--no-blank]
+    python3 tools/bench_x25519.py [--no-verify] [--no-blank] [--json out.json]
+
+--json writes a machine-readable record (consumed by tools/perf_diff.py
+and the make bench-record pipeline). Fields include cycles, derived jif,
+wall-clock, and whether VIC-II blanking was applied.
 """
 
 import json
@@ -99,6 +103,7 @@ def main():
 
     verify = True
     blank = True
+    json_path = None
 
     args = sys.argv[1:]
     i = 0
@@ -109,6 +114,9 @@ def main():
         elif args[i] == "--no-blank":
             blank = False
             i += 1
+        elif args[i] == "--json" and i + 1 < len(args):
+            json_path = args[i + 1]
+            i += 2
         else:
             i += 1
 
@@ -197,13 +205,31 @@ def main():
             print(f"  C64 real-time: {c64_secs:.1f}s ({c64_secs/60:.2f} min)")
 
             # Verify correctness
+            correct = True
             if verify:
                 if result_bytes == expected:
                     print(f"  Correctness:   PASS (matches RFC 7748)")
                 else:
+                    correct = False
                     print(f"  Correctness:   FAIL")
                     print(f"    expected: {expected.hex()}")
                     print(f"    got:      {result_bytes.hex()}")
+
+            # Optional JSON sidecar for perf_diff.py / make bench-record.
+            if json_path:
+                record = {
+                    "scalarmult_cycles":  cycles,
+                    "scalarmult_jif":     est_jif,
+                    "c64_seconds_ntsc":   c64_secs,
+                    "wall_seconds":       wall_elapsed,
+                    "vic_blanked":        blank,
+                    "verified":           correct if verify else None,
+                    "vector":             "rfc7748_basepoint_0",
+                }
+                with open(json_path, "w") as f:
+                    json.dump(record, f, indent=2, sort_keys=True)
+                    f.write("\n")
+                print(f"\nJSON sidecar written: {json_path}")
 
     print("\nDone.")
 

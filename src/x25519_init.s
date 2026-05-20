@@ -191,31 +191,12 @@
         beq @init_done         ; if wrapped to 0, done
         jmp @outer
 @init_done:
-        ; Stash 64 zero bytes to REU bank 2 offset 0 (for fe_wide zeroing via DMA).
-        ; Build zero buffer by overwriting mul_dma_lo[0..63] (will be overwritten
-        ; by next fetch_mul_row, so safe to corrupt now).
-        ldx #63
-        lda #0
-@zbuf:  sta mul_dma_lo,x
-        dex
-        bpl @zbuf
-        ; STASH 64 bytes from mul_dma_lo to REU bank=2, offset=$0000
-        lda #<(mul_dma_lo)
-        sta reu_c64_lo
-        lda #>(mul_dma_lo)
-        sta reu_c64_hi
-        lda #0
-        sta reu_reu_lo
-        sta reu_reu_hi
-        lda #2+X25519_REU_BANK
-        sta reu_reu_bank
-        lda #64
-        sta reu_len_lo
-        lda #0
-        sta reu_len_hi
-        sta reu_addr_ctrl
-        lda #%10110000         ; execute + autoload + STASH (C64->REU)
-        sta reu_command
+        ; (W3 / v0.6 prep: the legacy "stash 64 zero bytes to REU bank 2
+        ;  offset 0" block that used to live here has been removed.
+        ;  reu_clear_wide was rewritten in v0.4.0 prep (W2) to do a CPU
+        ;  clear of fe_wide; nothing in the library reads from bank 2.
+        ;  Removing the stash frees REU bank 2 for sibling consumers and
+        ;  drops the LIB_X25519_REU_BANKS_USED claim from $3F to $3B.)
 
         ; Pre-configure constant REU registers for fetch routine
         lda #<(mul_dma_lo)
