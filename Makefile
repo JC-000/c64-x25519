@@ -165,7 +165,9 @@ lib-verify: lib $(LIB_VERIFY_PRG)
 	           bench_cycles_start bench_cycles_stop bench_cycles \
 	           LIB_VERSION_MAJOR LIB_VERSION_MINOR LIB_VERSION_PATCH \
 	           LIB_ABI_VERSION \
-	           X25519_REU_BANK X25519_REU_OFFSET; do \
+	           X25519_REU_BANK X25519_REU_OFFSET \
+	           LIB_X25519_ZP_USAGE_BYTES LIB_X25519_REU_BANKS_USED \
+	           LIB_X25519_RESIDENT_BYTES LIB_X25519_COLD_BYTES; do \
 	  grep -q "\\b$$sym\\b" $(LIB_VERIFY_DIR)/stub.labels \
 	    || (echo "FAIL: expected symbol $$sym not in linked binary" && exit 1); \
 	done; \

@@ -71,6 +71,14 @@ public_version_refs:
         .word LIB_VERSION_MAJOR, LIB_VERSION_MINOR
         .word LIB_VERSION_PATCH, LIB_ABI_VERSION
 
+; Manifest aggregate equates (c64-lib-contract §5). Same .word reference
+; trick to force ld65 archive-member resolution of lib_version.o.
+.import LIB_X25519_ZP_USAGE_BYTES, LIB_X25519_REU_BANKS_USED
+.import LIB_X25519_RESIDENT_BYTES, LIB_X25519_COLD_BYTES
+public_manifest_refs:
+        .word LIB_X25519_ZP_USAGE_BYTES, LIB_X25519_REU_BANKS_USED
+        .word LIB_X25519_RESIDENT_BYTES, LIB_X25519_COLD_BYTES
+
 ; REU layout equates from src/reu_config.s. Same .word reference pattern
 ; so ld65 pulls reu_config.o out of the archive.
 .import X25519_REU_BANK, X25519_REU_OFFSET

@@ -182,7 +182,7 @@ ca65 -D X25519_REU_BANK=3 -o build/x25519_init.o src/x25519_init.s
 # ...rebuild every library .o with the same -D value, then re-archive.
 ```
 
-`X25519_REU_BANK` defaults to `0` (banks 0–5). Setting it to `3` shifts the library's claim to banks 3–8, leaving banks 0–2 free for a sibling REU consumer. Every library translation unit must be assembled with the same value because the bank constant is baked in at assemble time. The library's standalone `make` / `make lib` build always uses the default; consumer projects rebuild from source with the override. See `docs/LIBRARY.md` §4.4.
+`X25519_REU_BANK` defaults to `0` (banks 0–5). Setting it to `3` shifts the library's claim to banks 3–8, leaving banks 0–2 free for a sibling REU consumer. Every library translation unit must be assembled with the same value because the bank constant is baked in at assemble time. The library's standalone `make` / `make lib` build always uses the default; consumer projects rebuild from source with the override. See `docs/LIBRARY.md` §4.5 for the override walkthrough and §4.4 for the `LIB_X25519_REU_BANKS_USED` aggregate bitmask consumers can `.assert` against for compile-time collision detection.
 
 Upstream maintainers can also reproduce the release tarball locally via `make lib` (which builds `build/lib/libx25519.a` and individual `.o` files for in-tree verification) — this is not what downstream projects consume.
 
