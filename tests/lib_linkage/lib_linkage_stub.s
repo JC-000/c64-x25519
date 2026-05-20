@@ -64,9 +64,15 @@ public_refs:
         .addr bench_start, bench_stop, bench_ticks
         .addr bench_cycles_start, bench_cycles_stop, bench_cycles
 
-; ZP slot exports from src/zp_config.s. Importing them via .importzp
-; gives us the addresses; referencing here as .byte forces ld65 to
-; pull zp_config.o out of the archive.
+; Version constants — integer equates, referenced via .word so ld65 pulls
+; lib_version.o into the archive resolution. .byte would fail because
+; ca65 cannot prove the import fits in a byte until link time.
+public_version_refs:
+        .word LIB_VERSION_MAJOR, LIB_VERSION_MINOR
+        .word LIB_VERSION_PATCH, LIB_ABI_VERSION
+
+; ZP slot exports from src/zp_config.s. .importzp + .byte references
+; force ld65 to pull zp_config.o out of the archive.
 .importzp fe25519_src1, fe25519_src2, fe25519_dst
 .importzp fe_carry, poly_carry
 public_zp_refs:

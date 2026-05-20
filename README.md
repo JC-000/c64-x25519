@@ -173,6 +173,8 @@ Copy `ORIGIN.txt.template` → `ORIGIN.txt` in your vendored copy, fill in the `
 
 See [`docs/LIBRARY.md`](docs/LIBRARY.md) §4 and §4.1 for the full integration walkthrough.
 
+Per the [c64-lib-contract](https://github.com/JC-000/c64-lib-contract) ABI contract, consumers can additionally `.import LIB_VERSION_MAJOR, LIB_VERSION_MINOR, LIB_VERSION_PATCH, LIB_ABI_VERSION` and `.if`-guard at assemble time against an unsupported library version — a defense-in-depth assert on top of git-submodule SHA pinning. See `docs/LIBRARY.md` §4.3.
+
 Upstream maintainers can also reproduce the release tarball locally via `make lib` (which builds `build/lib/libx25519.a` and individual `.o` files for in-tree verification) — this is not what downstream projects consume.
 
 ## Testing and audit posture

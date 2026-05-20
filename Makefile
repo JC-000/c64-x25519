@@ -17,6 +17,7 @@ LIB_OBJS = $(BUILD_DIR)/x25519_init.o \
            $(BUILD_DIR)/x25519.o \
            $(BUILD_DIR)/data.o \
            $(BUILD_DIR)/util.o \
+           $(BUILD_DIR)/lib_version.o \
            $(BUILD_DIR)/zp_config.o
 
 # Separate compilation: each .s file produces its own .o
@@ -28,6 +29,7 @@ CA65_SRCS = $(SRC_DIR)/main.s \
             $(SRC_DIR)/x25519.s \
             $(SRC_DIR)/data.s \
             $(SRC_DIR)/util.s \
+            $(SRC_DIR)/lib_version.s \
             $(SRC_DIR)/zp_config.s
 
 CA65_OBJS = $(BUILD_DIR)/main.o $(LIB_OBJS)
@@ -161,6 +163,8 @@ lib-verify: lib $(LIB_VERIFY_PRG)
 	           x25_scalar x25_u x25_result \
 	           vic_blank vic_unblank bench_start bench_stop \
 	           bench_cycles_start bench_cycles_stop bench_cycles \
+	           LIB_VERSION_MAJOR LIB_VERSION_MINOR LIB_VERSION_PATCH \
+	           LIB_ABI_VERSION \
 	           fe25519_src1 fe25519_src2 fe25519_dst \
 	           fe_carry poly_carry; do \
 	  grep -q "\\b$$sym\\b" $(LIB_VERIFY_DIR)/stub.labels \

@@ -23,6 +23,23 @@
 ; See docs/LIBRARY.md for the full integration guide.
 ;
 ; ----------------------------------------------------------------------------
+; VERSION CONSTANTS (assemble-time guards for consumer pinning)
+; ----------------------------------------------------------------------------
+;
+;   LIB_VERSION_MAJOR   semver major (currently 0)
+;   LIB_VERSION_MINOR   semver minor (currently 4)
+;   LIB_VERSION_PATCH   semver patch (currently 0)
+;   LIB_ABI_VERSION     coarse ABI compat level (currently 1)
+;
+; Per c64-lib-contract §1, consumers may assemble-time guard against an
+; unsupported library version:
+;
+;     .import LIB_VERSION_MAJOR, LIB_VERSION_MINOR
+;     .if LIB_VERSION_MAJOR <> 0 .or LIB_VERSION_MINOR < 4
+;         .error "this consumer needs c64-x25519 v0.4 or later"
+;     .endif
+;
+; ----------------------------------------------------------------------------
 ; INITIALIZATION (must be called once before any X25519 / fe25519 op)
 ; ----------------------------------------------------------------------------
 ;
@@ -250,3 +267,7 @@
 .import x25_scalar, x25_u, x25_result, x25_basepoint
 .import vic_blank, vic_unblank, bench_start, bench_stop, bench_ticks
 .import bench_cycles_start, bench_cycles_stop, bench_cycles
+
+; Library version constants (c64-lib-contract §1).
+.import LIB_VERSION_MAJOR, LIB_VERSION_MINOR, LIB_VERSION_PATCH
+.import LIB_ABI_VERSION
