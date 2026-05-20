@@ -6,6 +6,57 @@ An optimized implementation of X25519 / Curve25519 scalar multiplication written
 
 ## Status
 
+**v0.6.0 — DRAFT until tagged (target 2026-05-20).** RAM-reclaim,
+bench-rehab, build-variant, and c64-lib-contract §8.1 adoption
+release. MIT licensed. **Pure-additive ABI** vs v0.5.0: zero
+removals, no default behavioural change.
+
+Headline (vs v0.5.0):
+
+- **−51 B RESIDENT_BYTES** from removing the dead bank-2 REU zero
+  stash; `LIB_X25519_REU_BANKS_USED` flips `$3F → $3B` (banks 0, 1,
+  3, 4, 5; bank 2 free for sibling consumers). PR [#54](https://github.com/JC-000/c64-x25519/pull/54).
+- **New `make lib-x25519-1764` build variant** — opt-in archive
+  targeting 256 KB REU (stock 1764). Drops the doubled-mul cluster
+  (banks 3/4/5), reports `LIB_X25519_REU_BANKS_USED = $03` /
+  `LIB_X25519_RESIDENT_BYTES = 9046`. Costs +16.2 % on scalarmult
+  (15,352 → 17,845 jif) in exchange for −192 KB REU + −178 B CODE,
+  lowering the hardware floor from 1750 → 1764. PR [#55](https://github.com/JC-000/c64-x25519/pull/55).
+- **Bench observability rehab.** `tools/bench_fe_ops.py` switched
+  to the CIA1 cycle counter (cycle-exact, sei-safe), both bench
+  scripts emit `--json` sidecars. `src/util.s` `bench_start /
+  bench_stop` restored to a self-contained `php / plp` shape —
+  fixes a silent PR #39 regression that had been **trivially
+  passing the CT cycle guards** (`tools/test_ct_*_cycles.py`) by
+  returning `0 jif spread` since v0.4.0. Post-fix, those guards
+  measure real per-call jif (≤ 0.005 jif spread; CT property
+  holds and is now actually verified). PRs [#54](https://github.com/JC-000/c64-x25519/pull/54) +
+  [#55](https://github.com/JC-000/c64-x25519/pull/55).
+- **c64-lib-contract §8.1 adoption** — the canonical shared
+  quarter-square table. New equate `LIB_SHARED_SQTAB_BASE`
+  (default `$7800`, `.ifndef`-overridable); new `mul_tables_init`
+  canonical alias; new `SHARED_SQTAB_INIT` migration gate that
+  shrinks `mul_8x8.o` CODE 251 → 102 B (−149 B) when a multi-lib
+  host supplies the canonical init elsewhere; new
+  `LIB_X25519_SHARED_PRIMITIVES = $0001` (`LIB_SHARED_PRIMITIVES_SQTAB`)
+  manifest equate per SPEC §5. PR [#56](https://github.com/JC-000/c64-x25519/pull/56).
+- **Perf-tracking infrastructure.** `make bench-record` appends a
+  row to `docs/perf_history.csv`; `make perf-diff` prints the
+  markdown delta vs the previous row; `tools/perf_diff.py` powers
+  the diff. Used at every v0.6 release boundary; documented
+  trade-offs in `docs/REU_USAGE_ANALYSIS.md`. PR [#54](https://github.com/JC-000/c64-x25519/pull/54).
+- **v1.0 deprecation notice.** `src/x25519.inc` flags `mul_by_38`,
+  `reu_fetch_mul_row`, `x25_basepoint` for removal in v1.0
+  (uncalled / superseded). PR [#54](https://github.com/JC-000/c64-x25519/pull/54).
+
+Runtime is bit-identical to v0.5.0 at the default configuration
+(scalarmult `261,681,380` cy / `15,352` jif; RFC 7748 vec-0 PASS).
+The `+0.02 %` shift vs v0.5.0's `261,640,265` cy is pure code-layout
+noise from the bank-2 stash removal.
+
+See [`docs/RELEASE_NOTES_v0.6.0.md`](docs/RELEASE_NOTES_v0.6.0.md)
+for the full story.
+
 **v0.5.0 released 2026-05-20** — [GitHub release](https://github.com/JC-000/c64-x25519/releases/tag/v0.5.0), MIT licensed. c64-lib-contract §1/§2/§3/§5 adoption.
 A library-ingestion release with no CT or correctness changes.
 v0.5.0 ships the four sections of [c64-lib-contract](https://github.com/JC-000/c64-lib-contract)
