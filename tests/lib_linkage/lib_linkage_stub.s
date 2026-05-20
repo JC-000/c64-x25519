@@ -63,3 +63,12 @@ public_refs:
         .addr vic_blank, vic_unblank
         .addr bench_start, bench_stop, bench_ticks
         .addr bench_cycles_start, bench_cycles_stop, bench_cycles
+
+; ZP slot exports from src/zp_config.s. Importing them via .importzp
+; gives us the addresses; referencing here as .byte forces ld65 to
+; pull zp_config.o out of the archive.
+.importzp fe25519_src1, fe25519_src2, fe25519_dst
+.importzp fe_carry, poly_carry
+public_zp_refs:
+        .byte fe25519_src1, fe25519_src2, fe25519_dst
+        .byte fe_carry, poly_carry
