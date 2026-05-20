@@ -271,3 +271,7 @@
 ; Library version constants (c64-lib-contract §1).
 .import LIB_VERSION_MAJOR, LIB_VERSION_MINOR, LIB_VERSION_PATCH
 .import LIB_ABI_VERSION
+
+; REU layout equates (c64-lib-contract §3). Default 0; override via
+; ca65 -D X25519_REU_BANK=$N when rebuilding the library from source.
+.import X25519_REU_BANK, X25519_REU_OFFSET

@@ -25,6 +25,15 @@
 .ifndef CONSTANTS_S_INCLUDED
 CONSTANTS_S_INCLUDED = 1
 
+; Public REU layout configuration (X25519_REU_BANK / X25519_REU_OFFSET).
+; The library uses six contiguous REU banks starting at X25519_REU_BANK
+; (default 0). See src/reu_config.s and c64-lib-contract SPEC §3.
+; REU_CONFIG_NO_EXPORTS suppresses the .export emission here so only
+; reu_config.o (assembled standalone) emits the public symbols and ld65
+; doesn't error on "Duplicate external identifier".
+REU_CONFIG_NO_EXPORTS = 1
+.include "reu_config.s"
+
 ; --- Kernal routines ---
 ; All KERNAL / hardware-register / system-address equates are wrapped in
 ; `.ifndef` so non-C64 hosts (e.g. C128, embedded, simulators) can redirect

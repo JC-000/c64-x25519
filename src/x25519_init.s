@@ -65,8 +65,8 @@
         lda reu_init_a
         asl                    ; A = a * 2 (high byte of offset)
         sta reu_reu_hi
-        lda #0
-        adc #0                 ; carry into bank if a >= 128
+        lda #X25519_REU_BANK
+        adc #0                 ; bank = X25519_REU_BANK + (a >> 7)
         sta reu_reu_bank
         lda #0
         sta reu_len_lo
@@ -86,8 +86,8 @@
         sta reu_reu_lo
         lda reu_init_a
         asl                    ; a*2 (carry = bit 7 of a)
-        lda #0
-        adc #0                 ; bank = a >> 7
+        lda #X25519_REU_BANK
+        adc #0                 ; bank = X25519_REU_BANK + (a >> 7)
         sta reu_reu_bank
         lda reu_init_a
         asl                    ; a*2
@@ -131,8 +131,8 @@
         lda reu_init_a
         asl                    ; A = a*2, carry = bit7
         sta reu_reu_hi
-        lda #4
-        adc #0                 ; bank = 4 + carry
+        lda #4+X25519_REU_BANK
+        adc #0                 ; bank = X25519_REU_BANK + 4 + (a >> 7)
         sta reu_reu_bank
         lda #0
         sta reu_len_lo
@@ -153,8 +153,8 @@
         sta reu_reu_lo
         lda reu_init_a
         asl                    ; a*2
-        lda #4
-        adc #0                 ; bank = 4 + (a>>7)
+        lda #4+X25519_REU_BANK
+        adc #0                 ; bank = X25519_REU_BANK + 4 + (a >> 7)
         sta reu_reu_bank
         lda reu_init_a
         asl
@@ -177,7 +177,7 @@
         sta reu_reu_lo
         lda reu_init_a
         sta reu_reu_hi
-        lda #3
+        lda #3+X25519_REU_BANK
         sta reu_reu_bank
         lda #0
         sta reu_len_lo
@@ -207,7 +207,7 @@
         lda #0
         sta reu_reu_lo
         sta reu_reu_hi
-        lda #2
+        lda #2+X25519_REU_BANK
         sta reu_reu_bank
         lda #64
         sta reu_len_lo
@@ -245,8 +245,8 @@ reu_init_b:     .byte 0
         lda mul_cached_a
         asl                    ; A = multiplier * 2, carry = bit 7
         sta reu_reu_hi
-        lda #0
-        adc #0                 ; bank = carry from shift
+        lda #X25519_REU_BANK
+        adc #0                 ; bank = X25519_REU_BANK + (a >> 7)
         sta reu_reu_bank
         lda #%10110001         ; execute + autoload + FETCH (REU->C64)
         sta reu_command
@@ -278,8 +278,8 @@ reu_init_b:     .byte 0
         lda mul_cached_a
         asl                    ; A = a*2, carry = bit7
         sta reu_reu_hi
-        lda #4
-        adc #0                 ; bank = 4 + (a>>7)
+        lda #4+X25519_REU_BANK
+        adc #0                 ; bank = X25519_REU_BANK + 4 + (a >> 7)
         sta reu_reu_bank
         lda #%10110001
         sta reu_command
@@ -297,7 +297,7 @@ reu_init_b:     .byte 0
         sta reu_len_hi         ; 256 bytes
         lda mul_cached_a
         sta reu_reu_hi
-        lda #3
+        lda #3+X25519_REU_BANK
         sta reu_reu_bank
         lda #%10110001
         sta reu_command
@@ -419,7 +419,7 @@ reu_init_b:     .byte 0
         sta reu_reu_lo
         sta reu_reu_hi
         sta reu_addr_ctrl
-        lda #7
+        lda #7+X25519_REU_BANK
         sta reu_reu_bank
         lda #1
         sta reu_len_lo
@@ -441,7 +441,7 @@ reu_init_b:     .byte 0
         sta reu_reu_lo
         sta reu_reu_hi
         sta reu_addr_ctrl
-        lda #7
+        lda #7+X25519_REU_BANK
         sta reu_reu_bank
         lda #1
         sta reu_len_lo
@@ -462,7 +462,7 @@ reu_init_b:     .byte 0
         sta reu_reu_lo
         sta reu_reu_hi
         sta reu_addr_ctrl
-        lda #7
+        lda #7+X25519_REU_BANK
         sta reu_reu_bank
         lda #1
         sta reu_len_lo
@@ -486,7 +486,7 @@ reu_init_b:     .byte 0
         sta reu_reu_lo
         sta reu_reu_hi
         sta reu_addr_ctrl
-        lda #7
+        lda #7+X25519_REU_BANK
         sta reu_reu_bank
         lda #1
         sta reu_len_lo

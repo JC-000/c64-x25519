@@ -78,3 +78,9 @@ public_version_refs:
 public_zp_refs:
         .byte fe25519_src1, fe25519_src2, fe25519_dst
         .byte fe_carry, poly_carry
+
+; REU layout equates from src/reu_config.s. .word reference forces ld65
+; to pull reu_config.o out of the archive.
+.import X25519_REU_BANK, X25519_REU_OFFSET
+public_reu_refs:
+        .word X25519_REU_BANK, X25519_REU_OFFSET

@@ -18,7 +18,8 @@ LIB_OBJS = $(BUILD_DIR)/x25519_init.o \
            $(BUILD_DIR)/data.o \
            $(BUILD_DIR)/util.o \
            $(BUILD_DIR)/lib_version.o \
-           $(BUILD_DIR)/zp_config.o
+           $(BUILD_DIR)/zp_config.o \
+           $(BUILD_DIR)/reu_config.o
 
 # Separate compilation: each .s file produces its own .o
 CA65_SRCS = $(SRC_DIR)/main.s \
@@ -30,7 +31,8 @@ CA65_SRCS = $(SRC_DIR)/main.s \
             $(SRC_DIR)/data.s \
             $(SRC_DIR)/util.s \
             $(SRC_DIR)/lib_version.s \
-            $(SRC_DIR)/zp_config.s
+            $(SRC_DIR)/zp_config.s \
+            $(SRC_DIR)/reu_config.s
 
 CA65_OBJS = $(BUILD_DIR)/main.o $(LIB_OBJS)
 
@@ -89,9 +91,10 @@ test-ref:
 # --- ca65 build ----------------------------------------------------------
 
 # Each .s file compiles to its own .o (constants.s is .include'd by every
-# unit; zp_config.s is .include'd transitively via constants.s and is also
-# its own translation unit for the public .exportzp emission).
-$(BUILD_DIR)/%.o: $(SRC_DIR)/%.s $(SRC_DIR)/constants.s $(SRC_DIR)/zp_config.s | $(BUILD_DIR)
+# unit; zp_config.s + reu_config.s are .include'd transitively via
+# constants.s and are also their own translation units for the public
+# .exportzp / .export emission).
+$(BUILD_DIR)/%.o: $(SRC_DIR)/%.s $(SRC_DIR)/constants.s $(SRC_DIR)/zp_config.s $(SRC_DIR)/reu_config.s | $(BUILD_DIR)
 	$(CA65) -o $@ $<
 
 $(PRG): $(CA65_OBJS) $(CC65_CFG) | $(BUILD_DIR)
@@ -166,7 +169,8 @@ lib-verify: lib $(LIB_VERIFY_PRG)
 	           LIB_VERSION_MAJOR LIB_VERSION_MINOR LIB_VERSION_PATCH \
 	           LIB_ABI_VERSION \
 	           fe25519_src1 fe25519_src2 fe25519_dst \
-	           fe_carry poly_carry; do \
+	           fe_carry poly_carry \
+	           X25519_REU_BANK X25519_REU_OFFSET; do \
 	  grep -q "\\b$$sym\\b" $(LIB_VERIFY_DIR)/stub.labels \
 	    || (echo "FAIL: expected symbol $$sym not in linked binary" && exit 1); \
 	done; \

@@ -262,6 +262,53 @@ The guard fires before the 30-minute link/test cycle, complementing
 git-submodule SHA pinning with a defense-in-depth assert. The
 equates live in `src/lib_version.s`.
 
+## 4.4 Overriding the REU bank base
+
+The library claims six contiguous REU banks for its precomputed
+multiplication tables. By default these are banks 0–5 (plus bank 7
+transiently for `reu_probe`). A consumer that uses the REU for other
+purposes (P-256 precompute, ChaCha20 scratch, etc.) can relocate the
+library's bank claim via `src/reu_config.s` (per
+[c64-lib-contract §3](https://github.com/JC-000/c64-lib-contract/blob/master/SPEC.md#3-reu-layout-contract)).
+
+Two exported equates, both `.ifndef`-guarded:
+
+| Symbol | Default | What it controls |
+|---|---|---|
+| `X25519_REU_BANK` | `0` | Base bank for all six tables |
+| `X25519_REU_OFFSET` | `$0000` | Within-bank base offset (currently must remain `$0000`; tables span full banks) |
+
+**Bank allocation, relative to `X25519_REU_BANK`:**
+
+```
+  bank + 0   : 8x8->16 mul tables, lo+hi, for a =   0..127  (full bank)
+  bank + 1   : 8x8->16 mul tables, lo+hi, for a = 128..255  (full bank)
+  bank + 2   : 64-byte zero block (legacy reu_clear_wide stash)
+  bank + 3   : 17th-bit carry bytes for doubled tables (256 B/row)
+  bank + 4   : pre-doubled mul tables, lo+hi, a =   0..127  (full bank)
+  bank + 5   : pre-doubled mul tables, lo+hi, a = 128..255  (full bank)
+```
+
+The library also transiently touches `bank + 7` during `reu_probe`,
+restoring it before the probe returns.
+
+**Override usage:**
+
+```sh
+ca65 -D X25519_REU_BANK=3 -o build/x25519_init.o src/x25519_init.s
+# ...rebuild every library .o with the same -D, then re-archive.
+```
+
+The override must be applied to every library translation unit
+because the bank constant is baked in at assemble time. The
+library's own `make` / `make lib` always uses the default. Consumer
+projects rebuild from source with their preferred bank base.
+
+`X25519_REU_OFFSET` is published as a contract-compliance equate;
+the current library implementation places each table at offset 0
+within its bank, so the override has no effect today. It exists so
+consumers can assert against it; a future release may honor it.
+
 ## 5. Public API
 
 See `src/x25519.inc` for the full reference with calling conventions
