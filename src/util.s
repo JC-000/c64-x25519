@@ -29,58 +29,59 @@
 .segment "CODE"
 
 ; =============================================================================
-; Benchmark timer routines
+; Benchmark timer routines (jiffy-clock based)
 ;
-; bench_start / bench_stop preserve the caller's I-flag (interrupt-disable)
-; state via a static one-byte slot `bench_saved_p`. The pair previously
-; used raw `sei` / `cli`, which silently re-enabled IRQs at bench_stop
-; even when the caller had been running with IRQs disabled (e.g. a host
-; that wraps the bench in its own `php / sei … plp`). The php/plp pair
-; below records the caller's status register at bench_start and restores
-; it at bench_stop, leaving the I-flag exactly as the caller had it.
+; bench_start and bench_stop are self-contained: each one saves the
+; caller's P (incl. I-flag) on entry, masks IRQs for the brief window
+; in which it touches the jiffy clock or bench_ticks, and restores the
+; caller's P on exit via plp. The body of the bench window (between
+; bench_start's rts and bench_stop's jsr) runs with WHATEVER I-flag the
+; caller had set up before calling bench_start.
 ;
-; LIMITATION: the slot is one byte, so bench_start / bench_stop pairs
-; cannot be nested. This matches the existing `bench_ticks` 3-byte slot,
-; which is also a single-shot global.
+; Why this matters: the kernal IRQ handler advances the jiffy clock at
+; \$A0-\$A2 at 60 Hz. If the body runs with IRQs masked, the jiffy
+; clock doesn't tick and bench_ticks reports ~0 jif. A pre-v0.6 version
+; of this pair had `sei` in bench_start without a matching `cli` /
+; `plp` before the rts — every bench_start / bench_stop window under
+; that version reported 0 jif regardless of actual work. Callers that
+; ran with IRQs already masked (e.g. x25519_scalarmult, which php /
+; sei...plp's its whole body as a CT defence) still see 0 jif and
+; should use bench_cycles_start / bench_cycles_stop (CIA1) below.
+;
+; Single-shot: bench_ticks is a 3-byte global. bench_start / bench_stop
+; pairs cannot be nested.
 ; =============================================================================
 
-; bench_start - Reset jiffy clock and start timing.
-;               Saves caller's processor status (incl. I flag) to
-;               bench_saved_p; matched by bench_stop's plp.
+; bench_start - Reset jiffy clock to 0 and return with the caller's
+;               I-flag intact, so the timed body runs under whatever
+;               IRQ state the caller had on entry.
 .proc bench_start
-        php                     ; save caller's P register
-        pla                     ; pull P into A
-        sta bench_saved_p       ; stash for bench_stop
-        sei                     ; mask IRQs while we zero the jiffy clock
+        php                     ; save caller's P (incl. I-flag) on stack
+        sei                     ; mask IRQs for the 3-store window only
         lda #0
         sta jiffy_clock
         sta jiffy_clock+1
         sta jiffy_clock+2
+        plp                     ; restore caller's P (incl. original I-flag)
         rts
 .endproc
 
-; bench_stop - Read jiffy clock into bench_ticks (3 bytes), then restore
-;              the caller's processor status saved by bench_start (bench_saved_p
-;              -> P via pha/plp), so the I flag returns to its prior state.
+; bench_stop - Snapshot jiffy clock into bench_ticks (3 bytes). The
+;              caller's P is preserved by the matched php / plp pair.
 .proc bench_stop
-        ; (No SEI/CLI here: bench_start already left IRQs masked, and the
-        ; caller's I flag is restored via plp below.)
+        php                     ; save caller's P for symmetry with bench_start
+        sei                     ; brief window for atomic 3-byte snapshot
         lda jiffy_clock
         sta bench_ticks
         lda jiffy_clock+1
         sta bench_ticks+1
         lda jiffy_clock+2
         sta bench_ticks+2
-        lda bench_saved_p       ; recover caller's P
-        pha
-        plp                     ; restore caller's I flag (and full P)
+        plp                     ; restore caller's P
         rts
 .endproc
 
 bench_ticks:    .res 3, 0
-bench_saved_p:  .byte 0         ; static slot for caller's I-flag across
-                                ; bench_start / bench_stop. Single-shot:
-                                ; bench_start/stop pairs cannot be nested.
 
 ; =============================================================================
 ; CIA1-based 32-bit cycle counter (sei-safe)

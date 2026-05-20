@@ -272,8 +272,8 @@ compile + VICE test cycle:
 | Symbol | Default value | What it reports |
 |---|---|---|
 | `LIB_X25519_ZP_USAGE_BYTES` | `85` | Total bytes of ZP slots the library claims (sum of `.exportzp`-ed slots in `src/zp_config.s` + the pinned `fe_wide` region) |
-| `LIB_X25519_REU_BANKS_USED` | `$3B` | Bitmask of REU banks claimed for mul tables (banks 0, 1, 3, 4, 5 at the default base). Computed as `$3B << X25519_REU_BANK`, so an `-D X25519_REU_BANK=$N` override shifts the mask automatically. Bank 2 is *not* claimed (legacy zero stash removed in v0.6 prep — free for sibling consumers) |
-| `LIB_X25519_RESIDENT_BYTES` | `9224` | Approximate code + data + sqtab footprint that must remain CPU-resident (−51 B vs v0.5.0 after bank-2 stash removal) |
+| `LIB_X25519_REU_BANKS_USED` | `$3B` default / `$03` for `lib-x25519-1764` | Bitmask of REU banks claimed for mul tables. **Default build** (banks 0, 1, 3, 4, 5): `$3B << X25519_REU_BANK`. **1764 variant** (`make lib-x25519-1764`, `SQR_DMA_K=0`): `$03 << X25519_REU_BANK` — banks 0, 1 only, drops the doubled-table cluster. Bank 2 is never claimed in either build. See [`REU_USAGE_ANALYSIS.md`](REU_USAGE_ANALYSIS.md) §"Group B SHIPPED" for the variant rationale + measured trade-offs |
+| `LIB_X25519_RESIDENT_BYTES` | `9224` default / `9046` for `lib-x25519-1764` | Approximate code + data + sqtab footprint that must remain CPU-resident. Default −51 B vs v0.5.0 after bank-2 stash removal; 1764 variant −178 B further after the gated-out doubled-table init |
 | `LIB_X25519_COLD_BYTES` | `0` | Approximate footprint that a consumer MAY overlay-page (currently 0 — no overlay candidates) |
 
 The values are approximate ("within 5% is fine" per SPEC §5). The
@@ -346,6 +346,43 @@ projects rebuild from source with their preferred bank base.
 the current library implementation places each table at offset 0
 within its bank, so the override has no effect today. It exists so
 consumers can assert against it; a future release may honor it.
+
+## 4.6 The `lib-x25519-1764` build variant (v0.6+)
+
+For consumers targeting a stock 1764 (256 KB REU) instead of the
+default 1750 (512 KB), `make lib-x25519-1764` produces a parallel
+archive under `build-1764/lib/` that drops the pre-doubled
+multiplication tables in banks 3/4/5. Trade: **+16.2 % scalarmult
+cost in exchange for −192 KB REU + −178 B CODE**, plus the minimum
+REU spec drops from 512 KB to 256 KB.
+
+```sh
+make lib-x25519-1764      # build the variant
+ls build-1764/lib/        # libx25519.a + .o files + x25519.inc + cfg
+```
+
+Manifest equates in the variant archive report the smaller claim:
+
+| Equate | Default build | 1764 variant |
+|---|---|---|
+| `LIB_X25519_REU_BANKS_USED` | `$3B` (banks 0, 1, 3, 4, 5) | `$03` (banks 0, 1) |
+| `LIB_X25519_RESIDENT_BYTES` | `9224` | `9046` |
+| `LIB_X25519_ZP_USAGE_BYTES` | `85` | `85` (unchanged) |
+| `LIB_VERSION_*` | `0.6.x` | `0.6.x` (same source tree) |
+
+Mechanism: a single `-D SQR_DMA_K=0` define (threaded through
+`$(CA65FLAGS)` in the Makefile) makes `fe25519_sqr`'s `bcs
+@sqr_use_mult66` always taken, so the DMA dispatch never fires. The
+matching `.if ::SQR_DMA_K` guards in `src/x25519_init.s:reu_mul_init`
+and `src/lib_version.s` then gate out the doubled-table generation
++ stash sections and re-emit the smaller bank/resident equates.
+
+The default build is unchanged at the source level — the variant is
+opt-in. Downstream projects vendoring the source can rebuild either
+form from the same tree by toggling the make target.
+
+See [`docs/REU_USAGE_ANALYSIS.md`](REU_USAGE_ANALYSIS.md) for the
+full cost-benefit analysis and the measured A/B results.
 
 ## 5. Public API
 

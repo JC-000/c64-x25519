@@ -45,7 +45,7 @@ CA65_OBJS = $(BUILD_DIR)/main.o $(LIB_OBJS)
 LIBX25519 = $(LIB_DIR)/libx25519.a
 
 .PHONY: all clean test test-slow test-ref test-vice lib lib-verify dist \
-        bench-record perf-diff
+        bench-record perf-diff lib-x25519-1764
 
 all: $(PRG)
 
@@ -185,6 +185,40 @@ lib-verify: lib $(LIB_VERIFY_PRG)
 	done; \
 	bytes=$$(wc -c < $(LIB_VERIFY_PRG)); \
 	echo "OK: $(LIB_VERIFY_PRG) is $$bytes bytes, all expected symbols present"
+
+# --- v0.6: 1764-targeted build variant (Group B) -----------------------------
+#
+# `make lib-x25519-1764` produces a library archive that omits the
+# pre-doubled mul tables in REU banks 3/4/5. fe25519_sqr's hybrid
+# DMA-vs-mult66 path is forced to always-mult66 (SQR_DMA_K=0), so the
+# DMA dispatch never fires and the doubled tables are never read.
+# reu_mul_init's @dbl_gen + doubled-stash sections are gated out at
+# assemble time by the same `.if SQR_DMA_K > 0` check.
+#
+# Trade-off (measured, see docs/REU_USAGE_ANALYSIS.md):
+#   +16.2 % scalarmult cost (15,350 jif -> 17,838 jif, ~+41 s NTSC)
+#   -192 KB REU (banks 3,4,5 freed)
+#   -1 init pass (-~600 ms wall-clock at cold boot)
+#   minimum REU spec lowered from 512 KB (1750) to 256 KB (1764)
+#
+# Output goes to build-1764/ so it doesn't clobber the default build.
+# Internally re-invokes `make lib lib-verify` with BUILD_DIR overridden
+# and CA65FLAGS set; the override propagates to every .s -> .o rule
+# via $(CA65FLAGS), and to lib_version.o + x25519_init.o via the
+# `.if SQR_DMA_K > 0` guards in those translation units.
+
+lib-x25519-1764:
+	@echo "=== Building lib-x25519-1764 (Group B: SQR_DMA_K=0, banks 0,1 only) ==="
+	rm -rf build-1764
+	$(MAKE) BUILD_DIR=build-1764 LIB_DIR=build-1764/lib \
+	        CA65FLAGS="-D SQR_DMA_K=0" \
+	        lib lib-verify
+	@echo
+	@echo "Manifest equates for the 1764 variant:"
+	@grep "LIB_X25519_\|LIB_VERSION_" build-1764/lib_verify/stub.labels | sort
+	@echo
+	@echo "Segment sizes (lib .o):"
+	@od65 --dump-segsize build-1764/lib/x25519_init.o build-1764/lib/fe25519.o build-1764/lib/x25519.o build-1764/lib/data.o build-1764/lib/mul_8x8.o build-1764/lib/util.o 2>&1 | awk '/^build-1764|CODE:|DATA:/'
 
 # --- Performance history tracking --------------------------------------------
 #
