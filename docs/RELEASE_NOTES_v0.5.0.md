@@ -1,6 +1,6 @@
 # c64-x25519 v0.5.0 — c64-lib-contract §1/§2/§3/§5 adoption
 
-**Status:** DRAFT until tagged. v0.5.0 is the library-ingestion
+**Status:** Released 2026-05-20. v0.5.0 is the library-ingestion
 release: it ships the four sections of [c64-lib-contract](https://github.com/JC-000/c64-lib-contract)
 required for consumer projects (c64-https, c64-wireguard) to compose
 c64-x25519 alongside sibling crypto libraries without source patches.
@@ -361,8 +361,8 @@ assembly + docs + linker config example + LICENSE +
 ORIGIN.txt.template). Adds three config files over the v0.4.0
 manifest (`lib_version.s`, `zp_config.s`, `reu_config.s`).
 
-- Size: **DRAFT_SIZE_TBD** bytes
-- SHA256: `DRAFT_SHA_TBD`
+- Size: **81,213 bytes**
+- SHA256: `d79fe1a508c6f8612e2290e396c2ce3928a6c3b0c3d672e755418b83b0182a91`
 - Download: https://github.com/JC-000/c64-x25519/releases/download/v0.5.0/c64-x25519-v0.5.0.tar.gz
 
 Built reproducibly from the v0.5.0 tag. Recipe is checked in at

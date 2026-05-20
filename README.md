@@ -6,7 +6,7 @@ An optimized implementation of X25519 / Curve25519 scalar multiplication written
 
 ## Status
 
-**v0.5.0 in preparation — c64-lib-contract §1/§2/§3/§5 adoption.**
+**v0.5.0 released 2026-05-20** — [GitHub release](https://github.com/JC-000/c64-x25519/releases/tag/v0.5.0), MIT licensed. c64-lib-contract §1/§2/§3/§5 adoption.
 A library-ingestion release with no CT or correctness changes.
 v0.5.0 ships the four sections of [c64-lib-contract](https://github.com/JC-000/c64-lib-contract)
 that consumer projects (c64-https, c64-wireguard) need to compose
@@ -165,7 +165,7 @@ c64-x25519 is designed to be **vendored as source** into downstream C64 projects
 
 ```
 curl -LO https://github.com/JC-000/c64-x25519/releases/download/v0.5.0/c64-x25519-v0.5.0.tar.gz
-echo "DRAFT_SHA_TBD  c64-x25519-v0.5.0.tar.gz" | sha256sum -c
+echo "d79fe1a508c6f8612e2290e396c2ce3928a6c3b0c3d672e755418b83b0182a91  c64-x25519-v0.5.0.tar.gz" | sha256sum -c
 mkdir -p vendor && tar -xzf c64-x25519-v0.5.0.tar.gz -C vendor/
 ```
 
