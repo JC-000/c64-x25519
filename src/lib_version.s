@@ -71,27 +71,30 @@ LIB_ABI_VERSION   = 1
 ; LIB_X25519_REU_BANKS_USED
 ;   Bitmask of REU banks claimed for the precomputed multiplication
 ;   tables. At the default X25519_REU_BANK = 0, the library uses banks
-;   0..5 (= mask $3F). Computed as `$3F << X25519_REU_BANK` so an
-;   `-D X25519_REU_BANK=$N` override of the bank base automatically
-;   shifts the mask. (Bank 7 is touched transiently by reu_probe but
-;   restored before return; not counted as a claim.)
+;   0, 1, 3, 4, 5 (= mask $3B). Bank 2 is intentionally NOT claimed —
+;   the v0.4.0 W2 refactor moved reu_clear_wide to a CPU clear and the
+;   legacy bank-2 zero stash was removed in v0.6 prep. Mask is computed
+;   as `$3B << X25519_REU_BANK` so an `-D X25519_REU_BANK=$N` override
+;   of the bank base automatically shifts the claim. (Bank 7 is touched
+;   transiently by reu_probe but restored before return; not counted as
+;   a claim.)
 ;
 ; LIB_X25519_RESIDENT_BYTES
 ;   Approximate code + data footprint that must remain CPU-resident
 ;   in any consumer's address space. Measured from
-;   `od65 --dump-segsize` on the v0.4.0 library .o files:
-;       CODE  total ≈ 4667 B   (x25519 + x25519_init + fe25519 +
-;                               mul_8x8 + util)
+;   `od65 --dump-segsize` on the library .o files:
+;       CODE  total ≈ 4616 B   (x25519 + x25519_init + fe25519 +
+;                               mul_8x8 + util; -51 B vs v0.5.0 after
+;                               the v0.6-prep bank-2 stash removal)
 ;       DATA  total ≈ 3584 B   (page-aligned buffers + lookup tables
 ;                               in data.s; mixes mutable scratch and
 ;                               read-only tables in one segment)
 ;       SQTAB         1024 B   (runtime-built quarter-square table
 ;                               at fixed $7800-$7BFF)
 ;       --------------------------------------------------------------
-;                            ≈ 9275 B total
-;   (Refreshed 2026-05-20 for v0.5.0; values unchanged from initial
-;   measurement at v0.5.0 cut-time. The three config .o files
-;   ─ lib_version.o, zp_config.o, reu_config.o ─ contain only
+;                            ≈ 9224 B total
+;   (Refreshed 2026-05-20 after bank-2 stash drop. The three config .o
+;   files ─ lib_version.o, zp_config.o, reu_config.o ─ contain only
 ;   equate declarations + .export directives and emit no CODE/DATA
 ;   bytes, so they don't shift this total.)
 ;
@@ -111,8 +114,8 @@ LIB_ABI_VERSION   = 1
 .import X25519_REU_BANK
 
 LIB_X25519_ZP_USAGE_BYTES = 85
-LIB_X25519_REU_BANKS_USED = $3F << X25519_REU_BANK
-LIB_X25519_RESIDENT_BYTES = 9275
+LIB_X25519_REU_BANKS_USED = $3B << X25519_REU_BANK
+LIB_X25519_RESIDENT_BYTES = 9224
 LIB_X25519_COLD_BYTES     = 0
 
 .export LIB_X25519_ZP_USAGE_BYTES: abs

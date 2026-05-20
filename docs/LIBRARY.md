@@ -272,8 +272,8 @@ compile + VICE test cycle:
 | Symbol | Default value | What it reports |
 |---|---|---|
 | `LIB_X25519_ZP_USAGE_BYTES` | `85` | Total bytes of ZP slots the library claims (sum of `.exportzp`-ed slots in `src/zp_config.s` + the pinned `fe_wide` region) |
-| `LIB_X25519_REU_BANKS_USED` | `$3F` | Bitmask of REU banks claimed for mul tables. Computed as `$3F << X25519_REU_BANK`, so an `-D X25519_REU_BANK=$N` override shifts the mask automatically |
-| `LIB_X25519_RESIDENT_BYTES` | `9275` | Approximate code + data + sqtab footprint that must remain CPU-resident |
+| `LIB_X25519_REU_BANKS_USED` | `$3B` | Bitmask of REU banks claimed for mul tables (banks 0, 1, 3, 4, 5 at the default base). Computed as `$3B << X25519_REU_BANK`, so an `-D X25519_REU_BANK=$N` override shifts the mask automatically. Bank 2 is *not* claimed (legacy zero stash removed in v0.6 prep — free for sibling consumers) |
+| `LIB_X25519_RESIDENT_BYTES` | `9224` | Approximate code + data + sqtab footprint that must remain CPU-resident (−51 B vs v0.5.0 after bank-2 stash removal) |
 | `LIB_X25519_COLD_BYTES` | `0` | Approximate footprint that a consumer MAY overlay-page (currently 0 — no overlay candidates) |
 
 The values are approximate ("within 5% is fine" per SPEC §5). The
@@ -301,12 +301,13 @@ c64-nist-curves):
 
 ## 4.5 Overriding the REU bank base
 
-The library claims six contiguous REU banks for its precomputed
-multiplication tables. By default these are banks 0–5 (plus bank 7
-transiently for `reu_probe`). A consumer that uses the REU for other
-purposes (P-256 precompute, ChaCha20 scratch, etc.) can relocate the
-library's bank claim via `src/reu_config.s` (per
-[c64-lib-contract §3](https://github.com/JC-000/c64-lib-contract/blob/master/SPEC.md#3-reu-layout-contract)).
+The library claims five REU banks for its precomputed multiplication
+tables, within a six-bank allocation window (banks 0–5 at the default
+base; bank 2 in the window is *not* claimed — see allocation table
+below). Bank 7 is transiently touched by `reu_probe`. A consumer that
+uses the REU for other purposes (P-256 precompute, ChaCha20 scratch,
+etc.) can relocate the library's bank claim via `src/reu_config.s`
+(per [c64-lib-contract §3](https://github.com/JC-000/c64-lib-contract/blob/master/SPEC.md#3-reu-layout-contract)).
 
 Two exported equates, both `.ifndef`-guarded:
 
@@ -320,7 +321,7 @@ Two exported equates, both `.ifndef`-guarded:
 ```
   bank + 0   : 8x8->16 mul tables, lo+hi, for a =   0..127  (full bank)
   bank + 1   : 8x8->16 mul tables, lo+hi, for a = 128..255  (full bank)
-  bank + 2   : 64-byte zero block (legacy reu_clear_wide stash)
+  bank + 2   : unused (legacy reu_clear_wide stash removed in v0.6 prep)
   bank + 3   : 17th-bit carry bytes for doubled tables (256 B/row)
   bank + 4   : pre-doubled mul tables, lo+hi, a =   0..127  (full bank)
   bank + 5   : pre-doubled mul tables, lo+hi, a = 128..255  (full bank)
@@ -412,7 +413,7 @@ $2800+          strings / input buffer (test harness)
 $7800-$7BFF     sqtab_lo / sqtab_hi  (built by sqtab_init)
 $D000-$DFFF     I/O (VIC-II, CIA, SID, REU)
 REU bank 0-1    a*b low/high tables
-REU bank 2      (first 64 bytes) zero block for reu_clear_wide
+REU bank 2      unused (legacy zero stash removed in v0.6 prep)
 REU bank 3      17th-bit carry tables for fe25519_sqr
 REU bank 4-5    2*a*b low/high tables for fe25519_sqr
 ```

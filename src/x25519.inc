@@ -123,6 +123,36 @@
 ;   All clobber: A, X, Y and the fe_* scratch ZP slots.
 ;
 ; ----------------------------------------------------------------------------
+; DEPRECATED — scheduled for removal in v1.0
+; ----------------------------------------------------------------------------
+;
+; The following public symbols are retained at v0.x for ABI compatibility
+; but have no live callers in the library and will be removed in v1.0.
+; Consumer code that uses them should migrate as noted:
+;
+;   mul_by_38           Shift-and-add (A * 38) -> poly_prod_hi:poly_prod_lo.
+;                       Replaced everywhere internally by direct table
+;                       lookup via mul38_lo_tab[A] / mul38_hi_tab[A].
+;                       Migration: `ldy A / lda mul38_lo_tab,y` etc.
+;
+;   reu_fetch_mul_row   REU DMA helper for a single 512-byte mul row.
+;                       Replaced by the inline DMA setup at the top of
+;                       fe25519_mul. No external migration needed if you
+;                       call fe25519_mul; otherwise inline the bank
+;                       computation + reu_command write yourself.
+;
+;   x25_basepoint       32-byte read-only buffer holding the Curve25519
+;                       basepoint {9, 0, ..., 0}. Used only by
+;                       x25519_base. Migration: call x25519_base, or
+;                       initialise x25_u in your own code with the
+;                       basepoint constant (one `lda #9 / sta x25_u`
+;                       and 31 zeros).
+;
+; A v1.0 release will drop the .export of these symbols and (for
+; mul_by_38 / x25_basepoint) the underlying CODE / DATA bytes. Pin to
+; v0.x if you depend on any of them.
+;
+; ----------------------------------------------------------------------------
 ; OPTIONAL HELPERS
 ; ----------------------------------------------------------------------------
 ;
@@ -221,14 +251,16 @@
 ; ----------------------------------------------------------------------------
 ;
 ;   Bank 0-1: 256 rows x 512 bytes each = full a*b lo+hi tables (a=0..255)
-;   Bank 2:   first 64 bytes used as a zero-block for reu_clear_wide.
-;             Rest unused by the library.
+;   Bank 2:   NOT claimed. (Pre-v0.6 the library stashed a 64-byte zero
+;             block here for the old reu_clear_wide; that routine was
+;             rewritten to a CPU clear in v0.4.0 prep and the stash was
+;             removed in v0.6 prep. Bank 2 is free for sibling consumers.)
 ;   Bank 3:   17th-bit carry tables for pre-doubled fe25519_sqr products.
 ;   Bank 4-5: 256 rows x 512 bytes each = pre-doubled (2*a*b) lo+hi tables.
 ;
-;   Total REU footprint: 6 banks (384 KB used of a 512 KB minimum REU).
-;   The library REQUIRES at least a 512 KB REU. Larger REUs are fine —
-;   only the first 6 banks are touched.
+;   Total REU footprint: 5 banks (320 KB used of a 512 KB minimum REU);
+;   the claimed banks are 0, 1, 3, 4, 5. The library REQUIRES at least
+;   a 512 KB REU. Larger REUs are fine — only those 5 banks are touched.
 ;
 ;   The library uses the REU's autoload feature and leaves the REU
 ;   command/length/address registers in a state ready for the next
