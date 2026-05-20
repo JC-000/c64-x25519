@@ -532,68 +532,86 @@ Exact addresses can be read from `build/labels.txt` after a build.
 
 ## 8. Performance
 
-Numbers as of v0.3.0 (2026-04-19).
+Cycle-exact numbers as of v0.6.0 (2026-05-20). Measured via the CIA1
+32-bit cycle counter (`bench_cycles_*` in `src/util.s`); reproducible
+deterministically under VICE warp, hardware-confirmed on Ultimate-64
+NTSC.
 
-| Operation                                         | Jiffies | Wall-time NTSC | Wall-time PAL |
-| ------------------------------------------------- | ------: | -------------: | ------------: |
-| `x25519_scalarmult` (v0.3.0, perf recovery + L23/L24 audits) |  12,070 |       ~201.2 s |      ~241.4 s |
-| `x25519_scalarmult` (v0.2.0, full CT L1–L22)      |  12,485 |       ~208.1 s |      ~249.7 s |
-| `x25519_scalarmult` (v0.1.0 baseline)             |   9,520 |       ~158.7 s |      ~190.4 s |
+### Default build (`make`, `make lib`)
 
-v0.3.0 combines two independent bodies of work on the v0.2.0
-baseline. Phases 1–3 rewrite `fe25519_sqr`'s hot path without
-touching any CT invariant — SMC-literal hoist + register-threaded
-abs-math (Phase 1, −247 jif), `SQR_DMA_K` retune 14→22 (Phase 2,
-−347 jif), chain-step address-math + ripple-setup fold (Phase 3,
-−1,152 jif, far overshooting its −425 jif plan estimate), recovering
-**1,746 jif** of the v0.1.0→v0.2.0 regression. Phase 3's PR includes
-an 8-invariant correctness walkthrough verifying every L1–L22 fix is
-preserved. Phase 4 (cswap SMC hoist) and Phase 5 (fe25519_mul
-Phase-1-analogue + two other candidates) were investigated and SKIPPED
-(~4 jif and ~80 jif respectively, below the 100-jif ship threshold).
+| Operation                       | Cycles      | Jiffies     | Wall-time NTSC | PAL    |
+| ------------------------------- | ----------: | ----------: | -------------: | -----: |
+| `x25519_scalarmult` (basepoint) | 261,681,380 |    15,352.0 |       ~255.9 s | ~307.1 s |
+| `fe25519_mul`     (batch=200)   |      94,737 |       5.558 |              — | —      |
+| `fe25519_sqr`     (batch=200)   |     102,023 |       5.985 |              — | —      |
+| `fe25519_mul_a24` (batch=200)   |       7,569 |       0.444 |              — | —      |
+| `fe25519_add`                   |       2,192 |       0.129 |              — | —      |
+| `fe25519_sub`                   |       1,664 |       0.098 |              — | —      |
+| `fe25519_reduce_final`          |       2,996 |       0.176 |              — | —      |
+| `fe25519_cswap`                 |       1,522 |       0.089 |              — | —      |
+| `fe25519_inv` (single-call avg) | ≈28,766,000 |     1,687.6 |              — | —      |
 
-On top of that, the L23 + L24 audit closures cost back **~1,330 jif**
-for full side-channel certification. PR #31 closes L23a/b/c in the
-`@diag_prop` diagonal carry path (rewritten as a Phase-6-style
-unconditional ripple; +1,330 jif). PR #30 closes L24a/b in the
-Montgomery ladder bit loop (branchless `cmp/sbc/eor` bit-to-mask
-idiom; 0 jif). `fe25519_cswap` is verified CT-clean by inspection
-(no source change). Net vs v0.2.0: **−415 jif (−3.3 %)** and fully
-CT-certified.
+### 1764 build variant (`make lib-x25519-1764`)
 
-The v0.2.0 figure reflected a +31.1 % regression from the full
-constant-time remediation landing for issue #20 (Phases 1–6):
-branchless CT quarter-square in `mul_8x8`, inline branchless CT
-mult66 rewrite of `fe25519_sqr`'s mult66 bodies, zero-skip removal
-across `fe25519_mul` / `fe25519_sqr` (inner and outer), and the
-Phase 6 unconditional per-body pending-carry chain plus end-of-inner
-ripple that eliminated the L19–L22 carry-cascade short-circuits.
-Correctness was prioritized over performance throughout; see
-`docs/CT_ANALYSIS.md` for the design trail including the rejected
-Option A (unconditional full-width ripple per body; 31,386 jiffies —
-discarded as unaffordable) and the landed Option F (1-bit pending
-chain amortizing the ripple cost across the outer-i loop).
+For consumers targeting a stock 1764 (256 KB REU). Trade: +16.2 %
+scalarmult cost for −192 KB REU + −178 B CODE; see §4.7 and
+`docs/REU_USAGE_ANALYSIS.md`.
 
-The v0.1.0 baseline was ~47.1 % faster than the original
-(un-optimized) ~18,000-jiffy baseline. v0.3.0 is ~32.9 % faster than
-the original baseline (vs ~31 % at v0.2.0). Timing is
-measured with VIC-II **blanked** (`jsr vic_blank` before the call);
-running with the display enabled costs ~25 % more cycles due to
-VIC-II DMA badlines.
+| Operation                       | Cycles      | Jiffies     | Δ vs default |
+| ------------------------------- | ----------: | ----------: | -----------: |
+| `x25519_scalarmult` (basepoint) | 304,179,528 |    17,845.2 | +16.2 %      |
+| `fe25519_sqr`     (batch=200)   |     135,381 |       7.939 | +32.7 %      |
+| `fe25519_mul`     (batch=200)   |      94,737 |       5.558 | 0 (mul path unchanged) |
+| Other ops                       |   unchanged |   unchanged | 0            |
 
-The jiffy figures are for the basepoint (u = [9, 0×31]). v0.2.0's
-Phases 5 / 5b removed the zero-skip fast paths in `fe25519_mul` /
-`fe25519_sqr`, so dense u-coordinates (typical ECDH with a peer
-public key) now run only slightly slower than the basepoint — use
-`tools/bench_fe_ops.py` to measure an RFC 7748 dense test vector
-for a representative number.
+### Historical baselines
 
-One scalar multiplication performs roughly 2,550 field multiplies +
-~264 squarings for the inversion step. Any further
-`fe25519_sqr` / `fe25519_mul` perf work deferred past v0.3.0 remains
-subject to the CT cycle-count regression guard
-(`tools/test_ct_square_cycles.py`, Phase 0) running in
-`make test-slow` / `make test-vice`.
+| Release | Scalarmult (jif) | Δ vs v0.3.0 baseline       | Note                                   |
+| ------- | ---------------: | -------------------------- | -------------------------------------- |
+| v0.1.0  |            9,520 |                            | Pre-CT-closure baseline                |
+| v0.2.0  |           12,485 | +3.4 % (vs v0.3.0)         | L1-L22 full CT closure (+31.1 % cost)  |
+| v0.3.0  |           12,070 | (baseline)                 | Perf recovery + L23/L24 closure        |
+| v0.4.0  |           15,350 | +27.2 %                    | L25-L29 full CT closure + state defences |
+| v0.5.0  |           15,350 | +27.2 %                    | c64-lib-contract §1/§2/§3/§5 (no behaviour change) |
+| v0.6.0  |           15,352 | +27.2 %                    | Group C bank-2 drop (-51 B), §8 sqtab adoption, bench rehab (RAM only; runtime within 0.02 %) |
+
+The +0.02 % shift across v0.5.0 → v0.6.0 is pure code-layout noise
+from the bank-2 stash removal (commit `71cc1aa`); no CT or correctness
+change. RFC 7748 vec-0 PASS at every release.
+
+The append-only perf log lives at [`docs/perf_history.csv`](perf_history.csv)
+and is consumed by `tools/perf_diff.py` for diff tables. Run
+`make bench-record` to append a row for the current source tree;
+`make perf-diff` for the markdown delta vs the previous row.
+
+### Methodology
+
+- VIC-II blanked (`jsr vic_blank` before the timed region); a display-
+  active run costs ~20-25 % more cycles due to VIC-II DMA badlines.
+- `x25519_scalarmult` self-masks IRQs internally (PR #35 `php / sei …
+  plp` wrap), so the kernal jiffy clock at `$A0-$A2` is frozen during
+  the call. Use `bench_cycles_start` / `bench_cycles_stop` (CIA1 phi2
+  counter, sei-safe) for any timing through `scalarmult`. The older
+  `bench_start` / `bench_stop` jiffy helpers were restored to a
+  self-contained `php / plp` shape in v0.6.0 (#55) and now work for
+  non-scalarmult callers; **the v0.4.0 / v0.5.0 README numbers for
+  `fe25519_*` per-op timings were stale from before that regression**.
+- Per-op batch averages divide CIA1 cycles for 200 back-to-back
+  calls by 200, after subtracting the constant per-batch scaffold
+  (jsr/dec/bne ≈ 14 cy/iter, well below the per-op noise floor).
+- One scalar multiplication performs **5 mul + 1 mul_a24 + 4 sqr**
+  per ladder step × 255 bit positions, plus **254 sqr + 11 mul** in
+  `fe25519_inv` (Fermat addition chain for 2^255 - 21) = roughly
+  **1,286 muls + 1,274 sqrs** total. (The "763 sqrs" figure that
+  appeared in `tools/bench_fe_mul.py` comments through v0.5.0 was
+  stale — corrected in v0.6.0 via the SQR_DMA_K=0 A/B measurement;
+  see `docs/REU_USAGE_ANALYSIS.md`.)
+- All per-proc CT cycle-count guards (`tools/test_ct_*_cycles.py`
+  in `make test-vice` / `test-slow`) report measured spreads ≤ 0.005
+  jif/call across structurally distinct inputs, well under the 1.0
+  jif threshold. **These guards were silently trivially passing
+  (0 jif spread = 0 < 1.0) from PR #39 through v0.5.0**; they
+  actually measure as of v0.6.0 (#55).
 
 - **Full side-channel posture (v0.4.0).** All 29 catalogued leak
   families (L1-L29 in `docs/CT_ANALYSIS.md`) are now closed.

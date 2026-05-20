@@ -13,8 +13,8 @@
 ; Consumers import these for assembly-time compatibility checks:
 ;
 ;   .import LIB_VERSION_MAJOR, LIB_VERSION_MINOR, LIB_VERSION_PATCH
-;   .if LIB_VERSION_MAJOR <> 0 .or LIB_VERSION_MINOR < 5
-;       .error "c64-x25519 v0.5 or newer is required"
+;   .if LIB_VERSION_MAJOR <> 0 .or LIB_VERSION_MINOR < 6
+;       .error "c64-x25519 v0.6 or newer is required"
 ;   .endif
 ;
 ; Versioning policy: semver 2.0.0 - https://semver.org/
@@ -38,7 +38,7 @@
 ; =============================================================================
 
 LIB_VERSION_MAJOR = 0
-LIB_VERSION_MINOR = 5
+LIB_VERSION_MINOR = 6
 LIB_VERSION_PATCH = 0
 LIB_ABI_VERSION   = 1
 
