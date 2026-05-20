@@ -64,8 +64,23 @@ public_refs:
         .addr bench_start, bench_stop, bench_ticks
         .addr bench_cycles_start, bench_cycles_stop, bench_cycles
 
-; REU layout equates from src/reu_config.s. Referenced via .word so ld65
-; pulls reu_config.o out of the archive.
+; Version constants — integer equates, referenced via .word so ld65 pulls
+; lib_version.o into the archive resolution. .byte would fail because
+; ca65 cannot prove the import fits in a byte until link time.
+public_version_refs:
+        .word LIB_VERSION_MAJOR, LIB_VERSION_MINOR
+        .word LIB_VERSION_PATCH, LIB_ABI_VERSION
+
+; ZP slot exports from src/zp_config.s. .importzp + .byte references
+; force ld65 to pull zp_config.o out of the archive.
+.importzp fe25519_src1, fe25519_src2, fe25519_dst
+.importzp fe_carry, poly_carry
+public_zp_refs:
+        .byte fe25519_src1, fe25519_src2, fe25519_dst
+        .byte fe_carry, poly_carry
+
+; REU layout equates from src/reu_config.s. .word reference forces ld65
+; to pull reu_config.o out of the archive.
 .import X25519_REU_BANK, X25519_REU_OFFSET
 public_reu_refs:
         .word X25519_REU_BANK, X25519_REU_OFFSET

@@ -167,15 +167,32 @@ usable.
 
 ## 4.2 Overriding the zero-page layout
 
-Every library-owned ZP equate in `src/constants.s` is wrapped in
-`.ifndef <name>` / `.endif`, so a host project that wants to place
-the library's ZP scratch at different addresses can pre-define the
-equates before `.include`'ing `constants.s`. The library will then
-defer to the host's definitions.
+Every library-owned ZP equate lives in `src/zp_config.s` (per
+[c64-lib-contract §2](https://github.com/JC-000/c64-lib-contract/blob/master/SPEC.md#2-zero-page-contract))
+and is wrapped in `.ifndef <name>` / `.endif`, so a host project that
+wants to place the library's ZP scratch at different addresses can:
 
-Wrapped equates (all inside `src/constants.s`):
+1. **Override via `--asm-define`** (recommended). Pass `--asm-define
+   fe25519_src1=$40` on the `ca65` command line when building the
+   library. All translation units that include `zp_config.s` see the
+   override. The library must be rebuilt from source with the same
+   `--asm-define` values for every `.o` file; the slot value is baked
+   in at assemble time.
 
-- General scratch: `zp_ptr1`, `zp_ptr2`, `zp_tmp1`, `zp_tmp2`
+2. **Override via a wrapper `.s` file.** Pre-define the equate, then
+   `.include "zp_config.s"` (or `.include "constants.s"`, which
+   transitively pulls in `zp_config.s`).
+
+3. **Reference from consumer modules via `.importzp`.** `zp_config.s`
+   `.exportzp`-s every slot it owns, so a consumer module that wants
+   to read the same address the library writes can simply
+   `.importzp fe25519_src1` from its own `.s` files without
+   `.include`-ing `constants.s` (which would also drag in BASIC /
+   KERNAL / VIC / SID / CIA / REU hardware equates).
+
+Wrapped equates (all inside `src/zp_config.s`, also `.exportzp`-ed):
+
+- General scratch: `zp_ptr1`, `zp_tmp1`, `zp_tmp2`
 - fe25519 working: `fe25519_src1`, `fe25519_src2`, `fe25519_dst`,
   `fe_carry`, `fe_loop`, `fe_mul_i`, `fe_mul_j`
 - Phase 7 CT scratch (`fe25519_add` / `fe25519_sub` / `fe_cmp_p_ct`
@@ -187,7 +204,8 @@ Wrapped equates (all inside `src/constants.s`):
   `fe_sqr_pairs`
 - mul_8x8 working (reused by fe25519): `poly_carry`
 - Wide product buffer: `fe_wide` (32-byte ZP region at `$40..$7F`,
-  hard-asserted at link time — NOT host-overridable)
+  declared in `src/constants.s` with a hard-asserted link check —
+  NOT host-overridable; CT/SMC invariant)
 
 Non-library equates are **not** wrapped: KERNAL routines (`chrout`,
 `getin`), hardware registers (`vic_*`, `cia1_*`, `sid_*`, `proc_port`),
@@ -218,7 +236,33 @@ being assembled twice if `.include`'d from multiple compilation
 units. Host overrides must be defined *before* the first `.include
 "constants.s"`.
 
-## 4.3 Overriding the REU bank base
+## 4.3 Version constants
+
+The library exports four integer equates per
+[c64-lib-contract §1](https://github.com/JC-000/c64-lib-contract/blob/master/SPEC.md#1-version-identification):
+
+| Symbol | Current value | Semantics |
+|---|---|---|
+| `LIB_VERSION_MAJOR` | `0` | semver major (breaking ABI change) |
+| `LIB_VERSION_MINOR` | `4` | semver minor (additive ABI change) |
+| `LIB_VERSION_PATCH` | `0` | semver patch (no ABI change) |
+| `LIB_ABI_VERSION`   | `1` | coarse ABI compat level — tracks MAJOR |
+
+Consumers should `.import` these and `.if`-guard at assemble time
+against an unsupported library version:
+
+```ca65
+.import LIB_VERSION_MAJOR, LIB_VERSION_MINOR
+.if LIB_VERSION_MAJOR <> 0 .or LIB_VERSION_MINOR < 4
+    .error "this consumer needs c64-x25519 v0.4 or later"
+.endif
+```
+
+The guard fires before the 30-minute link/test cycle, complementing
+git-submodule SHA pinning with a defense-in-depth assert. The
+equates live in `src/lib_version.s`.
+
+## 4.4 Overriding the REU bank base
 
 The library claims six contiguous REU banks for its precomputed
 multiplication tables. By default these are banks 0–5 (plus bank 7
