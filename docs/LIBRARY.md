@@ -262,7 +262,44 @@ The guard fires before the 30-minute link/test cycle, complementing
 git-submodule SHA pinning with a defense-in-depth assert. The
 equates live in `src/lib_version.s`.
 
-## 4.4 Overriding the REU bank base
+## 4.4 Aggregate manifest equates
+
+Per [c64-lib-contract §5](https://github.com/JC-000/c64-lib-contract/blob/master/SPEC.md#5-aggregate-manifest-equates),
+the library exports four integer equates that let a consumer cfg do
+assemble-time fit / collision checks before kicking off a long
+compile + VICE test cycle:
+
+| Symbol | Default value | What it reports |
+|---|---|---|
+| `LIB_X25519_ZP_USAGE_BYTES` | `85` | Total bytes of ZP slots the library claims (sum of `.exportzp`-ed slots in `src/zp_config.s` + the pinned `fe_wide` region) |
+| `LIB_X25519_REU_BANKS_USED` | `$3F` | Bitmask of REU banks claimed for mul tables. Computed as `$3F << X25519_REU_BANK`, so an `-D X25519_REU_BANK=$N` override shifts the mask automatically |
+| `LIB_X25519_RESIDENT_BYTES` | `9275` | Approximate code + data + sqtab footprint that must remain CPU-resident |
+| `LIB_X25519_COLD_BYTES` | `0` | Approximate footprint that a consumer MAY overlay-page (currently 0 — no overlay candidates) |
+
+The values are approximate ("within 5% is fine" per SPEC §5). The
+library author refreshes them when a release substantively changes
+any one of them.
+
+**Consumer-side collision check** (composing c64-x25519 with
+c64-nist-curves):
+
+```ca65
+.import LIB_NISTCURVES_REU_BANKS_USED
+.import LIB_X25519_REU_BANKS_USED
+.assert (LIB_NISTCURVES_REU_BANKS_USED .and LIB_X25519_REU_BANKS_USED) = 0, \
+        error, "REU bank collision: relocate one library with -D"
+```
+
+**Consumer-side fit check** (against a ld65-published region size):
+
+```ca65
+.import LIB_X25519_RESIDENT_BYTES
+.import __CRYPTO_HOT_SIZE__
+.assert LIB_X25519_RESIDENT_BYTES < __CRYPTO_HOT_SIZE__, \
+        error, "c64-x25519 does not fit in CRYPTO_HOT region"
+```
+
+## 4.5 Overriding the REU bank base
 
 The library claims six contiguous REU banks for its precomputed
 multiplication tables. By default these are banks 0–5 (plus bank 7

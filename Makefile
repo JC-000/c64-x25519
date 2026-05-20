@@ -170,7 +170,9 @@ lib-verify: lib $(LIB_VERIFY_PRG)
 	           LIB_ABI_VERSION \
 	           fe25519_src1 fe25519_src2 fe25519_dst \
 	           fe_carry poly_carry \
-	           X25519_REU_BANK X25519_REU_OFFSET; do \
+	           X25519_REU_BANK X25519_REU_OFFSET \
+	           LIB_X25519_ZP_USAGE_BYTES LIB_X25519_REU_BANKS_USED \
+	           LIB_X25519_RESIDENT_BYTES LIB_X25519_COLD_BYTES; do \
 	  grep -q "\\b$$sym\\b" $(LIB_VERIFY_DIR)/stub.labels \
 	    || (echo "FAIL: expected symbol $$sym not in linked binary" && exit 1); \
 	done; \
