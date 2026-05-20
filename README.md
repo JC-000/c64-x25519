@@ -6,9 +6,9 @@ An optimized implementation of X25519 / Curve25519 scalar multiplication written
 
 ## Status
 
-**v0.6.0 — DRAFT until tagged (target 2026-05-20).** RAM-reclaim,
-bench-rehab, build-variant, and c64-lib-contract §8.1 adoption
-release. MIT licensed. **Pure-additive ABI** vs v0.5.0: zero
+**v0.6.0 released 2026-05-20** — [GitHub release](https://github.com/JC-000/c64-x25519/releases/tag/v0.6.0),
+MIT licensed. RAM-reclaim + bench-rehab + build-variant +
+c64-lib-contract §8.1 adoption. **Pure-additive ABI** vs v0.5.0: zero
 removals, no default behavioural change.
 
 Headline (vs v0.5.0):
