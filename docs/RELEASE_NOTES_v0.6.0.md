@@ -1,8 +1,9 @@
 # c64-x25519 v0.6.0 — RAM reclamation + bench rehab + §8.1 sqtab adoption
 
-**Status:** DRAFT until tagged. SHA256 + byte size of the
-reproducible tarball will be filled in via a follow-up PR after the
-`v0.6.0` tag is pushed and `tools/build_release.sh` runs.
+**Status:** Released 2026-05-20. Tag [`v0.6.0`](https://github.com/JC-000/c64-x25519/releases/tag/v0.6.0)
+live on master at commit `95fdd70`. Reproducible tarball attached to
+the GitHub Release page; SHA256 + byte size recorded under [Tarball](#tarball)
+below.
 
 v0.6.0 is the **RAM-reclamation + bench-rehab release**. It bundles
 four user-visible concerns that surfaced from one piece of analysis
@@ -425,24 +426,20 @@ underlying symbols still resolve.
 
 ## Tarball
 
-(Will be filled in by the follow-up PR after `make dist
-VERSION=v0.6.0` runs against the tagged commit. Mirrors PR #53's
-v0.5.0 fill pattern.)
-
 ```
 File:     c64-x25519-v0.6.0.tar.gz
-Size:     <bytes>
-SHA256:   <SHA256>
+Size:     88,992 bytes
+SHA256:   e1c58342fff0e5f32e66681f64cc27834f54564710257b0c4ee4e7026b4ffbaf
 ```
 
 Reproducible: same VERSION + same tag SHA → byte-identical tarball
 (`git archive` is content-deterministic; `gzip -n` drops the
-timestamp). Verify locally with:
+timestamp). Verified with two consecutive `tools/build_release.sh
+v0.6.0` runs producing the same SHA. Verify locally with:
 
 ```sh
 git checkout v0.6.0
 tools/build_release.sh v0.6.0     # or: make dist VERSION=v0.6.0
 shasum -a 256 c64-x25519-v0.6.0.tar.gz
+# expect: e1c58342fff0e5f32e66681f64cc27834f54564710257b0c4ee4e7026b4ffbaf
 ```
-
-Must match the SHA256 above.
