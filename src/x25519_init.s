@@ -6,7 +6,6 @@
 
 .include "constants.s"
 
-.export reu_mul_init
 .export reu_fetch_mul_row, reu_fetch_doubled_row, reu_clear_wide
 
 ; --- Imports from mul_8x8.s ---
@@ -31,7 +30,42 @@
 ; Uses mul_dma_lo/mul_dma_hi as staging buffers.
 ; Uses mul_8x8 (requires sqtab to be initialized first).
 ; Clobbers: A, X, Y
+;
+; SPEC §8.2 migration gate. When a consumer defines SHARED_REU_MUL_INIT
+; (e.g. it links c64-nist-curves alongside c64-x25519 and wants one
+; canonical 128 KB build), this whole body is gated out and the
+; consumer's `reu_mul_tables_init` from its other adopter takes over.
+;
+; Caveat for the SQR_DMA_K > 0 (default) build: the pre-doubled rows
+; in banks +3..+5 are currently generated INSIDE this proc's per-a
+; loop, reusing each iteration's mul_dma_lo/hi staging buffer before
+; the next iteration overwrites it. Under SHARED_REU_MUL_INIT, those
+; banks are NOT produced by the canonical init (which by SPEC §8.2
+; "MUST NOT touch those banks"). A consumer that defines
+; SHARED_REU_MUL_INIT with SQR_DMA_K > 0 must therefore either:
+;   1. build c64-x25519 as the 1764-variant (`make lib-x25519-1764`,
+;      SQR_DMA_K = 0) so the doubled tables are never read, OR
+;   2. ship its own library-private doubled-bank init that re-reads
+;      banks 0/1 row-by-row and re-runs the doubling step (the
+;      structural refactor tracked by c64-lib-contract issue #15).
+;
+; The standalone build (no SHARED_REU_MUL_INIT) is unchanged: this
+; proc runs, both un-doubled and doubled rows are produced, and the
+; library is bit-identical to v0.6.0. `reu_mul_tables_init` is
+; published as the SPEC §8.2 canonical alias.
+;
+; "Safe to call twice" per SPEC §8.2: a second call rebuilds the same
+; final REU state with the same observable side effects (the full
+; ~3 s init runs again). NOT idempotent in the no-op sense.
 ; =============================================================================
+.ifndef SHARED_REU_MUL_INIT
+.export reu_mul_init
+; SPEC §8.2 canonical entry point. In standalone builds, aliases the
+; library's own body (this proc). When SHARED_REU_MUL_INIT is defined,
+; this alias is not emitted here; the consumer's shared-primitives
+; module provides reu_mul_tables_init from elsewhere.
+.export reu_mul_tables_init
+reu_mul_tables_init = reu_mul_init
 .proc reu_mul_init
         lda #0
         sta reu_init_a         ; outer counter (multiplier a)
@@ -228,9 +262,17 @@
         sta reu_len_hi         ; length high = 2 (512 bytes)
         rts
 
+; SPEC §8.2 ZP scratch contract: these two byte slots are exported via
+; `.global` so reu_config.s's LIB_SHARED_REU_MUL_ZP_INIT_A / _B equates
+; (declared as link-time aliases under their respective .ifndef guards)
+; resolve to the same storage. Default consumers see the legacy
+; CODE-segment scratch; an override-via-`--asm-define` consumer that
+; defines the equates earlier wins via the .ifndef.
+.global reu_init_a, reu_init_b
 reu_init_a:     .byte 0
 reu_init_b:     .byte 0
 .endproc
+.endif ; SHARED_REU_MUL_INIT
 
 ; =============================================================================
 ; reu_fetch_mul_row - DMA a multiplication table row from REU to C64
@@ -238,11 +280,21 @@ reu_init_b:     .byte 0
 ; Input: A = multiplier value (0-255) in mul_cached_a
 ; Fetches 512 bytes: 256 lo bytes to mul_dma_lo, 256 hi bytes to mul_dma_hi
 ; Clobbers: A
+;
+; The `bank_lda` regular local label (not cheap-`@`-local because we
+; address it from outside the proc via `proc::label` syntax, which
+; cheap-locals don't support) tags the LDA #X25519_REU_BANK instruction
+; so reu_fetch_mul_row_bank_patch (below) can export its immediate-byte
+; address as an SMC patch point. This is a no-op for canonical callers;
+; it unlocks the c64-lib-contract #15 SMC-parameterised shared fetch
+; follow-up (deferred per "DO NOT modify reu_fetch_doubled_row itself"
+; in this PR's scope).
 ; =============================================================================
 .proc reu_fetch_mul_row
         lda mul_cached_a
         asl                    ; A = multiplier * 2, carry = bit 7
         sta reu_reu_hi
+bank_lda:
         lda #X25519_REU_BANK
         adc #0                 ; bank = X25519_REU_BANK + (a >> 7)
         sta reu_reu_bank
@@ -250,6 +302,14 @@ reu_init_b:     .byte 0
         sta reu_command
         rts
 .endproc
+
+; SMC patch point export. Address of the immediate-operand byte of the
+; `lda #X25519_REU_BANK` instruction inside reu_fetch_mul_row. +1 skips
+; the LDA opcode and lands on the immediate byte; an SMC caller can STA
+; here to retarget the fetch to a different REU bank base without
+; rebuilding the library. No-op for in-tree / canonical callers.
+reu_fetch_mul_row_bank_patch := reu_fetch_mul_row::bank_lda + 1
+.export reu_fetch_mul_row_bank_patch
 
 ; =============================================================================
 ; reu_fetch_doubled_row - DMA pre-doubled multiplication row for fe25519_sqr
@@ -276,13 +336,13 @@ reu_init_b:     .byte 0
         lda mul_cached_a
         asl                    ; A = a*2, carry = bit7
         sta reu_reu_hi
-        lda #4+X25519_REU_BANK
-        adc #0                 ; bank = X25519_REU_BANK + 4 + (a >> 7)
+        lda #X25519_REU_BANK_DOUBLED
+        adc #0                 ; bank = DOUBLED + (a >> 7), i.e. bank 4 or 5
         sta reu_reu_bank
         lda #%10110001
         sta reu_command
 
-        ; Second DMA: 256 bytes to mul_dma_carry from bank 3, offset a*256
+        ; Second DMA: 256 bytes to mul_dma_carry from CARRY bank, offset a*256
         lda #<(mul_dma_carry)
         sta reu_c64_lo
         lda #>(mul_dma_carry)
@@ -295,7 +355,7 @@ reu_init_b:     .byte 0
         sta reu_len_hi         ; 256 bytes
         lda mul_cached_a
         sta reu_reu_hi
-        lda #3+X25519_REU_BANK
+        lda #X25519_REU_BANK_CARRY
         sta reu_reu_bank
         lda #%10110001
         sta reu_command
