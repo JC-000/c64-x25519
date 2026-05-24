@@ -6,6 +6,13 @@ An optimized implementation of X25519 / Curve25519 scalar multiplication written
 
 ## Status
 
+**Since v0.6.0 (v0.7-prep on master)** — two c64-lib-contract follow-ups merged into master since the v0.6.0 tag, both pure-additive vs v0.6.0:
+
+- **§8.2 `reu_mul` + §8.0 step-6 adoption** ([#59](https://github.com/JC-000/c64-x25519/pull/59), commit `9c631f9`): the 128 KB 8×8→16 REU multiplication table promoted to a shared primitive across c64-x25519 + c64-nist-curves. New `LIB_SHARED_REU_MUL_BANK` placement equate and `SHARED_REU_MUL_INIT` migration gate let a multi-lib consumer (e.g., c64-https + TLS 1.3 stack) link one canonical 128 KB table instead of two. Manifest bit `$0002` OR'd into `LIB_X25519_SHARED_PRIMITIVES = $0003`. Also adds the §8.0 catch-loop precalc-table enumeration: `docs/precalc-tables.md` (rationale per shipped table) plus `LIB_PRECALC_TABLE` ca65 macro invocations for build-time cross-adopter audits. New library exports: `LIB_SHARED_REU_MUL_*`, `X25519_REU_BANK_DOUBLED` / `_CARRY`, `reu_fetch_mul_row_bank_patch` (SMC patch label), `reu_mul_tables_init` (canonical alias of `reu_mul_init`). See [`docs/LIBRARY.md`](docs/LIBRARY.md) §4.8 + §4.9.
+- **#15 SMC-patch refactor of `reu_fetch_doubled_row`** ([#61](https://github.com/JC-000/c64-x25519/pull/61)): the 512 B doubled-table fetch now delegates to the canonical §8.2 `reu_fetch_mul_row` primitive via SMC-patch of the bank-base byte; the 256 B carry fetch stays inline. New W2-class regression `tools/test_fe_sqr_then_mul.py` (60/60). Bench: +0.523 % on `fe25519_sqr` K=22 (≤ 2 % gate); −1194 B library size at K=0 from aggressive `.if ::SQR_DMA_K` gating of the `.proc` body, `.export` / `.import`, and DMA-dispatch block. Autoload-latch invariant documented at three sites in `src/x25519_init.s` — see [`docs/CT_ANALYSIS.md`](docs/CT_ANALYSIS.md) § State-contract defences S3 and [`docs/design/issue_15_smc_patch_doubled_fetch.md`](docs/design/issue_15_smc_patch_doubled_fetch.md).
+
+---
+
 **v0.6.0 released 2026-05-20** — [GitHub release](https://github.com/JC-000/c64-x25519/releases/tag/v0.6.0),
 MIT licensed. RAM-reclaim + bench-rehab + build-variant +
 c64-lib-contract §8.1 adoption. **Pure-additive ABI** vs v0.5.0: zero
