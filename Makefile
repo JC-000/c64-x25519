@@ -101,7 +101,7 @@ test-ref:
 # unit; zp_config.s + reu_config.s are .include'd transitively via
 # constants.s and are also their own translation units for the public
 # .exportzp / .export emission).
-$(BUILD_DIR)/%.o: $(SRC_DIR)/%.s $(SRC_DIR)/constants.s $(SRC_DIR)/zp_config.s $(SRC_DIR)/reu_config.s | $(BUILD_DIR)
+$(BUILD_DIR)/%.o: $(SRC_DIR)/%.s $(SRC_DIR)/constants.s $(SRC_DIR)/zp_config.s $(SRC_DIR)/reu_config.s $(SRC_DIR)/precalc_table.inc | $(BUILD_DIR)
 	$(CA65) $(CA65FLAGS) -o $@ $<
 
 $(PRG): $(CA65_OBJS) $(CC65_CFG) | $(BUILD_DIR)
@@ -169,7 +169,8 @@ lib-verify: lib $(LIB_VERIFY_PRG)
 	test -s $(LIB_VERIFY_PRG) || (echo "FAIL: $(LIB_VERIFY_PRG) is empty" && exit 1); \
 	for sym in x25519_clamp x25519_scalarmult x25519_base \
 	           fe25519_add fe25519_sub fe25519_mul fe25519_sqr \
-	           sqtab_init reu_mul_init \
+	           sqtab_init reu_mul_init reu_mul_tables_init \
+	           reu_fetch_mul_row_bank_patch \
 	           x25_scalar x25_u x25_result \
 	           vic_blank vic_unblank bench_start bench_stop \
 	           bench_cycles_start bench_cycles_stop bench_cycles \
@@ -178,9 +179,14 @@ lib-verify: lib $(LIB_VERIFY_PRG)
 	           fe25519_src1 fe25519_src2 fe25519_dst \
 	           fe_carry poly_carry \
 	           X25519_REU_BANK X25519_REU_OFFSET \
+	           X25519_REU_BANK_DOUBLED X25519_REU_BANK_CARRY \
+	           LIB_SHARED_REU_MUL_BANK LIB_SHARED_REU_MUL_OFFSET \
+	           LIB_SHARED_REU_MUL_BANKS_USED \
 	           LIB_X25519_ZP_USAGE_BYTES LIB_X25519_REU_BANKS_USED \
 	           LIB_X25519_RESIDENT_BYTES LIB_X25519_COLD_BYTES \
-	           LIB_X25519_SHARED_PRIMITIVES LIB_SHARED_PRIMITIVES_SQTAB \
+	           LIB_X25519_SHARED_PRIMITIVES \
+	           LIB_SHARED_PRIMITIVES_SQTAB LIB_SHARED_PRIMITIVES_REU_MUL \
+	           LIB_PRECALC_sqtab_SIZE LIB_PRECALC_reu_mul_SIZE \
 	           mul_tables_init; do \
 	  grep -q "\\b$$sym\\b" $(LIB_VERIFY_DIR)/stub.labels \
 	    || (echo "FAIL: expected symbol $$sym not in linked binary" && exit 1); \

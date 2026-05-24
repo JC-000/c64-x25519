@@ -82,16 +82,42 @@ public_zp_refs:
 ; REU layout equates from src/reu_config.s. .word reference forces ld65
 ; to pull reu_config.o out of the archive.
 .import X25519_REU_BANK, X25519_REU_OFFSET
+; c64-lib-contract §8.2 placement equates (v0.7-prep+).
+.import LIB_SHARED_REU_MUL_BANK, LIB_SHARED_REU_MUL_OFFSET
+.import LIB_SHARED_REU_MUL_BANKS_USED
+; Derived symbolic bank names (also exported from reu_config.s).
+.import X25519_REU_BANK_DOUBLED, X25519_REU_BANK_CARRY
 public_reu_refs:
         .word X25519_REU_BANK, X25519_REU_OFFSET
+        .word LIB_SHARED_REU_MUL_BANK, LIB_SHARED_REU_MUL_OFFSET
+        .word LIB_SHARED_REU_MUL_BANKS_USED
+        .word X25519_REU_BANK_DOUBLED, X25519_REU_BANK_CARRY
 
 ; Manifest aggregate equates (c64-lib-contract §5). Same .word reference
 ; trick to force ld65 archive-member resolution of lib_version.o.
 .import LIB_X25519_ZP_USAGE_BYTES, LIB_X25519_REU_BANKS_USED
 .import LIB_X25519_RESIDENT_BYTES, LIB_X25519_COLD_BYTES
-; c64-lib-contract §8.1 shared-primitives bitmask (v0.6+).
-.import LIB_X25519_SHARED_PRIMITIVES, LIB_SHARED_PRIMITIVES_SQTAB
+; c64-lib-contract §8.1 + §8.2 shared-primitives bitmask (v0.7-prep+).
+.import LIB_X25519_SHARED_PRIMITIVES
+.import LIB_SHARED_PRIMITIVES_SQTAB, LIB_SHARED_PRIMITIVES_REU_MUL
 public_manifest_refs:
         .word LIB_X25519_ZP_USAGE_BYTES, LIB_X25519_REU_BANKS_USED
         .word LIB_X25519_RESIDENT_BYTES, LIB_X25519_COLD_BYTES
-        .word LIB_X25519_SHARED_PRIMITIVES, LIB_SHARED_PRIMITIVES_SQTAB
+        .word LIB_X25519_SHARED_PRIMITIVES
+        .word LIB_SHARED_PRIMITIVES_SQTAB, LIB_SHARED_PRIMITIVES_REU_MUL
+
+; c64-lib-contract §8.0 catch-loop exports (v0.7-prep+) are emitted by
+; the LIB_PRECALC_TABLE macro invocations in lib_version.s. We do NOT
+; .import them here because the SIZE export for reu_mul (131072) is
+; auto-sized to `far` by ca65 and the 6502 target has no `far` import
+; address-size hint to match. The smoke check for these symbols lives
+; in the lib-verify shell target (grep against stub.labels), which
+; doesn't need them in a stub.o-side import to resolve.
+
+; SPEC §8.2 canonical entry point (v0.7-prep+).
+.import reu_mul_tables_init
+; SPEC §8.2 SMC patch hook (v0.7-prep+); unlocks the #15 follow-up.
+.import reu_fetch_mul_row_bank_patch
+public_spec_82_refs:
+        .addr reu_mul_tables_init
+        .addr reu_fetch_mul_row_bank_patch

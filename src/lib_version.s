@@ -138,22 +138,27 @@ LIB_ABI_VERSION   = 1
 ;   this equate.
 ;
 ; LIB_X25519_SHARED_PRIMITIVES
-;   c64-lib-contract §5 + §8.1 append-only bitmask. One bit per
-;   contract-§8 shared primitive the library consumes:
-;     bit $0001  LIB_SHARED_PRIMITIVES_SQTAB  — 8x8 quarter-square
-;                                                multiply table
-;   c64-x25519 consumes the sqtab primitive (mul_8x8 + the mult66
-;   path inside fe25519_sqr both read sqtab_lo / sqtab_hi). A
-;   consumer composing c64-x25519 with another sqtab-using library
-;   asserts:
+;   c64-lib-contract §5 + §8.0/§8.1/§8.2 append-only bitmask. One bit
+;   per contract-§8 shared primitive the library consumes:
+;     bit $0001  LIB_SHARED_PRIMITIVES_SQTAB    — 8x8 quarter-square
+;                                                  multiply table (§8.1)
+;     bit $0002  LIB_SHARED_PRIMITIVES_REU_MUL  — 128 KB 8x8->16 REU
+;                                                  multiplication table (§8.2)
+;   c64-x25519 consumes both:
+;     - sqtab: mul_8x8 + the mult66 path inside fe25519_sqr both read
+;       sqtab_lo / sqtab_hi at runtime.
+;     - reu_mul: reu_mul_init builds 256 rows × 512 B in REU banks
+;       LIB_SHARED_REU_MUL_BANK / +1; reu_fetch_mul_row DMAs them
+;       row-by-row into mul_dma_lo/hi.
+;   A consumer composing c64-x25519 with another shared-primitives
+;   adopter asserts:
 ;     .import LIB_X25519_SHARED_PRIMITIVES, LIB_<other>_SHARED_PRIMITIVES
 ;     .assert (LIB_X25519_SHARED_PRIMITIVES .and \
-;              LIB_<other>_SHARED_PRIMITIVES \
-;              .and ~LIB_X25519_SHARED_PRIMITIVES) = 0, error, \
+;              LIB_<other>_SHARED_PRIMITIVES) = 0, error, \
 ;              "double-claim on a shared primitive — one lib must \
-;               build with SHARED_SQTAB_INIT defined"
+;               build with SHARED_SQTAB_INIT / SHARED_REU_MUL_INIT defined"
 ;   to catch the case where both libs would build the same table
-;   without a SHARED_SQTAB_INIT cutover.
+;   without a SHARED_*_INIT cutover.
 ; =============================================================================
 
 ; X25519_REU_BANK comes in via the `.include "constants.s"` at the top
@@ -173,16 +178,70 @@ LIB_X25519_RESIDENT_BYTES = 9046
 .endif
 LIB_X25519_COLD_BYTES     = 0
 
-; c64-lib-contract §5 / §8.1 shared-primitives bitmask. Bit allocation
+; c64-lib-contract §5 / §8.x shared-primitives bitmask. Bit allocation
 ; is append-only — bits are never reused even if a primitive is later
-; deprecated, so old consumer cfg `.assert`s keep parsing. Bit $0001
-; is c64-lib-contract SPEC §8.1's allocation for the sqtab primitive.
-LIB_SHARED_PRIMITIVES_SQTAB = $0001
-LIB_X25519_SHARED_PRIMITIVES = LIB_SHARED_PRIMITIVES_SQTAB
+; deprecated, so old consumer cfg `.assert`s keep parsing.
+;
+;   bit $0001 (SPEC §8.1): the 8x8 quarter-square multiply table.
+;   bit $0002 (SPEC §8.2): the 128 KB 8x8->16 REU multiplication table.
+;
+; ORed together → $0003 for c64-x25519 (consumes both).
+LIB_SHARED_PRIMITIVES_SQTAB   = $0001
+LIB_SHARED_PRIMITIVES_REU_MUL = $0002
+LIB_X25519_SHARED_PRIMITIVES  = LIB_SHARED_PRIMITIVES_SQTAB | LIB_SHARED_PRIMITIVES_REU_MUL
 
 .export LIB_X25519_ZP_USAGE_BYTES: abs
 .export LIB_X25519_REU_BANKS_USED: abs
 .export LIB_X25519_RESIDENT_BYTES: abs
 .export LIB_X25519_COLD_BYTES:     abs
 .export LIB_X25519_SHARED_PRIMITIVES: abs
-.export LIB_SHARED_PRIMITIVES_SQTAB: abs
+.export LIB_SHARED_PRIMITIVES_SQTAB:   abs
+.export LIB_SHARED_PRIMITIVES_REU_MUL: abs
+
+; =============================================================================
+; c64-lib-contract SPEC §8.0 catch-loop: precalc-table enumeration
+; =============================================================================
+;
+; Per SPEC §8.0 step-6, every adopter MUST enumerate its precalculated
+; tables (size >= 256 B AND one of: REU-resident / hot-loop-read /
+; page-aligned) in two forms:
+;
+;   1. Doc-level — docs/precalc-tables.md (name, size, region, source,
+;      classification, rationale). The rationale field is load-bearing
+;      for the cross-adopter audit (e.g. "could c448 / Ed448 ever land
+;      with the same pre-doubling trick?").
+;   2. Assembler-level — LIB_PRECALC_TABLE macro invocations (below),
+;      each emitting 3 exported equates: LIB_PRECALC_<name>_{SIZE,
+;      REGION,SHARED}. Build-time discovery via
+;      `od65 --dump-exports build/lib_version.o | grep LIB_PRECALC`.
+;
+; Both forms MUST stay in lock-step. Asymmetry between them blocks
+; adopter PRs per the intake-reviewer rule in c64-lib-contract
+; adopters.md step 6.
+;
+; The canonical macro source `precalc_table.inc` is copied verbatim
+; from c64-lib-contract's repo root; do not edit the local copy.
+;
+; Canonical names "sqtab" (§8.1) and "reu_mul" (§8.2) are NORMATIVE —
+; do not prefix them with library/curve names. The cross-adopter audit
+; `od65 --dump-exports build/*.o | grep LIB_PRECALC_<name>_SIZE`
+; depends on every adopter exporting the same symbol family.
+; =============================================================================
+
+.include "precalc_table.inc"
+
+LIB_PRECALC_TABLE "sqtab",           1024,   PRECALC_REGION_RAM, PRECALC_SHARED_YES
+LIB_PRECALC_TABLE "reu_mul",         131072, PRECALC_REGION_REU, PRECALC_SHARED_YES
+.if SQR_DMA_K
+; The pre-doubled tables (banks +3..+5) only exist in the default
+; SQR_DMA_K > 0 build; gated out in the lib-x25519-1764 variant so this
+; macro invocation does not emit LIB_PRECALC_reu_mul_doubled_* exports
+; in that build (matches the LIB_X25519_REU_BANKS_USED mask flip).
+;
+; Size = 3 × 65,536 B (one full REU bank each):
+;   bank LIB_SHARED_REU_MUL_BANK + 3: 17th-bit carry table, 256 B × 256 rows = 64 KB
+;   bank LIB_SHARED_REU_MUL_BANK + 4: doubled lo+hi, a = 0..127             = 64 KB
+;   bank LIB_SHARED_REU_MUL_BANK + 5: doubled lo+hi, a = 128..255           = 64 KB
+;                                                                  total: 196608 B
+LIB_PRECALC_TABLE "reu_mul_doubled", 196608, PRECALC_REGION_REU, PRECALC_SHARED_NO
+.endif
