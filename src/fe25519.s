@@ -28,7 +28,15 @@
 ; the `.include "constants.s"` at the top of this file. No .import.
 
 ; --- Imports from x25519_init.s ---
-.import reu_clear_wide, reu_fetch_doubled_row
+.import reu_clear_wide
+.if ::SQR_DMA_K
+; reu_fetch_doubled_row is only defined (and only invoked) when the
+; pre-doubled-table DMA fast-path is compiled in. In the K=0 variant
+; (`make lib-x25519-1764`) fe25519_sqr never dispatches to the DMA
+; path, the proc body in x25519_init.s is gated out, and importing
+; the symbol would leave the linker with an unresolved external.
+.import reu_fetch_doubled_row
+.endif
 
 ; --- Imports from data.s ---
 .import fe25519_tmp1, fe25519_tmp2, fe25519_tmp3, fe25519_tmp4
@@ -1124,6 +1132,15 @@ mul38_hi:  .byte 0
         sta mul_cached_a       ; cache a[i] for inner loop
 
         ; Hybrid path select: if i < SQR_DMA_K, use DMA path; else mult66 path
+.if ::SQR_DMA_K
+        ; Whole DMA-path dispatch block gated on SQR_DMA_K > 0. In the
+        ; K=0 build (`make lib-x25519-1764`) reu_fetch_doubled_row is
+        ; not imported (see top of file) and the proc body is gated
+        ; out in x25519_init.s; this block must drop with it so the
+        ; assembler doesn't emit a `jsr` to an undefined symbol.
+        ; Functionally equivalent to leaving the block in place: for
+        ; K=0, `cmp #0 / bcs` is always taken, so the DMA dispatch is
+        ; dead at runtime anyway.
         lda fe_mul_i
         cmp #SQR_DMA_K
         bcs @sqr_use_mult66
@@ -1149,6 +1166,7 @@ mul38_hi:  .byte 0
         sta @sqr_dma_ld2_b+1
         sta @sqr_dma_st2_b+1
         jmp @sqr_path_done
+.endif  ; SQR_DMA_K
 @sqr_use_mult66:
         ; patch trampoline back to mult66 inner loop
         lda #<(@sqr_inner)

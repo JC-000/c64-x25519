@@ -823,6 +823,77 @@ registers is already harmless. The minimal repro for the bug used
 `reu_reu_lo=$5A` alone (5 bytes of injected pre-state); see issue
 investigation report.
 
+### S3 — Autoload-latch invariant in `reu_fetch_doubled_row` (c64-lib-contract issue #15, landed PR #61)
+
+PR #61 SMC-patches `reu_fetch_doubled_row`'s first 512-byte DMA to
+delegate to the canonical §8.2 `reu_fetch_mul_row` primitive. The
+canonical primitive is **3-register-touch** (writes only `reu_reu_hi`,
+`reu_reu_bank`, `reu_command`) and **trusts the REU autoload latch**
+to keep the other five registers canonical (`reu_c64_lo/hi`,
+`reu_len_lo/hi`, `reu_reu_lo`, `reu_addr_ctrl`).
+
+`fe25519_sqr` runs the doubled-fetch dispatch across 22 iterations
+(`SQR_DMA_K = 22` default). The state machine across iterations is
+non-trivial:
+
+```
+jsr reu_clear_wide          ; establishes canonical autoload latch
+loop iter i = 1..K:
+  jsr reu_fetch_doubled_row
+    ; DMA #1: 512 B from banks +4/+5 → mul_dma_lo (SMC-patched
+    ;         delegation to canonical reu_fetch_mul_row)
+    ; DMA #2: 256 B from bank +3 → mul_dma_carry (inline; STOMPS
+    ;         the autoload latch — writes c64_lo/hi=mul_dma_carry,
+    ;         len_hi=1, etc.)
+  ... use the fetched data ...
+```
+
+On iteration 1 the latch is canonical because `reu_clear_wide`
+established it. **On iterations 2..K the latch is dirty** — DMA #2 of
+iteration N stomped it before iteration N+1 runs. So DMA #1 of
+iter N+1 explicitly re-writes the five dirty registers BEFORE the
+SMC-patched JSR. **Those writes are load-bearing — not redundant with
+`reu_clear_wide`'s restore tail**, because `reu_clear_wide` only runs
+once per `fe25519_sqr` call, not once per inner iteration.
+
+**Failure mode if the re-establish is elided.** Iter N+1 silently DMAs
+256 bytes into `mul_dma_carry` instead of 512 bytes into `mul_dma_lo`.
+Result: corrupted doubled-table data → wrong squaring outputs → same
+root-cause class as the v0.4.0 W2 incident (`mul(1,1)-after-sqr(1) → 0`).
+
+**Regression coverage.** `tools/test_fe_sqr_then_mul.py` drives
+`fe25519_sqr(x); fe25519_mul(y, z)` sequences and asserts the mul
+output matches `(y * z) mod (2^255 − 19)` per pyca. 60/60 cases pass
+on master post-merge; bug class is permanently guarded.
+
+**File:line.** `src/x25519_init.s` — banner blocks on:
+`reu_fetch_doubled_row` ("Autoload-latch invariant (LOAD-BEARING — do
+not break)"), `reu_fetch_mul_row` ("Caller contract" paragraph naming
+the two valid callers), and `reu_clear_wide` ("restore-hazard story"
+updated to point at DMA #2 specifically). The 5-register re-establish
+itself is at the top of `reu_fetch_doubled_row`'s body.
+
+**Cost.** +568.8 cy / +0.523 % on `fe25519_sqr` at `SQR_DMA_K = 22`
+(within the ≤ 2 % gate). Zero-delta on `make lib-x25519-1764`
+(SQR_DMA_K=0) — the entire doubled-fetch dispatch is gated out under
+`.if ::SQR_DMA_K`. Library archive shrinks 1194 B at K=0 from
+aggressive dead-code elimination of the now-unused `.proc`,
+`.export`, `.import`, and call-site code.
+
+**CT impact.** None. The 5-register re-establish writes are
+unconditional and run before any secret-data-dependent code. The SMC
+patch+restore window is also unconditional and bounded.
+
+**Why this is in the state-contract section (not the CT section).**
+The failure mode is silent doubled-table corruption mid-loop, not a
+timing leak. But the surface symptom (wrong squaring output that
+depends on which inner iteration corrupted the fetch) is
+indistinguishable from a CT bias if a future regression bypassed
+both the S3 invariant and the test_fe_sqr_then_mul.py guard — hence
+co-located with S1/S2 here.
+
+**Design doc:** [`docs/design/issue_15_smc_patch_doubled_fetch.md`](design/issue_15_smc_patch_doubled_fetch.md).
+
 ## Related projects
 
 Sibling audit reports and CT remediations (same leak patterns, same
