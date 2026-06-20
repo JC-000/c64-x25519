@@ -27,9 +27,10 @@ Implementation notes
 A Python-driven 65,536-call loop is infeasible (each `jsr` round-trip
 is ~10 ms, ~10 minutes total even in warp). Instead we upload a small
 6502 kernel at $0360 that sweeps `b = 0..255` for a fixed `a`, writing
-512 result bytes into two scratch pages at $C000/$C100. Python patches
-the `a` immediate byte into the kernel for each outer iteration and
-calls `jsr` once per `a` — 256 round-trips total.
+512 result bytes into two scratch pages at $C000/$C100. ct_mul_8x8 takes
+`b` in Y and the multiplicand `a` SMC-baked into smc_sum_a_imm+1 /
+smc_diff_a_imm+1; Python bakes `a` into those two sites for each outer
+iteration and calls `jsr` once per `a` — 256 round-trips total.
 
 Per project memory (`feedback_vice_instances.md`,
 `feedback_no_direct_vice.md`):
@@ -63,38 +64,30 @@ ZP_B = 0xFB
 
 
 def build_kernel(mul_8x8_addr, poly_prod_lo_addr, poly_prod_hi_addr):
-    """Assemble the 6502 inner-sweep kernel.
+    """Assemble the 6502 inner-sweep kernel for the SMC-baked
+    ct_mul_8x8 calling convention (c64-lib-contract §8.3 adoption).
 
-    The kernel layout is::
-
-            lda #$00            ; patched per-iteration: current `a`
-        a_imm_offset = 1
-            sta $FB             ; unused sentinel (see below)
-            ldx #$00            ; b = 0
-        loop:
-            stx $FB             ; save b (mul_8x8 clobbers X)
-            ldx $FB             ; X = b  (redundant safety; optimised below)
-            pha                 ; not actually used — see simplified form
-            ...
-
-    Simplified final form used here (20 bytes)::
+    The canonical ct_mul_8x8 takes its multiplier `b` in Y; the
+    multiplicand `a` is SMC-baked by the *caller* into the two immediate
+    operand sites smc_sum_a_imm+1 / smc_diff_a_imm+1 once per outer-a
+    iteration. So Python patches `a` into those two addresses (not into
+    the kernel), and the kernel only sweeps `b`::
 
             ldx #$00            ; b = 0
             stx $FB             ; save b
         loop:
-            lda #$00            ; <-- a immediate, patched each outer iter
-            ldx $FB             ; X = b
-            jsr mul_8x8         ; -> poly_prod_lo/hi
-            ldy $FB             ; Y = b (for $C000,y / $C100,y indexing)
+            ldy $FB             ; Y = b  (ct_mul_8x8 multiplier operand)
+            jsr ct_mul_8x8      ; -> poly_prod_lo/hi (a is SMC-baked)
+            ldy $FB             ; Y = b again (ct_mul_8x8 clobbers Y)
             lda poly_prod_lo
             sta $C000,y
             lda poly_prod_hi
             sta $C100,y
             inc $FB
-            bne loop            ; 256 iterations then save_b wraps to 0
+            bne loop            ; 256 iterations then $FB wraps to 0
             rts
 
-    Returns (kernel_bytes, a_immediate_offset).
+    Returns the kernel bytes.
     """
     code = bytearray()
 
@@ -105,17 +98,13 @@ def build_kernel(mul_8x8_addr, poly_prod_lo_addr, poly_prod_hi_addr):
 
     loop_offset = len(code)
 
-    # lda #$00  (A immediate — PATCHED by Python each outer iteration)
-    a_imm_offset = len(code) + 1
-    code += bytes([0xA9, 0x00])
+    # ldy $FB  (Y = b — ct_mul_8x8 multiplier operand)
+    code += bytes([0xA4, ZP_B])
 
-    # ldx $FB
-    code += bytes([0xA6, ZP_B])
-
-    # jsr mul_8x8
+    # jsr ct_mul_8x8  (a is SMC-baked into the body by Python, below)
     code += bytes([0x20, mul_8x8_addr & 0xFF, (mul_8x8_addr >> 8) & 0xFF])
 
-    # ldy $FB
+    # ldy $FB  (reload b; ct_mul_8x8 exits with Y = |a-b|)
     code += bytes([0xA4, ZP_B])
 
     # lda poly_prod_lo (absolute)
@@ -144,30 +133,36 @@ def build_kernel(mul_8x8_addr, poly_prod_lo_addr, poly_prod_hi_addr):
     # rts
     code += bytes([0x60])
 
-    return bytes(code), a_imm_offset
+    return bytes(code)
 
 
 def main():
     os.chdir(PROJECT_ROOT)
 
     labels = Labels.from_file(LABELS_PATH)
-    required = ["mul_8x8", "poly_prod_lo", "poly_prod_hi"]
+    required = ["ct_mul_8x8", "smc_sum_a_imm", "smc_diff_a_imm",
+                "poly_prod_lo", "poly_prod_hi"]
     for name in required:
         if labels.address(name) is None:
             print(f"FATAL: '{name}' label not found in {LABELS_PATH}")
             sys.exit(1)
 
-    mul_addr = labels["mul_8x8"]
+    mul_addr = labels["ct_mul_8x8"]
     lo_addr = labels["poly_prod_lo"]
     hi_addr = labels["poly_prod_hi"]
-    print(f"mul_8x8       = ${mul_addr:04X}")
-    print(f"poly_prod_lo  = ${lo_addr:04X}")
-    print(f"poly_prod_hi  = ${hi_addr:04X}")
+    # `a` is SMC-baked into the two immediate operand sites (the byte
+    # after each opcode, i.e. label+1) once per outer iteration.
+    sum_a_addr = labels["smc_sum_a_imm"] + 1
+    diff_a_addr = labels["smc_diff_a_imm"] + 1
+    print(f"ct_mul_8x8     = ${mul_addr:04X}")
+    print(f"poly_prod_lo   = ${lo_addr:04X}")
+    print(f"poly_prod_hi   = ${hi_addr:04X}")
+    print(f"smc_sum_a_imm+1  = ${sum_a_addr:04X}")
+    print(f"smc_diff_a_imm+1 = ${diff_a_addr:04X}")
 
-    kernel, a_imm_offset = build_kernel(mul_addr, lo_addr, hi_addr)
-    a_imm_addr = KERNEL_ADDR + a_imm_offset
-    print(f"Kernel: {len(kernel)} bytes at ${KERNEL_ADDR:04X}, "
-          f"a-immediate patch byte at ${a_imm_addr:04X}")
+    kernel = build_kernel(mul_addr, lo_addr, hi_addr)
+    print(f"Kernel: {len(kernel)} bytes at ${KERNEL_ADDR:04X} "
+          f"(b-sweep; a SMC-baked per outer iter)")
 
     config = ViceConfig(prg_path=PRG_PATH, warp=True, ntsc=True, sound=False,
                         extra_args=["-reu", "-reusize", "512"])
@@ -195,10 +190,12 @@ def main():
         print(f"Running brute-force sweep (65,536 products)...")
 
         for a in range(256):
-            # Patch the `lda #imm` immediate byte with the current `a`.
-            write_bytes(transport, a_imm_addr, bytes([a]))
+            # SMC-bake the current `a` into ct_mul_8x8's two immediate
+            # operand sites (the caller's job in this calling convention).
+            write_bytes(transport, sum_a_addr, bytes([a]))
+            write_bytes(transport, diff_a_addr, bytes([a]))
 
-            # Execute the inner 256-iteration kernel for this `a`.
+            # Execute the inner 256-iteration b-sweep kernel for this `a`.
             jsr(transport, KERNEL_ADDR, timeout=30.0)
 
             # Read back 256 low-bytes and 256 high-bytes of results.
