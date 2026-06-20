@@ -64,8 +64,8 @@ still relevant.
 
 | ID  | Site (file:line)      | Class       | Severity | Status | Notes                                                            |
 |-----|-----------------------|-------------|----------|--------|------------------------------------------------------------------|
-| L1  | src/mul_8x8.s:130     | branch      | med      | fixed  | `bcs :+` removed — Phase 1 branchless `|a-b|` sign-mask          |
-| L2  | src/mul_8x8.s:137     | branch      | med      | fixed  | `beq @s0` removed — Phase 1 SMC hi-byte patch on abs,X load      |
+| L1  | src/mul_8x8.s:234     | branch      | med      | fixed  | `bcs :+` removed — branchless `|a-b|` sign-mask (canonical §8.3 body) |
+| L2  | src/mul_8x8.s:227     | branch      | med      | fixed  | `beq @s0` removed — SMC hi-byte patch on abs,X load (canonical §8.3 body) |
 | L3  | src/fe25519.s:912     | branch      | med      | fixed  | `bne @sqr_nonzero_j` removed — Phase 2 unconditional body A      |
 | L4  | src/fe25519.s:1003    | branch      | med      | fixed  | `bne @sqr_nonzero_j_b` removed — Phase 2 unconditional body B    |
 | L5  | src/fe25519.s:923     | page-cross  | high     | fixed  | `(lmul0),y` dropped — Phase 2 abs,Y via page-0 sqtab only        |
@@ -113,12 +113,26 @@ still relevant.
 
 - **Phase 1 — L1, L2 fixed in `src/mul_8x8.s`**. Branchless `|a-b|` via
   sign-mask XOR, SMC hi-byte patching of the sum load on page-aligned
-  `sqtab_lo` / `sqtab_hi` (at `$7800`/`$7A00` absolute). Scratch bytes
-  `mul_diff`, `mul_mask`, `mul_sum_pg` added to the file's static data
-  area. Zero `mul_8x8` callers remain on the ladder hot path — the
-  primitive is now only used by `reu_mul_init` one-time table build —
+  `sqtab_lo` / `sqtab_hi` (at `$7800`/`$7A00` absolute). Zero `mul_8x8`
+  callers remain on the ladder hot path — the primitive is now only used
+  by `reu_mul_init`'s one-time table build (no secret inputs reach it) —
   so Phase 1 contributes ~0 jiffies to the scalarmult budget despite
   the ~2x cycle growth (~107 cy vs ~50 cy per call).
+
+  **§8.3 adoption (issue #14):** the L1/L2-fixed body was reorganized to
+  the canonical sum-first SMC-baked `ct_mul_8x8` shape — byte-identical
+  to the c64-lib-contract owner c64-ChaCha20-Poly1305, asserted by
+  `tools/ct_mul_brute_check.py` (and the cross-adopter copy). The reorder
+  from the historical diff-first ordering is location-agnostic for both
+  L1 (branchless sign-mask) and L2 (SMC hi-byte patch) — neither fix
+  depends on block order — so the L1/L2 closure is preserved verbatim
+  under the new ordering. The old per-adopter scratch bytes
+  (`mul_a`/`mul_b`/`mul_diff`/`mul_mask`/`mul_sum_pg`) were replaced by
+  the canonical `ct_diff_raw`/`ct_sign_mask` scratch; the multiplicand
+  `a` is now SMC-baked by the caller (`reu_mul_init`) per outer-`a`
+  iteration with `b` passed in `Y`. The 65,536-case real-6502 brute-check
+  (`tools/ct_mul_brute_check.py`) re-confirms functional correctness
+  under the new convention.
 
 - **Phase 2 — L3-L11 fixed in `.proc fe25519_sqr` mult66 bodies A and B**.
   Branchless CT quarter-square modelled on Phase 1. Inner bodies mirror

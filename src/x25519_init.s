@@ -18,7 +18,8 @@
 .endif
 
 ; --- Imports from mul_8x8.s ---
-.import mul_8x8, poly_prod_lo, poly_prod_hi
+.import ct_mul_8x8, poly_prod_lo, poly_prod_hi
+.import smc_sum_a_imm, smc_diff_a_imm
 
 ; --- Imports from data.s ---
 .import mul_dma_lo, mul_dma_hi, mul_dma_carry, mul_cached_a
@@ -80,14 +81,20 @@ reu_mul_tables_init = reu_mul_init
         sta reu_init_a         ; outer counter (multiplier a)
 
 @outer:
+        ; SMC-bake the multiplicand a into ct_mul_8x8's two immediate
+        ; operand sites, once per outer-a iteration (amortized over the
+        ; 256 inner b calls — chacha's calling convention).
+        lda reu_init_a
+        sta smc_sum_a_imm+1
+        sta smc_diff_a_imm+1
+
         ; For current a, compute a*b for all b=0..255
         lda #0
         sta reu_init_b         ; inner counter (multiplicand b)
 
 @inner:
-        lda reu_init_a
-        ldx reu_init_b
-        jsr mul_8x8            ; poly_prod_lo/hi = a * b
+        ldy reu_init_b         ; Y = b (ct_mul_8x8 multiplier operand)
+        jsr ct_mul_8x8         ; poly_prod_lo/hi = a * b
 
         ldx reu_init_b
         lda poly_prod_lo
