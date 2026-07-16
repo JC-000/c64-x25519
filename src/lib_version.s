@@ -13,8 +13,8 @@
 ; Consumers import these for assembly-time compatibility checks:
 ;
 ;   .import LIB_VERSION_MAJOR, LIB_VERSION_MINOR, LIB_VERSION_PATCH
-;   .if LIB_VERSION_MAJOR <> 0 .or LIB_VERSION_MINOR < 6
-;       .error "c64-x25519 v0.6 or newer is required"
+;   .if LIB_VERSION_MAJOR <> 0 .or LIB_VERSION_MINOR < 7
+;       .error "c64-x25519 v0.7 or newer is required"
 ;   .endif
 ;
 ; Versioning policy: semver 2.0.0 - https://semver.org/
@@ -38,7 +38,7 @@
 ; =============================================================================
 
 LIB_VERSION_MAJOR = 0
-LIB_VERSION_MINOR = 6
+LIB_VERSION_MINOR = 7
 LIB_VERSION_PATCH = 0
 LIB_ABI_VERSION   = 1
 
@@ -107,26 +107,31 @@ LIB_ABI_VERSION   = 1
 ;   sections from reu_mul_init):
 ;
 ;     SQR_DMA_K > 0 (default, =22):
-;       CODE  total ≈ 4616 B   (x25519 + x25519_init + fe25519 +
-;                               mul_8x8 + util)
+;       CODE  total ≈ 4601 B   (x25519 717 + fe25519 2711 + mul_8x8
+;                               223 + x25519_init 798 + util 152)
 ;       DATA  total ≈ 3584 B
 ;       SQTAB         1024 B
 ;       ---------------------------------------------------------------
-;                            ≈ 9224 B total
+;                            ≈ 9209 B total
 ;
 ;     SQR_DMA_K = 0 (lib-x25519-1764 variant):
-;       CODE  total ≈ 4438 B   (x25519_init.o drops to 620 B; −178 B
-;                               vs the default after the gated-out
-;                               @dbl_gen + 3 doubled-stash blocks)
+;       CODE  total ≈ 4287 B   (x25519_init.o drops to 538 B and
+;                               fe25519.o to 2657 B after the gated-out
+;                               @dbl_gen + doubled-stash blocks and the
+;                               #61 .if ::SQR_DMA_K DMA-dispatch gating)
 ;       DATA  total ≈ 3584 B
 ;       SQTAB         1024 B
 ;       ---------------------------------------------------------------
-;                            ≈ 9046 B total
+;                            ≈ 8895 B total
 ;
-;   (Refreshed 2026-05-20. The three config .o files ─ lib_version.o,
-;   zp_config.o, reu_config.o ─ contain only equate declarations +
-;   .export directives and emit no CODE/DATA bytes, so they don't
-;   shift these totals.)
+;   (Refreshed 2026-07-16 for v0.7.0: −15 B default / −151 B 1764 vs
+;   the 2026-05-20 v0.6.0 numbers — #61 SMC-patch refactor + #62 §8.3
+;   canonical ct_mul_8x8 body (mul_8x8.o 251 → 223 B) − the +19 B
+;   #64 RFC 7748 x_1 mask fix in x25519.o. The x25_x1 buffer consumed
+;   existing align padding, so DATA is unchanged. The three config .o
+;   files ─ lib_version.o, zp_config.o, reu_config.o ─ contain only
+;   equate declarations + .export directives and emit no CODE/DATA
+;   bytes, so they don't shift these totals.)
 ;
 ; LIB_X25519_COLD_BYTES
 ;   Approximate code + data footprint that a consumer MAY overlay-page
@@ -183,10 +188,10 @@ LIB_ABI_VERSION   = 1
 LIB_X25519_ZP_USAGE_BYTES = 85
 .if SQR_DMA_K
 LIB_X25519_REU_BANKS_USED = $3B << X25519_REU_BANK
-LIB_X25519_RESIDENT_BYTES = 9224
+LIB_X25519_RESIDENT_BYTES = 9209
 .else
 LIB_X25519_REU_BANKS_USED = $03 << X25519_REU_BANK
-LIB_X25519_RESIDENT_BYTES = 9046
+LIB_X25519_RESIDENT_BYTES = 8895
 .endif
 LIB_X25519_COLD_BYTES     = 0
 

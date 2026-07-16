@@ -6,10 +6,68 @@ An optimized implementation of X25519 / Curve25519 scalar multiplication written
 
 ## Status
 
-**Since v0.6.0 (v0.7-prep on master)** — two c64-lib-contract follow-ups merged into master since the v0.6.0 tag, both pure-additive vs v0.6.0:
+**v0.7.0 (DRAFT until tagged)** — **RFC 7748 decode fix** + the
+c64-lib-contract **§8 shared-primitives completion release**. Every
+§8.x clause of SPEC v0.4.0 that names c64-x25519 as an adopter is
+shipped. Pure-additive ABI vs v0.6.0; no CT posture change (L1–L29
+stays closed).
 
-- **§8.2 `reu_mul` + §8.0 step-6 adoption** ([#59](https://github.com/JC-000/c64-x25519/pull/59), commit `9c631f9`): the 128 KB 8×8→16 REU multiplication table promoted to a shared primitive across c64-x25519 + c64-nist-curves. New `LIB_SHARED_REU_MUL_BANK` placement equate and `SHARED_REU_MUL_INIT` migration gate let a multi-lib consumer (e.g., c64-https + TLS 1.3 stack) link one canonical 128 KB table instead of two. Manifest bit `$0002` OR'd into `LIB_X25519_SHARED_PRIMITIVES = $0003`. Also adds the §8.0 catch-loop precalc-table enumeration: `docs/precalc-tables.md` (rationale per shipped table) plus `LIB_PRECALC_TABLE` ca65 macro invocations for build-time cross-adopter audits. New library exports: `LIB_SHARED_REU_MUL_*`, `X25519_REU_BANK_DOUBLED` / `_CARRY`, `reu_fetch_mul_row_bank_patch` (SMC patch label), `reu_mul_tables_init` (canonical alias of `reu_mul_init`). See [`docs/LIBRARY.md`](docs/LIBRARY.md) §4.8 + §4.9.
-- **#15 SMC-patch refactor of `reu_fetch_doubled_row`** ([#61](https://github.com/JC-000/c64-x25519/pull/61)): the 512 B doubled-table fetch now delegates to the canonical §8.2 `reu_fetch_mul_row` primitive via SMC-patch of the bank-base byte; the 256 B carry fetch stays inline. New W2-class regression `tools/test_fe_sqr_then_mul.py` (60/60). Bench: +0.523 % on `fe25519_sqr` K=22 (≤ 2 % gate); −1194 B library size at K=0 from aggressive `.if ::SQR_DMA_K` gating of the `.proc` body, `.export` / `.import`, and DMA-dispatch block. Autoload-latch invariant documented at three sites in `src/x25519_init.s` — see [`docs/CT_ANALYSIS.md`](docs/CT_ANALYSIS.md) § State-contract defences S3 and [`docs/design/issue_15_smc_patch_doubled_fetch.md`](docs/design/issue_15_smc_patch_doubled_fetch.md).
+Headline (vs v0.6.0):
+
+- **RFC 7748 decodeUCoordinate fix**
+  ([#64](https://github.com/JC-000/c64-x25519/issues/64) /
+  [#65](https://github.com/JC-000/c64-x25519/pull/65)): since v0.4.0,
+  `x25519_scalarmult` returned deterministically wrong results for
+  peer u-coordinates with bit 255 set — the W4 H1 no-mutation change
+  masked the working copy x₃ but the ladder kept reading the caller's
+  unmasked `x25_u` as x₁ (off by 19 mod p). Fixed with a library-owned
+  masked `x25_x1` snapshot; `x25_u` stays unmutated. Conforming peers
+  (canonical keys < p) were never affected; no secret leakage; no CT
+  impact (`docs/CT_ANALYSIS.md` §S4). Caught by RFC 7748 §5.2 vector 2
+  in `make test-slow`, now a mandatory release gate.
+- **§8.2 `reu_mul` + §8.0 catch-loop adoption**
+  ([#59](https://github.com/JC-000/c64-x25519/pull/59)): the 128 KB
+  8×8→16 REU multiplication table promoted to a shared primitive.
+  `LIB_SHARED_REU_MUL_BANK` placement equate, `SHARED_REU_MUL_INIT`
+  migration gate, canonical `reu_mul_tables_init` entry,
+  `reu_fetch_mul_row_bank_patch` SMC hook, plus the §8.0 step-6
+  precalc-table enumeration (`docs/precalc-tables.md` +
+  `LIB_PRECALC_TABLE` equates). See [`docs/LIBRARY.md`](docs/LIBRARY.md)
+  §4.8 + §4.9.
+- **Issue-15 SMC-patch refactor**
+  ([#61](https://github.com/JC-000/c64-x25519/pull/61)):
+  `reu_fetch_doubled_row`'s 512 B fetch delegates to the canonical
+  §8.2 `reu_fetch_mul_row` via SMC bank patch; carry fetch stays
+  inline. Autoload-latch invariant documented at three sites in
+  `src/x25519_init.s`; W2-class guard `tools/test_fe_sqr_then_mul.py`
+  (60/60). Cost: `fe25519_sqr` +1.5 % at the release boundary (≤ 2 %
+  gate); gated out entirely at K=0.
+- **§8.3 canonical `ct_mul_8x8` body**
+  ([#62](https://github.com/JC-000/c64-x25519/pull/62)): the multiply
+  body is **byte-identical** to the canonical c64-ChaCha20-Poly1305
+  `ct_mul_8x8` (59 B, SHA `3ed9025b…`; cross-adopter
+  `ct_mul_brute_check.py` gate exit 0 across chacha == nist-curves ==
+  x25519, 65536/65536 functional). `mul_8x8` retained as back-compat
+  alias; new `SHARED_CT_MUL_8X8` migration gate. Boot-only in x25519
+  (no network-observable exposure); CT discipline retained as the
+  canonical shared shape.
+- **§8.0 conditional shared-primitives mask + bit `$0004`**
+  ([#63](https://github.com/JC-000/c64-x25519/pull/63)):
+  `LIB_X25519_SHARED_PRIMITIVES` now reports only what a build
+  configuration *owns* — each deferral switch drops its bit, making
+  the consumer double-ownership `.assert` satisfiable under
+  legitimate sharing. Standalone: `$0007`.
+- **Header sync + footprint refresh** (release PR): `src/x25519.inc`
+  gains the contract-level imports that were exported-but-undeclared;
+  `LIB_X25519_RESIDENT_BYTES` re-measured — `9209` default / `8895`
+  1764 variant (−15 / −151 B vs v0.6.0, including the +19 B #64 fix).
+
+Runtime: scalarmult `263,581,957` cy / `15,463.5` jif (≈ +0.7 % vs
+v0.6.0: the issue-15 `fe25519_sqr` delta + the #64 init copy;
+`fe25519_mul` bit-identical). RFC 7748 vec-0 PASS.
+
+See [`docs/RELEASE_NOTES_v0.7.0.md`](docs/RELEASE_NOTES_v0.7.0.md)
+for the full story.
 
 ---
 
@@ -88,14 +146,14 @@ patching:
 - **§5 Aggregate manifest equates** ([#46](https://github.com/JC-000/c64-x25519/issues/46) / [#50](https://github.com/JC-000/c64-x25519/pull/50)): four exports for
   consumer-side cfg fit/collision checks: `LIB_X25519_ZP_USAGE_BYTES = 85`,
   `LIB_X25519_REU_BANKS_USED = $3B << X25519_REU_BANK` (banks 0, 1, 3, 4, 5),
-  `LIB_X25519_RESIDENT_BYTES = 9224`, `LIB_X25519_COLD_BYTES = 0`.
+  `LIB_X25519_RESIDENT_BYTES = 9209` (as of v0.7.0), `LIB_X25519_COLD_BYTES = 0`.
   (Bank 2 dropped + 51 CODE bytes reclaimed in v0.6 prep after the
   REU usage audit — see [`docs/REU_USAGE_ANALYSIS.md`](docs/REU_USAGE_ANALYSIS.md).)
   A second v0.6-prep `make lib-x25519-1764` build variant lowers the
   minimum REU spec to 256 KB (stock 1764) by gating out the
   doubled-table cluster in banks 3/4/5; that variant reports
-  `LIB_X25519_REU_BANKS_USED = $03` and `LIB_X25519_RESIDENT_BYTES = 9046`
-  at +16.2 % scalarmult cost.
+  `LIB_X25519_REU_BANKS_USED = $03` and `LIB_X25519_RESIDENT_BYTES = 8895`
+  (as of v0.7.0) at +16.2 % scalarmult cost.
 
 All changes are pure-additive: no symbol removals, no behaviour
 change at default configuration. v0.4.0 consumers can adopt v0.5.0
