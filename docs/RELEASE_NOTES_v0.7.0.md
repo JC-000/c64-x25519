@@ -1,8 +1,9 @@
 # c64-x25519 v0.7.0 — RFC 7748 decode fix + c64-lib-contract §8 completion
 
-**Status:** DRAFT until tagged. Tarball SHA256 + byte size are filled
-in via a follow-up PR after the tag is pushed and `make dist
-VERSION=v0.7.0` runs (mirrors the v0.5.0 / v0.6.0 fill pattern).
+**Status:** Released 2026-07-16. Tag [`v0.7.0`](https://github.com/JC-000/c64-x25519/releases/tag/v0.7.0)
+live on master at commit `43a633c`. Reproducible tarball attached to
+the GitHub Release page; SHA256 + byte size recorded under
+[Tarball](#tarball) below.
 
 v0.7.0 carries **one correctness fix** and completes the
 [c64-lib-contract](https://github.com/JC-000/c64-lib-contract) §8
@@ -403,16 +404,18 @@ symbols still resolve.
 
 ```
 File:     c64-x25519-v0.7.0.tar.gz
-Size:     TBD (filled post-tag)
-SHA256:   TBD (filled post-tag)
+Size:     103,812 bytes
+SHA256:   807be6916debddd162f3c84d83e9bc7a7d5b1ec5c992b9f7bfdd0c55f0a1ac8a
 ```
 
 Reproducible: same VERSION + same tag SHA → byte-identical tarball
 (`git archive` is content-deterministic; `gzip -n` drops the
-timestamp). Verify locally with:
+timestamp). Verified with two consecutive `make dist VERSION=v0.7.0`
+runs producing the same SHA. Verify locally with:
 
 ```sh
 git checkout v0.7.0
 tools/build_release.sh v0.7.0     # or: make dist VERSION=v0.7.0
 shasum -a 256 c64-x25519-v0.7.0.tar.gz
+# expect: 807be6916debddd162f3c84d83e9bc7a7d5b1ec5c992b9f7bfdd0c55f0a1ac8a
 ```
