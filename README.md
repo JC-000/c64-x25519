@@ -6,7 +6,8 @@ An optimized implementation of X25519 / Curve25519 scalar multiplication written
 
 ## Status
 
-**v0.7.0 (DRAFT until tagged)** — **RFC 7748 decode fix** + the
+**v0.7.0 released 2026-07-16** — [GitHub release](https://github.com/JC-000/c64-x25519/releases/tag/v0.7.0),
+MIT licensed. **RFC 7748 decode fix** + the
 c64-lib-contract **§8 shared-primitives completion release**. Every
 §8.x clause of SPEC v0.4.0 that names c64-x25519 as an adopter is
 shipped. Pure-additive ABI vs v0.6.0; no CT posture change (L1–L29
