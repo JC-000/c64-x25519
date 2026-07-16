@@ -186,6 +186,7 @@ lib-verify: lib $(LIB_VERIFY_PRG)
 	           LIB_X25519_RESIDENT_BYTES LIB_X25519_COLD_BYTES \
 	           LIB_X25519_SHARED_PRIMITIVES \
 	           LIB_SHARED_PRIMITIVES_SQTAB LIB_SHARED_PRIMITIVES_REU_MUL \
+	           LIB_SHARED_PRIMITIVES_CT_MUL_8X8 \
 	           LIB_PRECALC_sqtab_SIZE LIB_PRECALC_reu_mul_SIZE \
 	           mul_tables_init; do \
 	  grep -q "\\b$$sym\\b" $(LIB_VERIFY_DIR)/stub.labels \
