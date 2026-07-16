@@ -908,6 +908,44 @@ co-located with S1/S2 here.
 
 **Design doc:** [`docs/design/issue_15_smc_patch_doubled_fetch.md`](design/issue_15_smc_patch_doubled_fetch.md).
 
+### S4 — RFC 7748 decodeUCoordinate x₁ desync (W4 H1 regression, fixed v0.7.0)
+
+**Defect.** RFC 7748 requires masking bit 255 of the input
+u-coordinate (`decodeUCoordinate`). The pre-v0.4.0 code masked
+`x25_u+31` in place; the v0.4.0 W4 H1 fix (PR #38) stopped mutating
+the caller's buffer and masked only the `x25_x3` working copy — but
+the ladder step's `z_3 = x_1 * (DA-CB)^2` kept reading `x25_u`
+directly as x₁. Since `2^255 ≡ 19 (mod p)`, an input with bit 255 set
+made x₁ = decoded-u + 19 while x₃ = decoded-u: an inconsistent ladder
+and a deterministically wrong scalarmult result. RFC 7748 §5.2
+vector 2 (the only MSB-set vector in the suite) catches it; it was
+broken from v0.4.0 through v0.6.0 because `make test-slow` — the only
+suite that runs that vector — was not exercised at the v0.5.0/v0.6.0
+release boundaries. Diagnosis was confirmed by reproducing the C64's
+exact wrong output in a Python model with x₁ unmasked / x₃ masked.
+
+**Fix (v0.7.0).** New library-owned 32-byte aligned buffer `x25_x1`
+(`src/data.s`, page+`$40` after `fe_p`). Ladder init snapshots the
+already-masked `x25_x3` into it (one extra `fe25519_copy` per
+scalarmult, before the first iteration clobbers `x25_x3`); the z₃
+multiply reads `x25_x1` (`src/x25519.s`). The W4 H1 guarantee is
+preserved — `x25_u` is never written.
+
+**Exposure.** Correctness/interop only, and only for peer inputs with
+bit 255 set — conforming X25519 public keys are canonical (< p), so
+the trigger requires a non-conforming or adversarial peer. No secret
+leaks: the wrong output is a deterministic function of public inputs.
+
+**CT impact.** None. The added `fe25519_copy` runs once at init on
+public data with public indices; the z₃ multiply reads the same-shaped
+32-byte-aligned buffer via the same addressing mode as before. No new
+branches, no secret-indexed access. L1–L29 posture unchanged.
+
+**Regression guard.** RFC 7748 §5.2 vector 2 in
+`tools/test_x25519.py` (`test/rfc7748_vectors.json`), run by
+`make test-slow`. Process fix: run `make test-slow` at every release
+boundary (see the release checklist in the v0.7.0 notes).
+
 ## Related projects
 
 Sibling audit reports and CT remediations (same leak patterns, same

@@ -38,7 +38,7 @@
 .import fe25519_tmp1, fe25519_tmp2, fe25519_tmp3, fe25519_tmp4
 .import x25_x2, x25_z2, x25_x3, x25_z3
 .import x25_a, x25_b, x25_da, x25_cb, x25_e
-.import x25_scalar, x25_u, x25_result, x25_basepoint
+.import x25_scalar, x25_u, x25_result, x25_basepoint, x25_x1
 
 .segment "CODE"
 
@@ -143,6 +143,29 @@
         lda x25_u+31
         and #$7f
         sta x25_x3+31
+
+        ; x_1 = decoded u (masked working copy for the ladder).
+        ;
+        ; The ladder step's z_3 = x_1 * (DA-CB)^2 must use the SAME
+        ; decoded (masked) u as x_3 above. Reading x25_u there instead
+        ; would desynchronize x_1 from x_3 whenever bit 255 of the
+        ; caller's u is set: 2^255 ≡ 19 (mod p), so the unmasked
+        ; buffer is the decoded u + 19 as a field element. That was
+        ; the RFC 7748 §5.2 vector-2 regression introduced with the
+        ; W4 H1 fix (v0.4.0): H1 stopped writing the mask back to
+        ; x25_u but the z_3 site kept reading x25_u. Snapshot the
+        ; masked value into the library-owned x25_x1 once, here, while
+        ; x25_x3 still holds the decoded u (it is clobbered by the
+        ; first ladder iteration).
+        lda #<(x25_x3)
+        sta fe25519_src1
+        lda #>(x25_x3)
+        sta fe25519_src1+1
+        lda #<(x25_x1)
+        sta fe25519_dst
+        lda #>(x25_x1)
+        sta fe25519_dst+1
+        jsr fe25519_copy
 
         ; z_3 = 1
         lda #<(x25_z3)
@@ -486,7 +509,10 @@
         ; preserves the ≤ 2p bound (cswap is byte-wise).
 
         ; z_3 = x_1 * (DA - CB)^2
-        ; x_1 is the original u-coordinate (x25_u)
+        ; x_1 is the DECODED u-coordinate (x25_x1 — the bit-255-masked
+        ; snapshot taken at ladder init). NOT x25_u: the caller's buffer
+        ; is unmasked (W4 H1 keeps it unmutated) and differs from the
+        ; decoded u by 19 mod p when bit 255 is set.
         lda #<(x25_da)
         sta fe25519_src1
         lda #>(x25_da)
@@ -508,9 +534,9 @@
         jsr fe25519_sqr             ; x25_z3 = (DA - CB)^2
         ; Now z_3 = x_1 * (DA-CB)^2
         ; fe25519_dst=x25_z3 still set from fe25519_sqr above
-        lda #<(x25_u)
+        lda #<(x25_x1)
         sta fe25519_src1
-        lda #>(x25_u)
+        lda #>(x25_x1)
         sta fe25519_src1+1
         lda #<(x25_z3)
         sta fe25519_src2
