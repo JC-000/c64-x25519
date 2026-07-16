@@ -138,27 +138,39 @@ LIB_ABI_VERSION   = 1
 ;   this equate.
 ;
 ; LIB_X25519_SHARED_PRIMITIVES
-;   c64-lib-contract §5 + §8.0/§8.1/§8.2 append-only bitmask. One bit
-;   per contract-§8 shared primitive the library consumes:
-;     bit $0001  LIB_SHARED_PRIMITIVES_SQTAB    — 8x8 quarter-square
-;                                                  multiply table (§8.1)
-;     bit $0002  LIB_SHARED_PRIMITIVES_REU_MUL  — 128 KB 8x8->16 REU
-;                                                  multiplication table (§8.2)
-;   c64-x25519 consumes both:
+;   c64-lib-contract §5 + §8.0-§8.3 append-only bitmask. One bit per
+;   contract-§8 shared primitive this build OWNS. Per SPEC v0.4.0
+;   §8.0 the mask is CONDITIONAL: a bit is set iff this build does
+;   NOT define that primitive's deferral switch (the invariant the
+;   .ifdef blocks below implement):
+;     bit $0001  LIB_SHARED_PRIMITIVES_SQTAB      — 8x8 quarter-square
+;                multiply table (§8.1); dropped under SHARED_SQTAB_INIT
+;     bit $0002  LIB_SHARED_PRIMITIVES_REU_MUL    — 128 KB 8x8->16 REU
+;                multiplication table (§8.2); dropped under
+;                SHARED_REU_MUL_INIT
+;     bit $0004  LIB_SHARED_PRIMITIVES_CT_MUL_8X8 — CT 8x8->16 multiply
+;                body (§8.3); dropped under SHARED_CT_MUL_8X8
+;   c64-x25519 consumes all three:
 ;     - sqtab: mul_8x8 + the mult66 path inside fe25519_sqr both read
 ;       sqtab_lo / sqtab_hi at runtime.
 ;     - reu_mul: reu_mul_init builds 256 rows × 512 B in REU banks
 ;       LIB_SHARED_REU_MUL_BANK / +1; reu_fetch_mul_row DMAs them
 ;       row-by-row into mul_dma_lo/hi.
-;   A consumer composing c64-x25519 with another shared-primitives
-;   adopter asserts:
+;     - ct_mul_8x8: the canonical §8.3 multiply body in src/mul_8x8.s
+;       (byte-identical to the chacha owner; `mul_8x8` is the
+;       back-compat alias label).
+;   A standalone build (no switches defined) claims all three → $0007.
+;   An integrated build drops the bit for each primitive it defers to
+;   a canonical provider, so a consumer composing c64-x25519 with
+;   another §8 adopter asserts:
 ;     .import LIB_X25519_SHARED_PRIMITIVES, LIB_<other>_SHARED_PRIMITIVES
 ;     .assert (LIB_X25519_SHARED_PRIMITIVES .and \
 ;              LIB_<other>_SHARED_PRIMITIVES) = 0, error, \
-;              "double-claim on a shared primitive — one lib must \
-;               build with SHARED_SQTAB_INIT / SHARED_REU_MUL_INIT defined"
-;   to catch the case where both libs would build the same table
-;   without a SHARED_*_INIT cutover.
+;              "shared-primitive double-ownership — exactly one \
+;               provider must own each shared primitive; the other(s) \
+;               must build with that primitive's SHARED_* switch defined"
+;   which holds for correctly-composed builds because the deferring
+;   side's bits drop out (c64-lib-contract#21 fix, SPEC v0.4.0).
 ; =============================================================================
 
 ; X25519_REU_BANK comes in via the `.include "constants.s"` at the top
@@ -184,19 +196,44 @@ LIB_X25519_COLD_BYTES     = 0
 ;
 ;   bit $0001 (SPEC §8.1): the 8x8 quarter-square multiply table.
 ;   bit $0002 (SPEC §8.2): the 128 KB 8x8->16 REU multiplication table.
+;   bit $0004 (SPEC §8.3): the CT 8x8->16 multiply body (ct_mul_8x8).
 ;
-; ORed together → $0003 for c64-x25519 (consumes both).
-LIB_SHARED_PRIMITIVES_SQTAB   = $0001
-LIB_SHARED_PRIMITIVES_REU_MUL = $0002
-LIB_X25519_SHARED_PRIMITIVES  = LIB_SHARED_PRIMITIVES_SQTAB | LIB_SHARED_PRIMITIVES_REU_MUL
+; Conditional mask construction — SPEC v0.4.0 §8.0 required form. Each
+; primitive's bit is included iff this build does NOT define that
+; primitive's deferral switch; a build that defers a primitive to a
+; canonical provider drops the bit, keeping composed masks disjoint so
+; the consumer-side double-ownership .assert is satisfiable
+; (c64-lib-contract#21). Standalone build: $0007.
+LIB_SHARED_PRIMITIVES_SQTAB      = $0001
+LIB_SHARED_PRIMITIVES_REU_MUL    = $0002
+LIB_SHARED_PRIMITIVES_CT_MUL_8X8 = $0004
+
+.ifdef SHARED_SQTAB_INIT
+_OWN_SQTAB   = 0
+.else
+_OWN_SQTAB   = LIB_SHARED_PRIMITIVES_SQTAB
+.endif
+.ifdef SHARED_REU_MUL_INIT
+_OWN_REU_MUL = 0
+.else
+_OWN_REU_MUL = LIB_SHARED_PRIMITIVES_REU_MUL
+.endif
+.ifdef SHARED_CT_MUL_8X8
+_OWN_CT_MUL  = 0
+.else
+_OWN_CT_MUL  = LIB_SHARED_PRIMITIVES_CT_MUL_8X8
+.endif
+
+LIB_X25519_SHARED_PRIMITIVES = _OWN_SQTAB | _OWN_REU_MUL | _OWN_CT_MUL
 
 .export LIB_X25519_ZP_USAGE_BYTES: abs
 .export LIB_X25519_REU_BANKS_USED: abs
 .export LIB_X25519_RESIDENT_BYTES: abs
 .export LIB_X25519_COLD_BYTES:     abs
 .export LIB_X25519_SHARED_PRIMITIVES: abs
-.export LIB_SHARED_PRIMITIVES_SQTAB:   abs
-.export LIB_SHARED_PRIMITIVES_REU_MUL: abs
+.export LIB_SHARED_PRIMITIVES_SQTAB:      abs
+.export LIB_SHARED_PRIMITIVES_REU_MUL:    abs
+.export LIB_SHARED_PRIMITIVES_CT_MUL_8X8: abs
 
 ; =============================================================================
 ; c64-lib-contract SPEC §8.0 catch-loop: precalc-table enumeration

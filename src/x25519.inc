@@ -317,8 +317,12 @@
 ; ca65 -D X25519_REU_BANK=$N when rebuilding the library from source.
 .import X25519_REU_BANK, X25519_REU_OFFSET
 
-; Shared-primitives manifest (c64-lib-contract §5 / §8.1). Bitmask of
-; the §8.x primitives c64-x25519 consumes. Use for assemble-time
-; collision detection when composing c64-x25519 with another lib that
-; also consumes one of the same primitives. See LIBRARY.md §4.7.
+; Shared-primitives manifest (c64-lib-contract §5 / §8.0-§8.3).
+; Bitmask of the §8.x primitives this build of c64-x25519 OWNS — per
+; SPEC v0.4.0 §8.0 a bit is set iff the build did NOT define that
+; primitive's deferral switch (SHARED_SQTAB_INIT / SHARED_REU_MUL_INIT
+; / SHARED_CT_MUL_8X8). Use for assemble-time double-ownership
+; detection when composing c64-x25519 with another lib that consumes
+; the same primitives. See LIBRARY.md §4.7.
 .import LIB_X25519_SHARED_PRIMITIVES, LIB_SHARED_PRIMITIVES_SQTAB
+.import LIB_SHARED_PRIMITIVES_REU_MUL, LIB_SHARED_PRIMITIVES_CT_MUL_8X8

@@ -97,14 +97,17 @@ public_reu_refs:
 ; trick to force ld65 archive-member resolution of lib_version.o.
 .import LIB_X25519_ZP_USAGE_BYTES, LIB_X25519_REU_BANKS_USED
 .import LIB_X25519_RESIDENT_BYTES, LIB_X25519_COLD_BYTES
-; c64-lib-contract §8.1 + §8.2 shared-primitives bitmask (v0.7-prep+).
+; c64-lib-contract §8.1 + §8.2 + §8.3 shared-primitives bitmask
+; (v0.7-prep+; §8.3 bit + conditional mask form per SPEC v0.4.0).
 .import LIB_X25519_SHARED_PRIMITIVES
 .import LIB_SHARED_PRIMITIVES_SQTAB, LIB_SHARED_PRIMITIVES_REU_MUL
+.import LIB_SHARED_PRIMITIVES_CT_MUL_8X8
 public_manifest_refs:
         .word LIB_X25519_ZP_USAGE_BYTES, LIB_X25519_REU_BANKS_USED
         .word LIB_X25519_RESIDENT_BYTES, LIB_X25519_COLD_BYTES
         .word LIB_X25519_SHARED_PRIMITIVES
         .word LIB_SHARED_PRIMITIVES_SQTAB, LIB_SHARED_PRIMITIVES_REU_MUL
+        .word LIB_SHARED_PRIMITIVES_CT_MUL_8X8
 
 ; c64-lib-contract §8.0 catch-loop exports (v0.7-prep+) are emitted by
 ; the LIB_PRECALC_TABLE macro invocations in lib_version.s. We do NOT

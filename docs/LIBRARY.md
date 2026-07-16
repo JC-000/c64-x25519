@@ -401,12 +401,15 @@ single-lib consumer.
 
 ### `LIB_X25519_SHARED_PRIMITIVES` manifest
 
-The library exports a §5 manifest bitmask of the shared primitives it
-consumes:
+The library exports a §5 manifest bitmask of the shared primitives
+this build *owns*. Per c64-lib-contract SPEC v0.4.0 §8.0 the mask is
+**conditional**: each primitive's bit is set iff the build did NOT
+define that primitive's deferral switch, so a build that defers a
+primitive to a canonical provider drops the bit. For the sqtab bit:
 
 ```ca65
 LIB_SHARED_PRIMITIVES_SQTAB  = $0001     ; c64-lib-contract §8.1 bit
-LIB_X25519_SHARED_PRIMITIVES = LIB_SHARED_PRIMITIVES_SQTAB
+; set in LIB_X25519_SHARED_PRIMITIVES unless SHARED_SQTAB_INIT is defined
 ```
 
 A consumer composing c64-x25519 with another sqtab-using library can
@@ -419,6 +422,11 @@ detect the unhandled-double-build case at assemble time:
          LIB_OTHER_SHARED_PRIMITIVES) = 0, error, \
         "both libs claim a §8 primitive; define SHARED_SQTAB_INIT in one"
 ```
+
+With the conditional mask this assert *passes* once exactly one lib
+owns each shared primitive — the deferring side's bit drops out
+instead of tripping the assert on legitimate sharing
+(c64-lib-contract#21).
 
 ## 4.7 The `lib-x25519-1764` build variant (v0.6+)
 
@@ -566,17 +574,23 @@ SMC-patch against them.
 
 ### `LIB_X25519_SHARED_PRIMITIVES` manifest
 
-The §5 manifest bitmask grows to `$0003` at v0.7-prep (both §8.1 and
-§8.2 owned):
+The §5 manifest bitmask covers three §8.x primitives at v0.7-prep
+(§8.1 + §8.2 + the SPEC v0.4.0 §8.3 multiply body), constructed
+conditionally per §8.0 — a standalone build owns all three:
 
 ```ca65
-LIB_SHARED_PRIMITIVES_SQTAB    = $0001     ; §8.1
-LIB_SHARED_PRIMITIVES_REU_MUL  = $0002     ; §8.2
-LIB_X25519_SHARED_PRIMITIVES   = $0003     ; ($0001 | $0002)
+LIB_SHARED_PRIMITIVES_SQTAB      = $0001   ; §8.1, dropped by SHARED_SQTAB_INIT
+LIB_SHARED_PRIMITIVES_REU_MUL    = $0002   ; §8.2, dropped by SHARED_REU_MUL_INIT
+LIB_SHARED_PRIMITIVES_CT_MUL_8X8 = $0004   ; §8.3, dropped by SHARED_CT_MUL_8X8
+LIB_X25519_SHARED_PRIMITIVES     = $0007   ; standalone build (no switches)
 ```
 
-The `.and`-against-sibling-manifest `.assert` pattern from §4.6 applies
-identically.
+Each bit drops out of the mask when its deferral switch is defined at
+build time, so an integrated build that defers a primitive to a
+canonical provider reports only what it actually owns. The
+`.and`-against-sibling-manifest `.assert` pattern from §4.6 applies
+identically — and is satisfiable under legitimate sharing precisely
+because of the conditional construction.
 
 ## 4.9 Precalc-table enumeration (c64-lib-contract §8.0 step-6)
 
