@@ -8,7 +8,7 @@
 .export fe25519_tmp1, fe25519_tmp2, fe25519_tmp3, fe25519_tmp4
 .export x25_x2, x25_z2, x25_x3, x25_z3
 .export x25_a, x25_b, x25_da, x25_cb, x25_e
-.export x25_scalar, x25_u, x25_result
+.export x25_scalar, x25_u, x25_result, x25_x1
 .export x25_basepoint, fe_p
 .export mul_cached_a, mul_src2_buf
 .export mul_dma_lo, mul_dma_hi, mul_dma_carry
@@ -68,9 +68,20 @@ x25_basepoint:
 
 ; p = 2^255 - 19 in little-endian
 fe_p:
-        .byte $ed
+        .byte $ed              ; page+$20
         .res 30, $ff
         .byte $7f
+
+; x_1 for the Montgomery ladder: the RFC 7748 decodeUCoordinate result
+; (x25_u with bit 255 masked), written once by x25519_scalarmult at
+; ladder init. The ladder's z_3 = x_1 * (DA-CB)^2 step MUST read this
+; masked copy, never x25_u directly — x25_u is the caller's buffer and
+; is deliberately left unmutated (W4 H1), so for inputs with bit 255
+; set it differs from the decoded u by 19 (2^255 ≡ 19 mod p) and would
+; desynchronize x_1 from the masked x_3 (RFC 7748 §5.2 vector-2
+; regression, broken v0.4.0 → v0.6.0).
+x25_x1:
+        .res 32, 0             ; page+$40
 
 ; =============================================================================
 ; Compile-time alignment enforcement for 32-byte field buffers
@@ -101,6 +112,7 @@ fe_p:
 .assert (x25_result   & $1F) = 0, lderror, "x25_result must be 32-byte aligned"
 .assert (x25_basepoint & $1F) = 0, lderror, "x25_basepoint must be 32-byte aligned"
 .assert (fe_p         & $1F) = 0, lderror, "fe_p must be 32-byte aligned"
+.assert (x25_x1       & $1F) = 0, lderror, "x25_x1 must be 32-byte aligned"
 
 ; --- fe25519_mul optimization buffers ---
 mul_cached_a:
