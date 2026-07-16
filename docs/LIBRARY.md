@@ -273,7 +273,7 @@ compile + VICE test cycle:
 |---|---|---|
 | `LIB_X25519_ZP_USAGE_BYTES` | `85` | Total bytes of ZP slots the library claims (sum of `.exportzp`-ed slots in `src/zp_config.s` + the pinned `fe_wide` region) |
 | `LIB_X25519_REU_BANKS_USED` | `$3B` default / `$03` for `lib-x25519-1764` | Bitmask of REU banks claimed for mul tables. **Default build** (banks 0, 1, 3, 4, 5): `$3B << X25519_REU_BANK`. **1764 variant** (`make lib-x25519-1764`, `SQR_DMA_K=0`): `$03 << X25519_REU_BANK` — banks 0, 1 only, drops the doubled-table cluster. Bank 2 is never claimed in either build. See [`REU_USAGE_ANALYSIS.md`](REU_USAGE_ANALYSIS.md) §"Group B SHIPPED" for the variant rationale + measured trade-offs |
-| `LIB_X25519_RESIDENT_BYTES` | `9224` default / `9046` for `lib-x25519-1764` | Approximate code + data + sqtab footprint that must remain CPU-resident. Default −51 B vs v0.5.0 after bank-2 stash removal; 1764 variant −178 B further after the gated-out doubled-table init |
+| `LIB_X25519_RESIDENT_BYTES` | `9209` default / `8895` for `lib-x25519-1764` | Approximate code + data + sqtab footprint that must remain CPU-resident. Re-measured for v0.7.0 (−15 B default / −151 B 1764 vs v0.6.0: §8.3 canonical multiply body + issue-15 `.if ::SQR_DMA_K` gating, less the +19 B #64 RFC 7748 x₁ mask fix) |
 | `LIB_X25519_COLD_BYTES` | `0` | Approximate footprint that a consumer MAY overlay-page (currently 0 — no overlay candidates) |
 
 The values are approximate ("within 5% is fine" per SPEC §5). The
@@ -701,7 +701,7 @@ Exact addresses can be read from `build/labels.txt` after a build.
 
 ## 8. Performance
 
-Cycle-exact numbers as of v0.6.0 (2026-05-20). Measured via the CIA1
+Cycle-exact numbers as of v0.7.0 (2026-07-16). Measured via the CIA1
 32-bit cycle counter (`bench_cycles_*` in `src/util.s`); reproducible
 deterministically under VICE warp, hardware-confirmed on Ultimate-64
 NTSC.
@@ -710,27 +710,27 @@ NTSC.
 
 | Operation                       | Cycles      | Jiffies     | Wall-time NTSC | PAL    |
 | ------------------------------- | ----------: | ----------: | -------------: | -----: |
-| `x25519_scalarmult` (basepoint) | 261,681,380 |    15,352.0 |       ~255.9 s | ~307.1 s |
-| `fe25519_mul`     (batch=200)   |      94,737 |       5.558 |              — | —      |
-| `fe25519_sqr`     (batch=200)   |     102,023 |       5.985 |              — | —      |
-| `fe25519_mul_a24` (batch=200)   |       7,569 |       0.444 |              — | —      |
+| `x25519_scalarmult` (basepoint) | 263,581,957 |    15,463.5 |       ~257.7 s | ~309.3 s |
+| `fe25519_mul`     (batch=200)   |      94,733 |       5.558 |              — | —      |
+| `fe25519_sqr`     (batch=200)   |     103,512 |       6.073 |              — | —      |
+| `fe25519_mul_a24` (batch=200)   |       7,595 |       0.446 |              — | —      |
 | `fe25519_add`                   |       2,192 |       0.129 |              — | —      |
 | `fe25519_sub`                   |       1,664 |       0.098 |              — | —      |
 | `fe25519_reduce_final`          |       2,996 |       0.176 |              — | —      |
-| `fe25519_cswap`                 |       1,522 |       0.089 |              — | —      |
-| `fe25519_inv` (single-call avg) | ≈28,766,000 |     1,687.6 |              — | —      |
+| `fe25519_cswap`                 |       1,515 |       0.089 |              — | —      |
+| `fe25519_inv` (single-call avg) | 29,170,252  |     1,711.3 |              — | —      |
 
 ### 1764 build variant (`make lib-x25519-1764`)
 
-For consumers targeting a stock 1764 (256 KB REU). Trade: +16.2 %
-scalarmult cost for −192 KB REU + −178 B CODE; see §4.7 and
+For consumers targeting a stock 1764 (256 KB REU). Trade: +15.3 %
+scalarmult cost for −192 KB REU + −314 B CODE; see §4.7 and
 `docs/REU_USAGE_ANALYSIS.md`.
 
 | Operation                       | Cycles      | Jiffies     | Δ vs default |
 | ------------------------------- | ----------: | ----------: | -----------: |
-| `x25519_scalarmult` (basepoint) | 304,179,528 |    17,845.2 | +16.2 %      |
-| `fe25519_sqr`     (batch=200)   |     135,381 |       7.939 | +32.7 %      |
-| `fe25519_mul`     (batch=200)   |      94,737 |       5.558 | 0 (mul path unchanged) |
+| `x25519_scalarmult` (basepoint) | 303,821,006 |    17,824.2 | +15.3 %      |
+| `fe25519_sqr`     (batch=200)   |     135,071 |       7.924 | +30.5 %      |
+| `fe25519_mul`     (batch=200)   |      94,733 |       5.558 | 0 (mul path unchanged) |
 | Other ops                       |   unchanged |   unchanged | 0            |
 
 ### Historical baselines
@@ -743,10 +743,14 @@ scalarmult cost for −192 KB REU + −178 B CODE; see §4.7 and
 | v0.4.0  |           15,350 | +27.2 %                    | L25-L29 full CT closure + state defences |
 | v0.5.0  |           15,350 | +27.2 %                    | c64-lib-contract §1/§2/§3/§5 (no behaviour change) |
 | v0.6.0  |           15,352 | +27.2 %                    | Group C bank-2 drop (-51 B), §8 sqtab adoption, bench rehab (RAM only; runtime within 0.02 %) |
+| v0.7.0  |           15,463 | +28.1 %                    | RFC 7748 decode fix (#64) + §8.2/§8.3 shared-primitives completion; +0.73 % = issue-15 SMC-patch delegation + 768 cy #64 init copy |
 
 The +0.02 % shift across v0.5.0 → v0.6.0 is pure code-layout noise
 from the bank-2 stash removal (commit `71cc1aa`); no CT or correctness
-change. RFC 7748 vec-0 PASS at every release.
+change. The +0.73 % across v0.6.0 → v0.7.0 is the issue-15 refactor's
+`fe25519_sqr` delegation cost (within its ≤ 2 % gate) plus one
+`fe25519_copy` per call for the #64 fix. RFC 7748 vec-0 PASS at every
+release.
 
 The append-only perf log lives at [`docs/perf_history.csv`](perf_history.csv)
 and is consumed by `tools/perf_diff.py` for diff tables. Run

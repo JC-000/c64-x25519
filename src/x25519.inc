@@ -301,6 +301,14 @@
 
 ; Imports for downstream use — .include this file to get all public symbols.
 .import sqtab_init, mul_tables_init, reu_mul_init
+.import reu_mul_tables_init          ; c64-lib-contract §8.2 canonical entry
+                                     ; (alias of reu_mul_init, same address)
+.import mul_8x8, ct_mul_8x8          ; c64-lib-contract §8.3 canonical CT
+                                     ; multiply body; mul_8x8 is the
+                                     ; back-compat alias (same address)
+.import reu_fetch_mul_row_bank_patch ; §8.2 SMC bank-patch hook (byte
+                                     ; address of reu_fetch_mul_row's
+                                     ; bank-LDA immediate)
 .import x25519_clamp, x25519_scalarmult, x25519_base
 .import fe25519_add, fe25519_sub, fe25519_mul, fe25519_sqr
 .import fe25519_copy, fe25519_zero, fe25519_one, fe25519_cswap
@@ -316,6 +324,18 @@
 ; REU layout equates (c64-lib-contract §3). Default 0; override via
 ; ca65 -D X25519_REU_BANK=$N when rebuilding the library from source.
 .import X25519_REU_BANK, X25519_REU_OFFSET
+
+; §8.2 shared reu_mul placement equates + derived symbolic bank names
+; (see LIBRARY.md §4.8). Consumers compose/collision-check against
+; these instead of hardcoding bank offsets.
+.import LIB_SHARED_REU_MUL_BANK, LIB_SHARED_REU_MUL_OFFSET
+.import LIB_SHARED_REU_MUL_BANKS_USED
+.import X25519_REU_BANK_DOUBLED, X25519_REU_BANK_CARRY
+
+; §5 aggregate manifest equates — assemble-time fit / collision checks
+; (ZP footprint, REU bank claim, resident bytes; see LIBRARY.md §4.5).
+.import LIB_X25519_ZP_USAGE_BYTES, LIB_X25519_REU_BANKS_USED
+.import LIB_X25519_RESIDENT_BYTES, LIB_X25519_COLD_BYTES
 
 ; Shared-primitives manifest (c64-lib-contract §5 / §8.0-§8.3).
 ; Bitmask of the §8.x primitives this build of c64-x25519 OWNS — per
