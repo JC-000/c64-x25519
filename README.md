@@ -20,6 +20,18 @@ deliberately stays resident (owner-mode composition + CT-gate access).
 declare the new segment — see `docs/LIBRARY.md` §4.10 and
 `cfg/x25519-example.cfg` constraint 5. Standalone builds unchanged.
 
+- Full SPEC §4 segment-prefix migration
+  ([#70](https://github.com/JC-000/c64-x25519/issues/70),
+  [#71](https://github.com/JC-000/c64-x25519/pull/71)): library
+  sources now emit `LIB_X25519_CODE` / `LIB_X25519_DATA` instead of
+  the default ld65 `CODE` / `DATA` names (pure rename, zero byte
+  movement; `main.s` is harness code and keeps plain `CODE`).
+  **Consumer cfg must add the two segments** — `LIB_X25519_CODE` and
+  `LIB_X25519_DATA` (the latter with the CT-load-bearing
+  `align = 256`) — bundled with #68's cfg change so consumers
+  migrate once. See `docs/LIBRARY.md` §3/§4 and
+  `cfg/x25519-example.cfg` constraints 1–2.
+
 ---
 
 **v0.7.0 released 2026-07-16** — [GitHub release](https://github.com/JC-000/c64-x25519/releases/tag/v0.7.0),
@@ -177,8 +189,8 @@ patching:
 All changes are pure-additive: no symbol removals, no behaviour
 change at default configuration. v0.4.0 consumers can adopt v0.5.0
 without source edits. The §4 (segment naming) and §6 (build target
-variants) sections of the contract are deferred (no current
-consumer requires them). See
+variants) sections of the contract were deferred at v0.5.0 (§4 has
+since closed via #68 + #70 in v0.8-prep; §6 remains open). See
 [`docs/RELEASE_NOTES_v0.5.0.md`](docs/RELEASE_NOTES_v0.5.0.md) for
 the full adoption story.
 

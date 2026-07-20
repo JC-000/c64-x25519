@@ -26,7 +26,7 @@
 .export bench_cycles_start, bench_cycles_stop, bench_cycles
 .export vic_blank, vic_unblank
 
-.segment "CODE"
+.segment "LIB_X25519_CODE"
 
 ; =============================================================================
 ; Benchmark timer routines (jiffy-clock based)

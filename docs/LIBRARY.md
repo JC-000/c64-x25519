@@ -52,6 +52,13 @@ Label output is converted to VICE format in `build/labels.txt`.
 | `src/x25519.inc` | Public API documentation header |
 | `cfg/x25519.cfg` | ld65 linker configuration |
 
+Per c64-lib-contract SPEC §4 (v0.8+, issue #70), the library sources
+emit only `LIB_X25519_`-prefixed segments: hot code in
+`LIB_X25519_CODE`, mutable data in `LIB_X25519_DATA` (page-aligned;
+CT-load-bearing `align = 256`), and init-only code in
+`LIB_X25519_INIT_CODE` (issue #68). Only `src/main.s` — the test
+harness, not part of the library — uses the plain `CODE` segment.
+
 ## 4. Integrating into another project
 
 To use the library from another ca65 project, compile and link the
@@ -67,6 +74,15 @@ ca65 -o your_app.o     your_app.s
 ld65 -C your_config.cfg -o app.prg \
     your_app.o x25519_init.o mul_8x8.o fe25519.o x25519.o data.o
 ```
+
+`your_config.cfg` MUST declare the three library segments (v0.8+):
+`LIB_X25519_CODE`, `LIB_X25519_DATA` (with `align = 256` — a CT
+invariant, see §6), and `LIB_X25519_INIT_CODE` (see §4.10) — ld65
+hard-errors on any input segment without a memory-area assignment.
+Your own code and data can use whatever segment names you like
+(plain `CODE`/`DATA` included). Start from
+`cfg/x25519-example.cfg`, which declares all three with the correct
+ordering (file-emitting segments before bss-type ones).
 
 In your source, `.import` the symbols you need:
 
@@ -625,7 +641,8 @@ dedicated ld65 segment, **`LIB_X25519_INIT_CODE`** (SPEC §4 naming),
 sized `LIB_X25519_COLD_BYTES` (826 B default build / 648 B
 `lib-x25519-1764`). Everything runtime-hot — the field arithmetic, the
 ladder, the REU fetch helpers, and the §8.3 `ct_mul_8x8` body — stays
-in `CODE`.
+in `LIB_X25519_CODE` (plain `CODE` prior to the issue-#70 SPEC §4
+segment-prefix migration).
 
 **Your cfg MUST declare the segment** (see `cfg/x25519-example.cfg`
 constraint 5): ld65 hard-errors on any input segment without a memory
@@ -747,8 +764,8 @@ $00C6           kbd buffer count (test harness only)
 $00FB-$00FC     zp_ptr1 (test harness only — NOT part of library ZP claim)
 $0801-$08FF     BASIC stub + boot (test harness)
 $0900+          library code (mul_8x8, fe25519, x25519, ...)
-                (resident CODE first; LIB_X25519_INIT_CODE last in
-                 MAIN — reclaimable after init, see §4.10)
+                (resident LIB_X25519_CODE first; LIB_X25519_INIT_CODE
+                 last in MAIN — reclaimable after init, see §4.10)
 $1800-$1Axx     page-aligned field buffers (fe_tmp*, x25_*)
 $1B00-$1DFF     mul_dma_lo/hi/carry (REU DMA staging)
 $1E00-$1FFF     sqtab2_lo/hi

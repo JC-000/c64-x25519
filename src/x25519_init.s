@@ -24,7 +24,7 @@
 ; --- Imports from data.s ---
 .import mul_dma_lo, mul_dma_hi, mul_dma_carry, mul_cached_a
 
-.segment "CODE"
+.segment "LIB_X25519_CODE"
 
 ; =============================================================================
 ; REU multiplication table routines
@@ -81,14 +81,15 @@ reu_mul_tables_init = reu_mul_init
 ; reu_mul_init is init-only: sole caller is the host's boot sequence
 ; (main.s in the standalone build), and its autoload-latch tail is a
 ; one-time state effect that reu_clear_wide re-establishes per field
-; op. It lives in LIB_X25519_INIT_CODE (SPEC §4 name), declared LAST
-; in MAIN by both shipped cfgs, so a consumer may reclaim the segment
-; as a contiguous RAM tail after init returns. See
+; op. It lives in LIB_X25519_INIT_CODE (SPEC §4 name), declared as the
+; last FILE-EMITTING entry in MAIN (before bss-type segments — R5) by
+; both shipped cfgs, so a consumer may reclaim the segment as a
+; contiguous RAM region after init returns. See
 ; docs/design/issue_68_cold_segment_split.md and LIBRARY.md §4.10.
 ; The runtime-hot REU fetch helpers below (reu_fetch_mul_row,
-; reu_fetch_doubled_row, reu_clear_wide) MUST stay in CODE — they run
-; on every fe25519_mul/sqr and reu_fetch_mul_row is SMC-patched at
-; runtime through reu_fetch_mul_row_bank_patch.
+; reu_fetch_doubled_row, reu_clear_wide) MUST stay in LIB_X25519_CODE
+; — they run on every fe25519_mul/sqr and reu_fetch_mul_row is
+; SMC-patched at runtime through reu_fetch_mul_row_bank_patch.
 .segment "LIB_X25519_INIT_CODE"
 
 .proc reu_mul_init
@@ -332,9 +333,9 @@ reu_init_b:     .byte 0
 ; reu_fetch_doubled_row's DMA #1 (which explicitly re-writes the four
 ; registers before the JSR — see banner there).
 ; =============================================================================
-; Back to the resident CODE segment: this proc and everything through
+; Back to the resident LIB_X25519_CODE segment: this proc and everything through
 ; reu_clear_wide is runtime-hot (issue #68 cold-split boundary).
-.segment "CODE"
+.segment "LIB_X25519_CODE"
 
 .proc reu_fetch_mul_row
         lda mul_cached_a
