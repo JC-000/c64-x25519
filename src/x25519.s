@@ -40,7 +40,7 @@
 .import x25_a, x25_b, x25_da, x25_cb, x25_e
 .import x25_scalar, x25_u, x25_result, x25_basepoint, x25_x1
 
-.segment "CODE"
+.segment "LIB_X25519_CODE"
 
 ; =============================================================================
 ; x25519_clamp - Clamp scalar per RFC 7748 §5

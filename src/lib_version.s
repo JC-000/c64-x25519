@@ -107,9 +107,9 @@ LIB_ABI_VERSION   = 1
 ;   sections from reu_mul_init):
 ;
 ;     SQR_DMA_K > 0 (default, =22):
-;       CODE  total ≈ 3775 B   (x25519 717 + fe25519 2711 + mul_8x8
-;                               63 + x25519_init 132 + util 152)
-;       DATA  total ≈ 3584 B
+;       LIB_X25519_CODE total ≈ 3775 B  (x25519 717 + fe25519 2711 +
+;                               mul_8x8 63 + x25519_init 132 + util 152)
+;       LIB_X25519_DATA total ≈ 3584 B
 ;       SQTAB         1024 B
 ;       ---------------------------------------------------------------
 ;                            ≈ 8383 B RESIDENT
@@ -118,11 +118,12 @@ LIB_ABI_VERSION   = 1
 ;                               mul_8x8 160 = sqtab_init + sq_* temps)
 ;
 ;     SQR_DMA_K = 0 (lib-x25519-1764 variant):
-;       CODE  total ≈ 3639 B   (x25519_init.o CODE drops to 50 B —
-;                               reu_fetch_doubled_row gated out — and
-;                               fe25519.o to 2657 B per the #61
-;                               .if ::SQR_DMA_K DMA-dispatch gating)
-;       DATA  total ≈ 3584 B
+;       LIB_X25519_CODE total ≈ 3639 B  (x25519_init.o library code
+;                               drops to 50 B — reu_fetch_doubled_row
+;                               gated out — and fe25519.o to 2657 B per
+;                               the #61 .if ::SQR_DMA_K DMA-dispatch
+;                               gating)
+;       LIB_X25519_DATA total ≈ 3584 B
 ;       SQTAB         1024 B
 ;       ---------------------------------------------------------------
 ;                            ≈ 8247 B RESIDENT
@@ -137,7 +138,8 @@ LIB_ABI_VERSION   = 1
 ;   RESIDENT — owner-mode composed builds take runtime calls from
 ;   deferring siblings. See docs/design/issue_68_cold_segment_split.md.
 ;   The three config .o files ─ lib_version.o, zp_config.o,
-;   reu_config.o ─ emit no CODE/DATA bytes and don't shift totals.)
+;   reu_config.o ─ emit no code or data bytes into any
+;   LIB_X25519_* segment and don't shift totals.)
 ;
 ; LIB_X25519_COLD_BYTES
 ;   Approximate code + data footprint that a consumer MAY overlay-page

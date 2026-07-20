@@ -140,6 +140,7 @@ per-module breakdown comment refreshed.
 ## Out of scope (follow-ups)
 
 - Full SPEC §4 segment-prefix migration (CODE/DATA → LIB_X25519_*).
+  *(Landed separately via issue #70 — pure rename, PRG byte-identical.)*
 - contract-repo adopters.md §4 cell update once this ships.
 - Any cold-ing of the §8.3 body (would need an owner-mode contract
   amendment first).

@@ -54,7 +54,7 @@
 ; sqtab_init (+ its sq_* temps) is init-only: sole caller is the boot
 ; sequence; runtime consumers read the sqtab TABLE at
 ; LIB_SHARED_SQTAB_BASE, not this code. The §8.3 ct_mul_8x8 body below
-; stays in resident CODE deliberately — see the segment note there and
+; stays in resident LIB_X25519_CODE deliberately — see the segment note there and
 ; docs/design/issue_68_cold_segment_split.md.
 .segment "LIB_X25519_INIT_CODE"
 
@@ -170,14 +170,14 @@ sq_sh:  .res 3, 0              ; 24-bit shifted result (i^2 / 4)
 sq_ad:  .res 2, 0              ; 16-bit addition term (2i+1)
 sq_i:   .res 2, 0              ; 16-bit index counter (0..511)
 
-; Back to resident CODE (issue #68 cold-split boundary). ct_mul_8x8 is
+; Back to resident LIB_X25519_CODE (issue #68 cold-split boundary). ct_mul_8x8 is
 ; boot-only in x25519 (sole caller reu_mul_init) but stays RESIDENT
 ; deliberately: (1) it is the §8.3 shared-primitive body — an
 ; owner-mode composed build takes runtime calls from deferring
 ; siblings; (2) tools/ct_mul_brute_check.py JSRs it from the live
 ; image post-boot; (3) poly_prod_lo/hi just below are runtime-hot
 ; fe25519 scratch and must never land in a reclaimable segment.
-.segment "CODE"
+.segment "LIB_X25519_CODE"
 
 ; =============================================================================
 ; ct_mul_8x8 - constant-time 8x8 -> 16-bit multiply (quarter-square)

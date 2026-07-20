@@ -47,7 +47,7 @@
 .import sqr_lo, sqr_hi
 .import a24_b0, a24_b1, a24_b2, a24_b3
 
-.segment "CODE"
+.segment "LIB_X25519_CODE"
 
 ; =============================================================================
 ; fe25519_copy - Copy 32 bytes: (fe25519_dst) = (fe25519_src1)
