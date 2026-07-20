@@ -107,40 +107,48 @@ LIB_ABI_VERSION   = 1
 ;   sections from reu_mul_init):
 ;
 ;     SQR_DMA_K > 0 (default, =22):
-;       CODE  total ≈ 4601 B   (x25519 717 + fe25519 2711 + mul_8x8
-;                               223 + x25519_init 798 + util 152)
+;       CODE  total ≈ 3775 B   (x25519 717 + fe25519 2711 + mul_8x8
+;                               63 + x25519_init 132 + util 152)
 ;       DATA  total ≈ 3584 B
 ;       SQTAB         1024 B
 ;       ---------------------------------------------------------------
-;                            ≈ 9209 B total
+;                            ≈ 8383 B RESIDENT
+;       LIB_X25519_INIT_CODE ≈ 826 B COLD (x25519_init 666 =
+;                               reu_mul_init 364 + reu_probe 302;
+;                               mul_8x8 160 = sqtab_init + sq_* temps)
 ;
 ;     SQR_DMA_K = 0 (lib-x25519-1764 variant):
-;       CODE  total ≈ 4287 B   (x25519_init.o drops to 538 B and
-;                               fe25519.o to 2657 B after the gated-out
-;                               @dbl_gen + doubled-stash blocks and the
-;                               #61 .if ::SQR_DMA_K DMA-dispatch gating)
+;       CODE  total ≈ 3639 B   (x25519_init.o CODE drops to 50 B —
+;                               reu_fetch_doubled_row gated out — and
+;                               fe25519.o to 2657 B per the #61
+;                               .if ::SQR_DMA_K DMA-dispatch gating)
 ;       DATA  total ≈ 3584 B
 ;       SQTAB         1024 B
 ;       ---------------------------------------------------------------
-;                            ≈ 8895 B total
+;                            ≈ 8247 B RESIDENT
+;       LIB_X25519_INIT_CODE ≈ 648 B COLD (reu_mul_init loses the
+;                               doubled-table generation at K=0)
 ;
-;   (Refreshed 2026-07-16 for v0.7.0: −15 B default / −151 B 1764 vs
-;   the 2026-05-20 v0.6.0 numbers — #61 SMC-patch refactor + #62 §8.3
-;   canonical ct_mul_8x8 body (mul_8x8.o 251 → 223 B) − the +19 B
-;   #64 RFC 7748 x_1 mask fix in x25519.o. The x25_x1 buffer consumed
-;   existing align padding, so DATA is unchanged. The three config .o
-;   files ─ lib_version.o, zp_config.o, reu_config.o ─ contain only
-;   equate declarations + .export directives and emit no CODE/DATA
-;   bytes, so they don't shift these totals.)
+;   (Refreshed 2026-07-19 for the issue-#68 cold-segment split: the
+;   init-only procs moved to LIB_X25519_INIT_CODE, so RESIDENT and
+;   COLD are now the SPEC §5 disjoint partition — RESIDENT dropped by
+;   exactly the COLD amount vs the v0.7.0 numbers (9209/8895). The
+;   §8.3 ct_mul_8x8 body (59 B + 4 B scratch) deliberately stays
+;   RESIDENT — owner-mode composed builds take runtime calls from
+;   deferring siblings. See docs/design/issue_68_cold_segment_split.md.
+;   The three config .o files ─ lib_version.o, zp_config.o,
+;   reu_config.o ─ emit no CODE/DATA bytes and don't shift totals.)
 ;
 ; LIB_X25519_COLD_BYTES
 ;   Approximate code + data footprint that a consumer MAY overlay-page
-;   (load on demand from REU / banked RAM / external storage). The
-;   library currently has no overlay-page candidates — reported as 0.
-;   Note that reu_mul_init's body (~1 KB) is init-only and could in
-;   principle be reclaimed after sqtab_init / reu_mul_init return; a
-;   future release that splits it into a dedicated segment will bump
-;   this equate.
+;   or reclaim (SPEC §5; disjoint from RESIDENT). As of the issue-#68
+;   split this is real: the LIB_X25519_INIT_CODE segment holds the
+;   init-only procs (sqtab_init, reu_mul_init, reu_probe), placed last
+;   in MAIN by the shipped cfgs so a consumer can reuse the RAM as a
+;   contiguous tail after its boot sequence has called the init entry
+;   points. ld65 exports __LIB_X25519_INIT_CODE_LOAD__/_SIZE__
+;   (define = yes) for computing the reclaim window. Init entry points
+;   MUST NOT be called again after reclaim.
 ;
 ; LIB_X25519_SHARED_PRIMITIVES
 ;   c64-lib-contract §5 + §8.0-§8.3 append-only bitmask. One bit per
@@ -188,12 +196,13 @@ LIB_ABI_VERSION   = 1
 LIB_X25519_ZP_USAGE_BYTES = 85
 .if SQR_DMA_K
 LIB_X25519_REU_BANKS_USED = $3B << X25519_REU_BANK
-LIB_X25519_RESIDENT_BYTES = 9209
+LIB_X25519_RESIDENT_BYTES = 8383
+LIB_X25519_COLD_BYTES     = 826
 .else
 LIB_X25519_REU_BANKS_USED = $03 << X25519_REU_BANK
-LIB_X25519_RESIDENT_BYTES = 8895
+LIB_X25519_RESIDENT_BYTES = 8247
+LIB_X25519_COLD_BYTES     = 648
 .endif
-LIB_X25519_COLD_BYTES     = 0
 
 ; c64-lib-contract §5 / §8.x shared-primitives bitmask. Bit allocation
 ; is append-only — bits are never reused even if a primitive is later

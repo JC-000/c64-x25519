@@ -76,6 +76,21 @@
 ; module provides reu_mul_tables_init from elsewhere.
 .export reu_mul_tables_init
 reu_mul_tables_init = reu_mul_init
+
+; --- Cold segment (issue #68) ------------------------------------------------
+; reu_mul_init is init-only: sole caller is the host's boot sequence
+; (main.s in the standalone build), and its autoload-latch tail is a
+; one-time state effect that reu_clear_wide re-establishes per field
+; op. It lives in LIB_X25519_INIT_CODE (SPEC §4 name), declared LAST
+; in MAIN by both shipped cfgs, so a consumer may reclaim the segment
+; as a contiguous RAM tail after init returns. See
+; docs/design/issue_68_cold_segment_split.md and LIBRARY.md §4.10.
+; The runtime-hot REU fetch helpers below (reu_fetch_mul_row,
+; reu_fetch_doubled_row, reu_clear_wide) MUST stay in CODE — they run
+; on every fe25519_mul/sqr and reu_fetch_mul_row is SMC-patched at
+; runtime through reu_fetch_mul_row_bank_patch.
+.segment "LIB_X25519_INIT_CODE"
+
 .proc reu_mul_init
         lda #0
         sta reu_init_a         ; outer counter (multiplier a)
@@ -317,6 +332,10 @@ reu_init_b:     .byte 0
 ; reu_fetch_doubled_row's DMA #1 (which explicitly re-writes the four
 ; registers before the JSR — see banner there).
 ; =============================================================================
+; Back to the resident CODE segment: this proc and everything through
+; reu_clear_wide is runtime-hot (issue #68 cold-split boundary).
+.segment "CODE"
+
 .proc reu_fetch_mul_row
         lda mul_cached_a
         asl                    ; A = multiplier * 2, carry = bit 7
@@ -565,6 +584,11 @@ reu_fetch_mul_row_bank_patch := reu_fetch_mul_row::bank_lda + 1
 ;
 ; Clobbers: A, X, Y. Touches REU bank 7 offset $0000 (restored).
 ; =============================================================================
+; Cold segment again (issue #68): reu_probe is boot-only by contract —
+; its banner mandates calling it BEFORE the first reu_mul_init because
+; it does not preserve the autoload latch.
+.segment "LIB_X25519_INIT_CODE"
+
 .export reu_probe
 .proc reu_probe
         ; Save original REU register set we are about to disturb so the

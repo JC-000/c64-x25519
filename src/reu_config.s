@@ -122,12 +122,17 @@ LIB_SHARED_REU_MUL_BANKS_USED = (1 .shl LIB_SHARED_REU_MUL_BANK) | (1 .shl (LIB_
 ; The canonical init exposes two ZP-scratch slot equates so a consumer
 ; can redirect the per-byte init counters when composing libraries that
 ; have different ZP-budget pressures. c64-x25519's existing reu_mul_init
-; uses two bytes of CODE-segment scratch (`reu_init_a` / `reu_init_b`,
-; declared inside the .proc; .global'd from x25519_init.s so the equates
-; can resolve to them at link time). A consumer that pins these to real
-; ZP can override either equate via `ca65 --asm-define`.
+; uses two bytes of scratch (`reu_init_a` / `reu_init_b`, declared
+; inside the .proc; .global'd from x25519_init.s so the equates can
+; resolve to them at link time). As of the issue-#68 cold-segment
+; split these default slots live in the reclaimable
+; LIB_X25519_INIT_CODE segment with the proc that owns them — they are
+; init-lifetime only, so a consumer that reclaims the segment must not
+; expect the addresses to stay meaningful afterwards. A consumer that
+; pins these to real ZP can override either equate via
+; `ca65 --asm-define`.
 ;
-; Defaults point at the existing CODE-segment scratch slots so the
+; Defaults point at those init-segment scratch slots so the
 ; standalone build is bit-identical. The `:= reu_init_a` form is a
 ; link-time alias (not a value-baked equate) so neither symbol must be
 ; resolved at the time constants.s is parsed.
