@@ -273,8 +273,8 @@ compile + VICE test cycle:
 |---|---|---|
 | `LIB_X25519_ZP_USAGE_BYTES` | `85` | Total bytes of ZP slots the library claims (sum of `.exportzp`-ed slots in `src/zp_config.s` + the pinned `fe_wide` region) |
 | `LIB_X25519_REU_BANKS_USED` | `$3B` default / `$03` for `lib-x25519-1764` | Bitmask of REU banks claimed for mul tables. **Default build** (banks 0, 1, 3, 4, 5): `$3B << X25519_REU_BANK`. **1764 variant** (`make lib-x25519-1764`, `SQR_DMA_K=0`): `$03 << X25519_REU_BANK` — banks 0, 1 only, drops the doubled-table cluster. Bank 2 is never claimed in either build. See [`REU_USAGE_ANALYSIS.md`](REU_USAGE_ANALYSIS.md) §"Group B SHIPPED" for the variant rationale + measured trade-offs |
-| `LIB_X25519_RESIDENT_BYTES` | `9209` default / `8895` for `lib-x25519-1764` | Approximate code + data + sqtab footprint that must remain CPU-resident. Re-measured for v0.7.0 (−15 B default / −151 B 1764 vs v0.6.0: §8.3 canonical multiply body + issue-15 `.if ::SQR_DMA_K` gating, less the +19 B #64 RFC 7748 x₁ mask fix) |
-| `LIB_X25519_COLD_BYTES` | `0` | Approximate footprint that a consumer MAY overlay-page (currently 0 — no overlay candidates) |
+| `LIB_X25519_RESIDENT_BYTES` | `8383` default / `8247` for `lib-x25519-1764` | Approximate code + data + sqtab footprint that must remain CPU-resident. Dropped from 9209/8895 at the issue-#68 cold-segment split — the init-only code is now counted in `LIB_X25519_COLD_BYTES` (SPEC §5 disjoint partition; see §4.10) |
+| `LIB_X25519_COLD_BYTES` | `826` default / `648` for `lib-x25519-1764` | Approximate footprint a consumer MAY reclaim/overlay after init — the `LIB_X25519_INIT_CODE` segment (issue #68; see §4.10) |
 
 The values are approximate ("within 5% is fine" per SPEC §5). The
 library author refreshes them when a release substantively changes
@@ -617,6 +617,69 @@ explicitly so a future audit can re-classify).
 source from c64-lib-contract SPEC §8.0; updates land via coordinated
 cross-repo PR — do not edit locally.
 
+## 4.10 Cold-segment split: reclaiming init-only code (issue #68)
+
+The init-only procs — `sqtab_init` / `mul_tables_init`,
+`reu_mul_init` / `reu_mul_tables_init`, and `reu_probe` — live in a
+dedicated ld65 segment, **`LIB_X25519_INIT_CODE`** (SPEC §4 naming),
+sized `LIB_X25519_COLD_BYTES` (826 B default build / 648 B
+`lib-x25519-1764`). Everything runtime-hot — the field arithmetic, the
+ladder, the REU fetch helpers, and the §8.3 `ct_mul_8x8` body — stays
+in `CODE`.
+
+**Your cfg MUST declare the segment** (see `cfg/x25519-example.cfg`
+constraint 5): ld65 hard-errors on any input segment without a memory
+area. Declare it as the **last file-emitting segment** in MAIN,
+**before any bss-type segment**:
+
+```
+LIB_X25519_INIT_CODE: load = MAIN, type = rw, optional = yes, define = yes;
+BSS:                  load = MAIN, type = bss, optional = yes, define = yes;
+```
+
+The ordering constraint is load-bearing: ld65 writes no file bytes
+for bss-type segments, so a file-backed segment declared *after* a
+non-empty BSS loads `__BSS_SIZE__` bytes below its linked address —
+silent runtime corruption with no link error.
+
+**Reclaiming.** After your boot sequence has called `sqtab_init` and
+`reu_mul_init` (and `reu_probe`, if you use it — it must run *before*
+the first `reu_mul_init`), the segment's RAM is dead and you may reuse
+it. With `define = yes`, ld65 exports the window symbolically:
+
+```ca65
+.import __LIB_X25519_INIT_CODE_LOAD__, __LIB_X25519_INIT_CODE_SIZE__
+; reuse [__LIB_X25519_INIT_CODE_LOAD__,
+;        __LIB_X25519_INIT_CODE_LOAD__ + __LIB_X25519_INIT_CODE_SIZE__)
+```
+
+Rules:
+
+1. **Never call an init entry point after reclaim.** That includes a
+   "re-init after REU hot-swap" pattern — reload the segment first.
+2. The reclaim window is exactly `[__LOAD__, __LOAD__ + __SIZE__)` —
+   contiguous by construction. (With an empty BSS, as in the shipped
+   cfgs, it also abuts the `$7800` sqtab floor; with consumer BSS
+   after it, the window simply ends where BSS's address space begins.)
+3. The §8.3 `ct_mul_8x8` body is deliberately **not** in this segment
+   even though it is boot-only inside this library: a composed build
+   in which c64-x25519 is the ct_mul_8x8 owner takes *runtime* calls
+   from deferring siblings, and `tools/ct_mul_brute_check.py`
+   exercises the body from the live image. Reclaiming never touches
+   the shared-primitive surface.
+4. Deferral builds (`SHARED_SQTAB_INIT` and/or `SHARED_REU_MUL_INIT`)
+   shrink or empty the segment; `optional = yes` keeps such links
+   working. Gate asymmetry to know: under `SHARED_SQTAB_INIT` the
+   library still exports `sqtab_init`/`mul_tables_init` as an `rts`
+   stub, but under `SHARED_REU_MUL_INIT` the `reu_mul_init`/
+   `reu_mul_tables_init` exports are gated out entirely — your
+   shared-primitives module provides them (and the
+   `LIB_SHARED_REU_MUL_ZP_INIT_A/B` defaults) instead, per §4.8. The
+   repo's own `lib-verify` stub imports everything unconditionally
+   and is not deferral-aware.
+5. The standalone `make` build reclaims nothing — the segment loads
+   and runs in place; behaviour is identical to pre-split releases.
+
 **Note for downstream consumers cross-checking via `.import + .assert`**:
 ca65's 6502 target has no `: far` `.import` hint, so equates whose
 value exceeds `$FFFF` (like `LIB_PRECALC_reu_mul_SIZE = 131072`) cannot
@@ -684,6 +747,8 @@ $00C6           kbd buffer count (test harness only)
 $00FB-$00FC     zp_ptr1 (test harness only — NOT part of library ZP claim)
 $0801-$08FF     BASIC stub + boot (test harness)
 $0900+          library code (mul_8x8, fe25519, x25519, ...)
+                (resident CODE first; LIB_X25519_INIT_CODE last in
+                 MAIN — reclaimable after init, see §4.10)
 $1800-$1Axx     page-aligned field buffers (fe_tmp*, x25_*)
 $1B00-$1DFF     mul_dma_lo/hi/carry (REU DMA staging)
 $1E00-$1FFF     sqtab2_lo/hi

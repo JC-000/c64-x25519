@@ -6,6 +6,22 @@ An optimized implementation of X25519 / Curve25519 scalar multiplication written
 
 ## Status
 
+**Since v0.7.0 (v0.8-prep on master)** — cold-segment split
+([#68](https://github.com/JC-000/c64-x25519/issues/68)): init-only
+code (`sqtab_init`, `reu_mul_init`, `reu_probe`) moved to the new
+`LIB_X25519_INIT_CODE` segment (c64-lib-contract SPEC §4 naming, the
+library's first prefixed segment), declared last in MAIN so consumers
+can reclaim it as a contiguous RAM tail after boot.
+`LIB_X25519_COLD_BYTES` is real for the first time: 826 B default /
+648 B `lib-x25519-1764`, with `LIB_X25519_RESIDENT_BYTES` dropping to
+8383 / 8247 (SPEC §5 disjoint partition). The §8.3 `ct_mul_8x8` body
+deliberately stays resident (owner-mode composition + CT-gate access).
+**Consumer cfg change required on upgrade**: your ld65 cfg must
+declare the new segment — see `docs/LIBRARY.md` §4.10 and
+`cfg/x25519-example.cfg` constraint 5. Standalone builds unchanged.
+
+---
+
 **v0.7.0 released 2026-07-16** — [GitHub release](https://github.com/JC-000/c64-x25519/releases/tag/v0.7.0),
 MIT licensed. **RFC 7748 decode fix** + the
 c64-lib-contract **§8 shared-primitives completion release**. Every
@@ -147,14 +163,16 @@ patching:
 - **§5 Aggregate manifest equates** ([#46](https://github.com/JC-000/c64-x25519/issues/46) / [#50](https://github.com/JC-000/c64-x25519/pull/50)): four exports for
   consumer-side cfg fit/collision checks: `LIB_X25519_ZP_USAGE_BYTES = 85`,
   `LIB_X25519_REU_BANKS_USED = $3B << X25519_REU_BANK` (banks 0, 1, 3, 4, 5),
-  `LIB_X25519_RESIDENT_BYTES = 9209` (as of v0.7.0), `LIB_X25519_COLD_BYTES = 0`.
+  `LIB_X25519_RESIDENT_BYTES = 8383` (as of the v0.8-prep #68 split;
+  9209 at v0.7.0), `LIB_X25519_COLD_BYTES = 826` (was 0 pre-split).
   (Bank 2 dropped + 51 CODE bytes reclaimed in v0.6 prep after the
   REU usage audit — see [`docs/REU_USAGE_ANALYSIS.md`](docs/REU_USAGE_ANALYSIS.md).)
   A second v0.6-prep `make lib-x25519-1764` build variant lowers the
   minimum REU spec to 256 KB (stock 1764) by gating out the
   doubled-table cluster in banks 3/4/5; that variant reports
-  `LIB_X25519_REU_BANKS_USED = $03` and `LIB_X25519_RESIDENT_BYTES = 8895`
-  (as of v0.7.0) at +16.2 % scalarmult cost.
+  `LIB_X25519_REU_BANKS_USED = $03` and `LIB_X25519_RESIDENT_BYTES = 8247`
+  (as of the v0.8-prep #68 split; 8895 at v0.7.0) at +16.2 % scalarmult
+  cost.
 
 All changes are pure-additive: no symbol removals, no behaviour
 change at default configuration. v0.4.0 consumers can adopt v0.5.0

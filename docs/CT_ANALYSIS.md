@@ -54,6 +54,21 @@ Reference: `README.md` and `docs/LIBRARY.md` both document
 `x25519_scalarmult` as the primary exported primitive; `c64-wireguard`
 imports it verbatim for its handshake path.
 
+**Cold-segment note (issue #68, v0.8-prep).** The init-only procs
+(`sqtab_init`, `reu_mul_init`, `reu_probe`) moved to the
+`LIB_X25519_INIT_CODE` segment so consumers can reclaim their RAM
+after boot. This is CT-neutral by construction: the moved code runs
+once at boot on public inputs (the table enumeration), outside the
+network-observable window, and zero bytes of any hot-path proc or of
+the §8.3 `ct_mul_8x8` body changed — the body deliberately stays
+resident (owner-mode composed builds take runtime calls from
+deferring siblings, and `ct_mul_brute_check.py` exercises it from the
+live image). Segment placement shifts absolute addresses of resident
+code, which is timing-irrelevant here: no hot-path branch spans a
+page boundary conditionally on secret data (the L1–L29 closure is
+address-shape-independent), and the CT cycle guards re-ran green
+post-split. See `docs/design/issue_68_cold_segment_split.md`.
+
 ## Leak inventory
 
 Line numbers in the Site column are **pre-fix snapshots** against the
