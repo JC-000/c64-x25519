@@ -439,3 +439,97 @@ also carries the corrected ladder counts in its comments
   but still has no per-proc runtime guard — the §7 follow-up. It is now
   hot-path with secret operands, so this matters more than it did.
 - Hardware A/B at 16/48/64 MHz (deferred merge gate).
+
+## Hardware (Ultimate 64 Elite, 2026-07-26)
+
+First hardware leg of the merge gate, run on the local U64E
+(fw 3.14d, `10.43.23.81`) via `tools/bench_x25519_u64.py`. The C64U is
+out of bounds for now, and **the U64E has no 64 MHz turbo step** (its
+enum tops out at 48), so the 64 MHz point and the C64U leg remain
+pending. Every row below is oracle-gated (RFC 7748 basepoint vector
+verified after each run).
+
+Method notes (why not the nist-curves jiffy pattern): x25519_scalarmult
+runs under SEI throughout, freezing the kernal jiffy clock — timing is
+host-side wall clock (50 ms poll quantization) plus the sei-safe CIA1
+`bench_cycles` counter, which measurement showed to be **wall-anchored
+at turbo** (~1.02 M ticks/s at every speed) — i.e. a fine-grained wall
+clock, not a CPU-cycle counter, on this device. A/B pairs share one
+boot: turbo effective rate varies ~7% across reboots (S_eff at
+"48 MHz" was 47.0× in the matrix boot, 43.9× in the smoke boot), so
+only same-boot ratios are quoted.
+
+### Matrix (same boot, REU attached for both profiles)
+
+| MHz | default wall | onchip wall | A/B |
+|---|---|---|---|
+| 1  | 256.57 s | 439.74 s | onchip 0.58× (slower — expected) |
+| 16 | 27.21 s | 27.56 s | 0.99× (dead heat) |
+| 24 | 22.00 s | 18.38 s | **1.20× faster** |
+| 32 | 19.72 s | 13.85 s | **1.42× faster** |
+| 40 | 18.58 s | 11.31 s | **1.64× faster** |
+| 48 | 17.52 s | 9.45 s  | **1.85× faster** |
+
+Stock-config proof: onchip PRG with the REU **disabled in firmware**,
+48 MHz: PASS, 10.09 s wall (separate boot; cross-boot turbo variance
+applies). Hardware confirmation of the VICE C64_NO_REU result.
+
+### VICE↔hardware anchor at 1 MHz — 0.013%
+
+CIA ticks at 1 MHz: default 262,352,986 vs VICE 262,318,045 (+0.013%);
+onchip 449,647,938 vs VICE 449,589,657 (+0.013%). VICE cycle counts
+are fully validated at stock clock on silicon.
+
+### The device-dependent stall — U64E ≠ real 1750 at turbo
+
+Backing the DMA component out of the matrix
+(`dma_ticks(S) = default_ticks(S) − 225.55M/S_eff`):
+
+| S | DMA ticks total | per 512 B row (69,180 rows) |
+|---|---|---|
+| 16 | 13.64 M | 197 |
+| 24 | 13.06 M | 189 |
+| 32 | 13.08 M | 189 |
+| 40 | 13.10 M | 189 |
+| 48 | 13.07 M | 189 |
+
+So on the U64E the REU row fetch at turbo costs **~189 wall-ticks/row
+(~2.7 bytes/µs)** — the FPGA REU outruns real-1750 cycle-steal timing
+by ~2.8× — while at 1 MHz it matches the classic 532 cy/row (the
+1 MHz totals agree with VICE to 0.013%). The floor is real and
+speed-invariant (13.1 M ticks ≈ 12.8 s per scalarmult, 73% of default
+wall at 48 MHz), just smaller than a real 1750's would be.
+
+Consequences:
+- **U64E crossover ≈ 17 MHz** (solve 224.1M/S = 13.1M; measured
+  bracket: 0.99× at 16, 1.20× at 24). The VICE-derived 7.66 MHz
+  figure models real-1750 timing and does NOT apply to the U64E.
+- On a real C64 + real 1750 (1 cy/byte, 532/row → 36.0 s floor), the
+  projection is default ≈ 40.7 s vs onchip ≈ 9.6 s at 48 MHz ≈
+  **4.3×** — the U64E's 1.85× is the conservative end. The C64U
+  (whose fw 1.1.0 nist-curves measured at an 87% floor) is expected
+  to sit closer to the real-1750 end; its leg remains the open gate
+  item. Per-device stall values now on record: VICE/real-1750 ≈ 532,
+  U64E-turbo ≈ 189.
+- The mysterious "~180 cy" in `docs/REU_USAGE_ANALYSIS.md` matches
+  the U64E turbo value almost exactly — likely its origin; at stock
+  1 MHz (that doc's context) it was wrong, as already noted.
+
+### Staging-vs-inline follow-up note, corrected
+
+The 2026-05-21 `FE_MUL_DMA=0` probe (Serena memory
+`reu_group_a_measurement`) measured naive inline-per-body
+(`jsr mul_8x8`) at 226,322 cy per fe25519_mul. The staged generator
+measures 208,058 — **staging is 18.3K cy/call cheaper than the naive
+inline shape** (per-row SMC bake amortized over 32 products beats
+per-call argument setup), in addition to preserving the L12-L26 proof
+surface. §7's "inline-at-body is strictly cheaper" claim is therefore
+wrong as stated; only a hand-optimized inline clone (bake retained,
+jsr/staging removed, ~−22 cy/product) could beat the current shape.
+
+### Gate status after this run
+
+- [x] Hardware A/B at 16 and 48 MHz (U64E, same-boot, oracle-gated)
+- [x] Hardware no-REU stock-config proof (U64E, REU disabled in fw)
+- [ ] 64 MHz point — impossible on U64E; needs C64U
+- [ ] C64U leg (device out of bounds for now)
