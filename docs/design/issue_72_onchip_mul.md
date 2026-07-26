@@ -264,6 +264,7 @@ verified by SHA.)
 | `test_ladder_checkpoint.py` | PASS | 10/10 steps |
 | `ct_mul_brute_check.py` | PASS | 0 mismatches / 65,536 |
 | `bench_x25519.py` (RFC 7748) | PASS | 449,589,657 cy |
+| `bench_fe_ops.py` | PASS | cycle-exact per-op, see below |
 
 CT per-call jiffies, onchip vs default (batch-200 CIA1 thunk):
 
@@ -300,7 +301,30 @@ confirming the no-REU VICE really has no REU and that the onchip passes
 above are meaningful rather than a misconfigured flag silently attaching
 one.
 
-### Q1 — RESOLVED: REU DMA stall ≈ **537 cy per 512-byte row**
+### Per-op cost, cycle-exact (`bench_fe_ops.py`, batch-200 CIA1)
+
+Both profiles measured same-method, same session, with the sei-safe 32-bit
+CIA1 counter (`src/util.s` `bench_cycles_*`). `bench_fe_mul.py` was *not*
+used — it is the legacy jiffy-clock tool (whole-jiffy resolution, 13–14 jif
+per call) and far too coarse for this derivation.
+
+| Op | Onchip cy/call | Default cy/call | Δ |
+|---|---|---|---|
+| `fe25519_mul` | **208,058.1** | **94,737.4** | **+113,320.7 (2.20×)** |
+| `fe25519_sqr` | 135,069.1 | 102,550.1 | +32,519.0 (1.32×) |
+| `fe25519_mul_a24` | 7,528.1 | 7,569.1 | −41 (noise; RAM tables) |
+| `fe25519_add` | 2,192.1 | 2,192.1 | 0 |
+| `fe25519_sub` | 1,664.1 | 1,664.1 | 0 |
+| `fe25519_reduce_final` | 2,965.1 | 2,965.1 | 0 |
+| `fe25519_cswap` ($FF) | 1,522.1 | 1,515.1 | +7 (noise) |
+| `fe25519_inv` (single-call) | 39,056,424.5 | — | — |
+
+The default `fe25519_mul` figure reproduces the documented 94,733.1 cy
+(`docs/REU_USAGE_ANALYSIS.md:219`) to within 0.005 %, and the onchip `sqr`
+figure matches the documented `SQR_DMA_K=0` variant's 135,319.1 to within
+0.2 % — both confirm the profile changes only what it claims to change.
+
+### Q1 — RESOLVED: REU DMA stall ≈ **532 cy per 512-byte row**
 
 Static generator cost, counted exactly from `src/fe25519.s:686-702` and
 `src/mul_8x8.s:232-270` (`ct_mul_8x8` = 84 cy including `rts`; all
@@ -314,22 +338,24 @@ patch, so the body is genuinely fixed-cycle):
 | per row (32 products, last `bpl` falls through, +10 row setup) | 4,073 |
 | per `fe25519_mul` (32 rows) | 130,336 |
 
-Measured mul-side cost, isolated at the scalarmult level. The onchip
-build and the documented `SQR_DMA_K=0` variant share identical `sqr` and
-`mul_a24` paths, so their difference is purely generator-minus-DMA:
+The onchip build replaces one 512-byte DMA row fetch with 4,073 cy of
+generation, 32 rows per call, so the measured per-call delta gives the
+stall directly:
 
 ```
-onchip - K0 = 449,589,657 - 304,060,643 = 145,529,014 cy
-            / 1,286 muls                = 113,164 cy per fe25519_mul
-dma_per_row = (130,336 - 113,164) / 32  = 536.6 cy/row
+delta       = 208,058.1 - 94,737.4   = 113,320.7 cy per fe25519_mul
+dma_per_row = (130,336 - 113,320.7)/32 = 531.7 cy/row
 ```
 
-Independent cross-check from the batch-200 CT thunk: default 6.010 jif =
-94,733 cy ⇒ 15,763 cy/jif; onchip−default = 7.195 jif = 113,412 cy —
-**100.2 % agreement** with the scalarmult-derived 113,164.
+Two independent cross-checks agree. **(a)** Scalarmult-level isolation —
+the onchip build and the documented `SQR_DMA_K=0` variant share identical
+`sqr`/`mul_a24` paths, so their difference is purely generator-minus-DMA:
+`(449,589,657 − 304,060,643)/1,286 muls = 113,164 cy/call`, **99.9 %** of
+the direct pair. **(b)** The batch-200 CT-gate jiffies give 113,412 cy,
+**100.2 %**. Three methods, spread < 0.25 %.
 
 So Q1 settles on the **physics figure (~540), not the ~180 cy quoted in
-`docs/REU_USAGE_ANALYSIS.md`**. 536.6 cy for 512 bytes is 1.05 cy/byte,
+`docs/REU_USAGE_ANALYSIS.md`**. 531.7 cy for 512 bytes is 1.04 cy/byte,
 exactly the shape expected of a cycle-steal transfer that halts the CPU
 for one bus cycle per byte plus a little setup. The ~180 figure should be
 treated as superseded.
@@ -348,11 +374,11 @@ while the generator's wall time scales with the clock, so
 
 | Stall assumption | cy/row | Crossover |
 |---|---|---|
-| **derived (this work)** | **536.6** | **7.59 MHz** |
+| **derived (this work)** | **531.7** | **7.66 MHz** |
 | physics estimate (§5) | 540 | 7.54 MHz |
 | `REU_USAGE_ANALYSIS` ~180 | 180 | 22.63 MHz |
 
-At the derived value the profile overtakes the REU build at **~7.6 MHz** —
+At the derived value the profile overtakes the REU build at **~7.7 MHz** —
 comfortably below the 16, 48 and 64 MHz targets, so on any accelerated
 host the on-chip generator is expected to win outright. Hardware A/B
 still required before this is quoted as fact.
@@ -391,13 +417,21 @@ python3 tools/test_ct_mul_a24_cycles.py
 python3 tools/test_ladder_checkpoint.py
 python3 tools/ct_mul_brute_check.py
 python3 tools/bench_x25519.py
+python3 tools/bench_fe_ops.py                     # cycle-exact per-op
 # no-REU proof: prefix any of the above with
 C64_NO_REU=1 python3 tools/<tool>.py
+
+# default-profile half of the same-method pair (CA65FLAGS unset):
+unset CA65FLAGS && make clean && make              # -> 905bb969...
+python3 tools/bench_fe_ops.py
 ```
 
-`tools/bench_fe_mul.py` was run but reports whole jiffies only (13–14 jif
-per call) — too coarse for the Q1 derivation, which is why the
-scalarmult-level isolation and the batch-200 thunk were used instead.
+Use `tools/bench_fe_ops.py` for per-op cycles, never `bench_fe_mul.py`:
+the former reads the sei-safe 32-bit CIA1 counter (cycle-exact), the
+latter is the legacy jiffy-clock tool and reported only 13–14 whole
+jiffies per call here — useless for a 113 K-cycle delta. `bench_fe_mul.py`
+also carries the corrected ladder counts in its comments
+(`tools/bench_fe_mul.py:156-162`) despite being the weaker measurement.
 
 ### Not yet done
 
