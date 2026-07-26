@@ -247,12 +247,23 @@ def main():
         info = client.get_info()
         product = info.get("product", "?")
         print(f"Device: {product} fw {info.get('firmware_version', '?')} at {host}")
-        if product != "Ultimate 64 Elite":
-            print(f"REFUSING: device is '{product}', not the U64E "
-                  "(C64U is out of bounds for this run)")
+        # Two Ultimate generations exist with different turbo enums
+        # (skill/PATTERNS: U64E fw 3.14 lacks 64 MHz; C64U fw 1.1.0
+        # lacks 5 MHz; foreign speeds are firmware-rejected). Refuse
+        # unknown products outright.
+        KNOWN = {
+            "Ultimate 64 Elite": {1, 2, 3, 4, 5, 6, 8, 10, 12, 14, 16,
+                                  20, 24, 32, 40, 48},
+            "C64 Ultimate": {1, 2, 3, 4, 6, 8, 10, 12, 14, 16,
+                             20, 24, 32, 40, 48, 64},
+        }
+        if product not in KNOWN:
+            print(f"REFUSING: unknown device product '{product}'")
             sys.exit(1)
-        if any(s > 48 for s in speeds):
-            print("REFUSING: U64E turbo tops out at 48 MHz (no 64 MHz step)")
+        bad = [s for s in speeds if s not in KNOWN[product]]
+        if bad:
+            print(f"REFUSING: {product} has no turbo step for {bad} "
+                  f"(supported: {sorted(KNOWN[product])})")
             sys.exit(1)
 
         results = {}  # (profile, mhz) -> (wall, ticks)

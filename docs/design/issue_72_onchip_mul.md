@@ -533,3 +533,58 @@ jsr/staging removed, ~−22 cy/product) could beat the current shape.
 - [x] Hardware no-REU stock-config proof (U64E, REU disabled in fw)
 - [ ] 64 MHz point — impossible on U64E; needs C64U
 - [ ] C64U leg (device out of bounds for now)
+
+## Hardware, second leg (C64 Ultimate, 2026-07-26) — GATE COMPLETE
+
+Same tool, same protocol, on the C64U (fw 1.1.0, `10.53.21.158`,
+authorized by the user after the U64E leg). This device has the 64 MHz
+step the U64E lacks. All rows oracle-gated; A/B pairs same-boot.
+
+| MHz | default wall | onchip wall | A/B (CIA ticks) |
+|---|---|---|---|
+| 1  | 256.86 s | 439.81 s | 0.58× (slower — expected) |
+| 16 | 24.88 s | 27.71 s | 0.90× |
+| 24 | 20.45 s | 18.50 s | **1.10×** |
+| 32 | 18.25 s | 13.90 s | **1.31×** |
+| 40 | 16.80 s | 11.24 s | **1.51×** |
+| 48 | 16.04 s | 9.71 s | **1.69×** |
+| 64 | 14.11 s | 7.26 s | **2.00×** |
+
+Stock-config proof: onchip with REU disabled in firmware, 48 MHz —
+PASS (10.30 s, separate boot). VICE anchor at 1 MHz: both profiles
+match VICE cycle counts to **+0.006%**.
+
+### Stall values, final per-device table
+
+Backing out `dma_ticks(S) = default_ticks(S) − 225.53M/S_eff` (S_eff
+from the onchip runs: 16/24/32/40 exact, 47 at "48", 63 at "64"):
+C64U DMA ≈ 11.25 M ticks total ≈ **~160 wall-ticks per 512 B row**,
+speed-invariant 16→64. So NEITHER Ultimate generation reproduces
+real-1750 1 cy/byte timing at turbo — both FPGA REUs transfer ~3×
+faster while the CPU is accelerated (and both match classic 532 cy/row
+at 1 MHz, where the totals agree with VICE to ≤0.013%).
+
+| Environment | stall/row | crossover | A/B at top speed |
+|---|---|---|---|
+| VICE (models real 1750, 1 cy/byte) | 532 | ~7.7 MHz | — |
+| real C64 + discrete 1750 + accelerator | 532 (projection) | ~7.7 MHz (projection) | ~5.7× @64 (projection) |
+| U64E fw 3.14 (no 64 MHz step) | ~189 | ~17 MHz | 1.85× @48 |
+| C64U fw 1.1.0 | ~160 | ~20 MHz | 2.00× @64 |
+
+Note on the nist-curves numbers quoted in issue #72: our measured C64U
+crossover (~20 MHz) is consistent with their *measured* ~22 MHz
+P-256 crossover; their "87% floor" figure evidently reflects a
+different accounting than this workload's, and should not be used to
+project x25519. The floor here is 11.25 M ticks ≈ 11.0 s per
+scalarmult ≈ 78% of default wall at 64 MHz — real, speed-invariant,
+and exactly what the onchip profile removes.
+
+### Gate status — CLOSED (both available devices)
+
+- [x] U64E leg: 16–48 MHz same-boot A/B, no-REU proof
+- [x] C64U leg: 16–64 MHz same-boot A/B incl. the 64 MHz point,
+      no-REU proof
+- [x] VICE↔hardware anchors: +0.013% (U64E), +0.006% (C64U)
+- Real-C64 + discrete-1750 numbers remain projections (no such rig);
+  the projection column above is labeled as such everywhere it is
+  quoted.
