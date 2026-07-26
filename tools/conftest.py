@@ -104,8 +104,15 @@ def transport():
     project_root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
     prg = os.path.join(project_root, "build", "x25519.prg")
 
+    # C64_NO_REU=1 launches VICE with no REU at all: runtime proof that a
+    # no-REU build profile (e.g. X25519_ONCHIP_MUL) never polls $DFxx.
+    # The default build reads REU mul tables and needs the REU attached.
+    if os.environ.get("C64_NO_REU"):
+        reu_args = ["+reu"]
+    else:
+        reu_args = ["-reu", "-reusize", "512"]
     config = ViceConfig(prg_path=prg, warp=True, ntsc=True, sound=False,
-                        extra_args=["-reu", "-reusize", "512"])
+                        extra_args=reu_args)
     mgr = ViceInstanceManager(config=config)
     mgr.__enter__()
     try:

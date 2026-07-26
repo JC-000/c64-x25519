@@ -1,6 +1,7 @@
 # Issue #72 — `X25519_ONCHIP_MUL` build profile (design)
 
-Status: DRAFT — implementation in progress on `issue-72-onchip-mul`.
+Status: IMPLEMENTED on `issue-72-onchip-mul`, VICE-validated (see
+"Measured" section). Hardware A/B pending — the merge gate below.
 Ported concept from c64-nist-curves #69/#71 (`FP_ONCHIP_MUL`), redesigned
 for x25519's constant-time contract. VICE-validated only for now;
 hardware A/B at 16/48/64 MHz is a **deferred merge gate** for all
@@ -208,3 +209,199 @@ same-run on U64E/C64U.
   Revisit only with hardware numbers in hand.
 - `tools/test_ct_mul_cycles.py`-style per-proc guard for `ct_mul_8x8`
   itself (84 cy fixed) once it is hot-path.
+
+## Measured (VICE, 2026-07-26)
+
+All numbers below are from the `X25519_ONCHIP_MUL` build at branch HEAD
+`035c73e` (amend of `9d10f50`, identical source tree — build artifacts
+under `build-onchip/` were dropped from the commit and gitignored),
+PRG SHA256 `22a45668b5ff7826750f01227400ee75682f4eeb41cd534531bbfd32ba3b4ffc`
+(7,585 bytes), built with:
+
+```
+rm -rf build-onchip && make BUILD_DIR=build-onchip CA65FLAGS="-D X25519_ONCHIP_MUL=1"
+```
+
+**Hardware A/B at 16/48/64 MHz remains a deferred merge gate — every
+wall-clock and crossover figure here is VICE-derived and must not be
+quoted as a hardware result.**
+
+### Test-harness caveat (affects how these runs must be reproduced)
+
+Ten `tools/*.py` run `make clean && make` internally (e.g.
+`tools/bench_x25519.py:125-126`, `tools/test_fe25519.py:601-602`). With
+`CA65FLAGS` unset that rebuild silently replaces the onchip PRG with the
+**default** build, and the tool then measures the wrong profile without
+any warning. Every run below was therefore made with
+
+```
+export PYTHONPATH=/Users/someone/Documents/c64-test-harness/src
+export CA65FLAGS="-D X25519_ONCHIP_MUL=1"
+```
+
+so each internal rebuild regenerates the onchip profile, and the PRG
+SHA256 was asserted equal to `22a45668…` after every single tool. Copying
+`build-onchip/x25519.prg` over `build/x25519.prg` is **not** sufficient on
+its own. (`CA65FLAGS ?=` in the Makefile means an exported value wins,
+verified by SHA.)
+
+`tools/*.py` also gained the nist-curves `C64_NO_REU` pattern (29 files):
+`if os.environ.get("C64_NO_REU"): reu_args = ["+reu"] else: reu_args =
+["-reu", "-reusize", "512"]`. Default behaviour is unchanged.
+
+### Differential + CT suite (onchip, REU attached)
+
+| Tool | Result | Count |
+|---|---|---|
+| `test_fe25519.py` | PASS | 64/64 |
+| `test_fe_sqr_stress.py` | PASS | 49/49 |
+| `test_fe_mul_stress.py` | PASS | 128/128 |
+| `test_mul38_tables.py` | PASS | 256/256 |
+| `test_fe_reduce_wide_carry.py` | PASS | 3/3 |
+| `test_ct_square_cycles.py` | PASS | spread 0.005 jif (threshold 1.0) |
+| `test_ct_mul_cycles.py` | PASS | spread 0.005 jif (threshold 1.0) |
+| `test_ct_mul_a24_cycles.py` | PASS | spread 0.005 jif (threshold 1.0) |
+| `test_ladder_checkpoint.py` | PASS | 10/10 steps |
+| `ct_mul_brute_check.py` | PASS | 0 mismatches / 65,536 |
+| `bench_x25519.py` (RFC 7748) | PASS | 449,589,657 cy |
+
+CT per-call jiffies, onchip vs default (batch-200 CIA1 thunk):
+
+| Op | Onchip | Default | Spread (onchip) |
+|---|---|---|---|
+| `fe25519_mul` | 13.200–13.205 jif | 6.010–6.015 | 0.005 |
+| `fe25519_sqr` | 8.570–8.575 jif | 6.505–6.510 | 0.005 |
+| `fe25519_mul_a24` | 0.475–0.480 jif | 0.480 | 0.005 |
+
+`fe25519_mul`'s CT gate covers the cases §6.4 asked for: `mul_zeros` and
+`mul_ff` are the maximal duplicate-heavy src2 inputs (all 32 bytes
+identical), `sparse_09` the sparse case, `dense_55`/`mixed_*` the dense
+ones. The generator holds 0.005 jif across all six — no measurable
+dependence on src2 content, duplicate count, or zero count.
+
+### No-REU runtime proof (`C64_NO_REU=1`, VICE launched with `+reu`)
+
+| Tool | Result | Count |
+|---|---|---|
+| `test_fe25519.py` | PASS | 64/64 |
+| `test_fe_mul_stress.py` | PASS | 128/128 |
+| `test_fe_sqr_stress.py` | PASS | 49/49 |
+| `test_ladder_checkpoint.py` | PASS | 10/10 steps |
+| `bench_x25519.py` | PASS | 449,589,657 cy — **identical to the REU'd run** |
+
+No hang at any point: no REU status poll survived the gating. The
+scalarmult cycle count is *bit-identical* with and without the REU
+attached, which is a stronger statement than "it completes" — any
+surviving `$DFxx` access would have perturbed the count.
+
+Negative control: the **default** build under `C64_NO_REU=1` fails
+immediately and loudly (`test_fe25519.py`: `mul 0*1: expected=0 got=74`),
+confirming the no-REU VICE really has no REU and that the onchip passes
+above are meaningful rather than a misconfigured flag silently attaching
+one.
+
+### Q1 — RESOLVED: REU DMA stall ≈ **537 cy per 512-byte row**
+
+Static generator cost, counted exactly from `src/fe25519.s:686-702` and
+`src/mul_8x8.s:232-270` (`ct_mul_8x8` = 84 cy including `rts`; all
+indexed loads are page-cross-free by the sqtab alignment + SMC hi-byte
+patch, so the body is genuinely fixed-cycle):
+
+| Quantity | Cycles |
+|---|---|
+| `ct_mul_8x8` incl. `rts` | 84 |
+| per product (`stx`+`ldy`+`jsr`+body+`ldx`+`ldy`+2×(`lda`+`sta`)+`dex`+`bpl`) | 127 |
+| per row (32 products, last `bpl` falls through, +10 row setup) | 4,073 |
+| per `fe25519_mul` (32 rows) | 130,336 |
+
+Measured mul-side cost, isolated at the scalarmult level. The onchip
+build and the documented `SQR_DMA_K=0` variant share identical `sqr` and
+`mul_a24` paths, so their difference is purely generator-minus-DMA:
+
+```
+onchip - K0 = 449,589,657 - 304,060,643 = 145,529,014 cy
+            / 1,286 muls                = 113,164 cy per fe25519_mul
+dma_per_row = (130,336 - 113,164) / 32  = 536.6 cy/row
+```
+
+Independent cross-check from the batch-200 CT thunk: default 6.010 jif =
+94,733 cy ⇒ 15,763 cy/jif; onchip−default = 7.195 jif = 113,412 cy —
+**100.2 % agreement** with the scalarmult-derived 113,164.
+
+So Q1 settles on the **physics figure (~540), not the ~180 cy quoted in
+`docs/REU_USAGE_ANALYSIS.md`**. 536.6 cy for 512 bytes is 1.05 cy/byte,
+exactly the shape expected of a cycle-steal transfer that halts the CPU
+for one bus cycle per byte plus a little setup. The ~180 figure should be
+treated as superseded.
+
+> Note: this derivation uses **1,286** muls/scalarmult
+> (`tools/bench_fe_mul.py:156-162`), not the `~1,031` at
+> `docs/REU_USAGE_ANALYSIS.md:35`. That 1,031 is stale — it shares the
+> lineage of the debunked "763 sqrs" comment corrected in that same doc
+> (§"Root cause of the prediction error"). Line 35 should be fixed.
+
+### Crossover clock
+
+DMA wall time is fixed at the ~1 MHz bus rate regardless of CPU turbo,
+while the generator's wall time scales with the clock, so
+`crossover_MHz = gen_cycles_per_row / dma_stall_per_row`:
+
+| Stall assumption | cy/row | Crossover |
+|---|---|---|
+| **derived (this work)** | **536.6** | **7.59 MHz** |
+| physics estimate (§5) | 540 | 7.54 MHz |
+| `REU_USAGE_ANALYSIS` ~180 | 180 | 22.63 MHz |
+
+At the derived value the profile overtakes the REU build at **~7.6 MHz** —
+comfortably below the 16, 48 and 64 MHz targets, so on any accelerated
+host the on-chip generator is expected to win outright. Hardware A/B
+still required before this is quoted as fact.
+
+### Scalarmult totals
+
+| Build | Cycles | NTSC | vs default |
+|---|---|---|---|
+| default (`SQR_DMA_K=22`) | 261,640,265 | 255.8 s (4.26 min) | 1.000× |
+| `SQR_DMA_K=0` only | 304,060,643 | 297.3 s (4.96 min) | 1.162× |
+| **onchip (K=0 + generator)** | **449,589,657** | **439.6 s (7.33 min)** | **1.718×** |
+
+Splitting the two contributions: the sqr-side `K=0` fallback costs
++42,420,378 cy (already documented), and the mul-side generator costs
++145,529,014 cy — the generator is ~3.4× the more expensive half.
+
+§5 predicted ~412M cy (1.6×); measured 449.6M (1.72×), i.e. the analytic
+method under-predicted by 8.4 %. Much better than the 74 % miss it had on
+Group B, but still an under-prediction — consistent with the §5 warning
+to treat 1.6× as a floor.
+
+### Exact invocations
+
+```
+export PYTHONPATH=/Users/someone/Documents/c64-test-harness/src
+export CA65FLAGS="-D X25519_ONCHIP_MUL=1"        # keeps internal rebuilds onchip
+make clean && make                                # -> 22a45668...
+python3 tools/test_fe25519.py                     # and each tool below
+python3 tools/test_fe_sqr_stress.py
+python3 tools/test_fe_mul_stress.py
+python3 tools/test_mul38_tables.py
+python3 tools/test_fe_reduce_wide_carry.py
+python3 tools/test_ct_square_cycles.py
+python3 tools/test_ct_mul_cycles.py
+python3 tools/test_ct_mul_a24_cycles.py
+python3 tools/test_ladder_checkpoint.py
+python3 tools/ct_mul_brute_check.py
+python3 tools/bench_x25519.py
+# no-REU proof: prefix any of the above with
+C64_NO_REU=1 python3 tools/<tool>.py
+```
+
+`tools/bench_fe_mul.py` was run but reports whole jiffies only (13–14 jif
+per call) — too coarse for the Q1 derivation, which is why the
+scalarmult-level isolation and the batch-200 thunk were used instead.
+
+### Not yet done
+
+- `ct_mul_8x8`'s own fixed-cycle property is argued statically here (84 cy)
+  but still has no per-proc runtime guard — the §7 follow-up. It is now
+  hot-path with secret operands, so this matters more than it did.
+- Hardware A/B at 16/48/64 MHz (deferred merge gate).

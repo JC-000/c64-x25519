@@ -15,9 +15,14 @@ header is `src/x25519.inc`; this file is the human-readable guide.
   RAM from `$0900` upward for code plus several page-aligned data
   pages for field buffers and DMA staging, plus `$7800-$7BFF` for the
   quarter-square table.
-- **REU:** **512 KB REU required** (a Commodore 1750 or equivalent,
-  or any REU/compatible with at least 6 banks of 64 KB). The library
-  pre-computes full 8x8->16 multiplication tables into REU banks 0-5.
+- **REU:** **512 KB REU required** for the default build (a Commodore
+  1750 or equivalent, or any REU/compatible with at least 6 banks of
+  64 KB). The library pre-computes full 8x8->16 multiplication tables
+  into REU banks 0-5. Two build variants lower this: `lib-x25519-1764`
+  drops the requirement to 256 KB (§4.7), and `lib-x25519-onchip`
+  removes it entirely — that profile issues no REU traffic at all and
+  runs on a stock expansion-less C64, at a stock-clock speed cost
+  (§4.11).
 - **Zero page:** the library owns `$14-$16`, `$1C`, `$1E-$2A`,
   `$2C-$2F`, and `$40-$7F` while running (85 bytes total,
   post-Phase-7). `$FB-$FE` is reserved for the test
@@ -288,13 +293,16 @@ compile + VICE test cycle:
 | Symbol | Default value | What it reports |
 |---|---|---|
 | `LIB_X25519_ZP_USAGE_BYTES` | `85` | Total bytes of ZP slots the library claims (sum of `.exportzp`-ed slots in `src/zp_config.s` + the pinned `fe_wide` region) |
-| `LIB_X25519_REU_BANKS_USED` | `$3B` default / `$03` for `lib-x25519-1764` | Bitmask of REU banks claimed for mul tables. **Default build** (banks 0, 1, 3, 4, 5): `$3B << X25519_REU_BANK`. **1764 variant** (`make lib-x25519-1764`, `SQR_DMA_K=0`): `$03 << X25519_REU_BANK` — banks 0, 1 only, drops the doubled-table cluster. Bank 2 is never claimed in either build. See [`REU_USAGE_ANALYSIS.md`](REU_USAGE_ANALYSIS.md) §"Group B SHIPPED" for the variant rationale + measured trade-offs |
-| `LIB_X25519_RESIDENT_BYTES` | `8383` default / `8247` for `lib-x25519-1764` | Approximate code + data + sqtab footprint that must remain CPU-resident. Dropped from 9209/8895 at the issue-#68 cold-segment split — the init-only code is now counted in `LIB_X25519_COLD_BYTES` (SPEC §5 disjoint partition; see §4.10) |
-| `LIB_X25519_COLD_BYTES` | `826` default / `648` for `lib-x25519-1764` | Approximate footprint a consumer MAY reclaim/overlay after init — the `LIB_X25519_INIT_CODE` segment (issue #68; see §4.10) |
+| `LIB_X25519_REU_BANKS_USED` | `$3B` default / `$03` for `lib-x25519-1764` / `0` for `lib-x25519-onchip` | Bitmask of REU banks claimed for mul tables. **Default build** (banks 0, 1, 3, 4, 5): `$3B << X25519_REU_BANK`. **1764 variant** (`make lib-x25519-1764`, `SQR_DMA_K=0`): `$03 << X25519_REU_BANK` — banks 0, 1 only, drops the doubled-table cluster. Bank 2 is never claimed in either build. **onchip variant** (`make lib-x25519-onchip`, `X25519_ONCHIP_MUL=1`): plain `0` — no shift, no banks. Per SPEC §5 the zero *is* the "no REU" declaration, not an unset field; see §4.11. See [`REU_USAGE_ANALYSIS.md`](REU_USAGE_ANALYSIS.md) §"Group B SHIPPED" for the 1764 rationale + measured trade-offs |
+| `LIB_X25519_RESIDENT_BYTES` | `8383` default / `8247` for `lib-x25519-1764` / `8300` provisional for `lib-x25519-onchip` | Approximate code + data + sqtab footprint that must remain CPU-resident. Dropped from 9209/8895 at the issue-#68 cold-segment split — the init-only code is now counted in `LIB_X25519_COLD_BYTES` (SPEC §5 disjoint partition; see §4.10). The onchip figure is a **placeholder pending an `od65 --dump-segsize` refresh** (§4.11): resident grows by the generator block and shrinks by the gated-out REU code |
+| `LIB_X25519_COLD_BYTES` | `826` default / `648` for `lib-x25519-1764` / `260` provisional for `lib-x25519-onchip` | Approximate footprint a consumer MAY reclaim/overlay after init — the `LIB_X25519_INIT_CODE` segment (issue #68; see §4.10). The onchip segment holds `sqtab_init` alone, so it is much smaller; the figure is likewise **provisional pending od65 refresh** |
 
 The values are approximate ("within 5% is fine" per SPEC §5). The
 library author refreshes them when a release substantively changes
-any one of them.
+any one of them. The two `lib-x25519-onchip` byte figures are flagged
+provisional in `src/lib_version.s` itself and must be refreshed from
+`make lib-x25519-onchip`'s segsize dump before that profile ships in a
+release.
 
 **Consumer-side collision check** (composing c64-x25519 with
 c64-nist-curves):
@@ -463,9 +471,17 @@ Manifest equates in the variant archive report the smaller claim:
 | Equate | Default build | 1764 variant |
 |---|---|---|
 | `LIB_X25519_REU_BANKS_USED` | `$3B` (banks 0, 1, 3, 4, 5) | `$03` (banks 0, 1) |
-| `LIB_X25519_RESIDENT_BYTES` | `9224` | `9046` |
+| `LIB_X25519_RESIDENT_BYTES` | `8383` | `8247` |
+| `LIB_X25519_COLD_BYTES` | `826` | `648` |
 | `LIB_X25519_ZP_USAGE_BYTES` | `85` | `85` (unchanged) |
-| `LIB_VERSION_*` | `0.6.x` | `0.6.x` (same source tree) |
+| `LIB_VERSION_*` | `0.7.x` | `0.7.x` (same source tree) |
+
+The `RESIDENT_BYTES` pair was `9224` / `9046` before the issue-#68
+cold-segment split moved the init-only procs into
+`LIB_X25519_INIT_CODE`; the `−178 B CODE` figure quoted above and in
+`docs/REU_USAGE_ANALYSIS.md` is the difference between those two
+pre-split values. Post-split the two partitions are disjoint (SPEC §5)
+and must be compared separately — see §4.4 and §4.10.
 
 Mechanism: a single `-D SQR_DMA_K=0` define (threaded through
 `$(CA65FLAGS)` in the Makefile) makes `fe25519_sqr`'s `bcs
@@ -603,7 +619,11 @@ LIB_X25519_SHARED_PRIMITIVES     = $0007   ; standalone build (no switches)
 
 Each bit drops out of the mask when its deferral switch is defined at
 build time, so an integrated build that defers a primitive to a
-canonical provider reports only what it actually owns. The
+canonical provider reports only what it actually owns. A standalone
+`lib-x25519-onchip` build reports `$0005` instead: it *omits* the
+§8.2 bit rather than deferring it, because that profile builds no REU
+table at all — see §4.11 for why omission and deferral are not the
+same declaration. The
 `.and`-against-sibling-manifest `.assert` pattern from §4.6 applies
 identically — and is satisfiable under legitimate sharing precisely
 because of the conditional construction.
@@ -678,12 +698,16 @@ Rules:
    contiguous by construction. (With an empty BSS, as in the shipped
    cfgs, it also abuts the `$7800` sqtab floor; with consumer BSS
    after it, the window simply ends where BSS's address space begins.)
-3. The §8.3 `ct_mul_8x8` body is deliberately **not** in this segment
-   even though it is boot-only inside this library: a composed build
-   in which c64-x25519 is the ct_mul_8x8 owner takes *runtime* calls
-   from deferring siblings, and `tools/ct_mul_brute_check.py`
-   exercises the body from the live image. Reclaiming never touches
-   the shared-primitive surface.
+3. The §8.3 `ct_mul_8x8` body is deliberately **not** in this segment.
+   In the default and `lib-x25519-1764` profiles it is boot-only
+   inside this library, but it still stays resident for two reasons: a
+   composed build in which c64-x25519 is the ct_mul_8x8 owner takes
+   *runtime* calls from deferring siblings, and
+   `tools/ct_mul_brute_check.py` exercises the body from the live
+   image. Under `lib-x25519-onchip` (§4.11) it is not boot-only at
+   all — the row generator calls it on the ladder hot path — so
+   residency is mandatory there. Reclaiming never touches the
+   shared-primitive surface in any profile.
 4. Deferral builds (`SHARED_SQTAB_INIT` and/or `SHARED_REU_MUL_INIT`)
    shrink or empty the segment; `optional = yes` keeps such links
    working. Gate asymmetry to know: under `SHARED_SQTAB_INIT` the
@@ -705,6 +729,131 @@ be `.import`-ed at all on 6502 — see
 Use `od65 --dump-exports` for cross-checks of large-value equates.
 The presence-check workaround in `tests/lib_linkage/lib_linkage_stub.s`
 is documented inline.
+
+## 4.11 The `lib-x25519-onchip` build variant (issue #72)
+
+`make lib-x25519-onchip` produces a parallel archive under
+`build-onchip/lib/` in which `fe25519_mul` computes its multiplication
+rows **on the 6502** instead of fetching them from the REU. It is the
+library's first configuration that issues no REU traffic at all: it
+runs on a stock, expansion-less C64.
+
+```sh
+make lib-x25519-onchip     # build the variant
+ls build-onchip/lib/       # libx25519.a + .o files + x25519.inc + cfg
+```
+
+Mechanism: `-D X25519_ONCHIP_MUL=1` (threaded through `$(CA65FLAGS)`)
+swaps the per-row DMA FETCH in `fe25519_mul` for a 32-iteration
+generator built on the c64-lib-contract §8.3 `ct_mul_8x8` body, and
+forces `SQR_DMA_K = 0` so `fe25519_sqr` takes the same measured
+mult66 path as the 1764 variant. The same define gates out
+`reu_mul_init` / `reu_mul_tables_init`, `reu_fetch_mul_row`,
+`reu_probe`, the §8.2 export block, and the defensive `$DFxx` register
+writes at the field-op and scalarmult entry points — `$DF00-$DFFF` is
+*not* unconditionally free I/O2 space on a REU-less host, since GeoRAM
+and Ethernet cartridges decode it.
+
+The generator is constant-time, unlike the c64-nist-curves
+`FP_ONCHIP_MUL` generator this profile is modelled on: that one is
+allowed to skip zero bytes because ECDSA verify runs on public inputs,
+and x25519 has no public-input operation. See
+[`CT_ANALYSIS.md`](CT_ANALYSIS.md) entries **L30a-d** for the audit and
+`docs/design/issue_72_onchip_mul.md` for the design.
+
+**Consumer-side define.** Downstream code that `.include`s
+`x25519.inc` against this archive must define the same symbol before
+the include:
+
+```sh
+ca65 -D X25519_ONCHIP_MUL=1 -o build/app.o src/app.s
+```
+
+The header's REU-side import surface is `.if`-gated on it. Without the
+define, `x25519.inc` requests `reu_mul_init`,
+`reu_mul_tables_init`, `reu_fetch_mul_row_bank_patch`,
+`X25519_REU_BANK` / `X25519_REU_OFFSET`, the `LIB_SHARED_REU_MUL_*`
+placement equates, and the derived symbolic bank names
+(`X25519_REU_BANK_DOUBLED` / `_CARRY`) — none of which exist in the
+onchip archive — and the link fails on unresolved externals. The default (`0`) leaves the
+header byte-identical to its pre-#72 surface, so existing consumers
+need no change.
+
+**Boot obligation: `sqtab_init` only.**
+
+```ca65
+jsr sqtab_init          ; the whole init contract for this profile
+; no reu_probe, no reu_mul_init, no bank claims
+```
+
+There is no REU probe because there is nothing to probe for, and a
+probe would be actively harmful — a status poll of a nonexistent REU
+is exactly the kind of thing that hangs a stock machine. This is also
+why link-level symbol absence is necessary but not sufficient
+evidence: the profile's acceptance gate includes running the
+differential suite in a VICE instance with no REU attached.
+
+**Manifest deltas.** Relative to the default build:
+
+| Equate | Default build | onchip variant |
+|---|---|---|
+| `LIB_X25519_REU_BANKS_USED` | `$3B` (banks 0, 1, 3, 4, 5) | `0` |
+| `LIB_X25519_SHARED_PRIMITIVES` | `$0007` (§8.1 + §8.2 + §8.3) | `$0005` (§8.1 + §8.3) |
+| `LIB_X25519_RESIDENT_BYTES` | `8383` | `8300` — **provisional** |
+| `LIB_X25519_COLD_BYTES` | `826` | `260` — **provisional** |
+| `LIB_X25519_ZP_USAGE_BYTES` | `85` | `85` (unchanged — the generator allocates no new ZP) |
+| `LIB_PRECALC_*` exports | `sqtab`, `reu_mul`, `reu_mul_doubled` | `sqtab` only |
+
+Two of these carry contract meaning worth spelling out:
+
+- **`LIB_X25519_REU_BANKS_USED = 0` is the declaration, not an
+  omission.** SPEC §5 specifies "zero if no REU", so a consumer's
+  `.and`-against-sibling collision assert reads it correctly with no
+  special case: this library collides with nothing.
+- **`LIB_X25519_SHARED_PRIMITIVES = $0005` drops §8.2 by omission, not
+  by deferral.** The profile does not define `SHARED_REU_MUL_INIT`,
+  because that switch means "some canonical provider owns the REU mul
+  table" — a claim that would be false here. Under this profile there
+  is no table and no provider, so the bit is simply left out of the
+  mask expression per SPEC §8.0's "OR only the primitives this lib
+  uses". (c64-nist-curves' onchip manifest still claims §8.2; that is
+  a known inconsistency in the sibling library, deliberately not
+  replicated here.) §8.1 stays because the generator reads `sqtab` on
+  every single product — under this profile the table moves firmly
+  into the resident hot set.
+- The `RESIDENT`/`COLD` figures are **placeholders pending an `od65
+  --dump-segsize` refresh**; `make lib-x25519-onchip` prints the dump
+  at the end of its run. They are marked provisional in
+  `src/lib_version.s` too, and must be corrected before the profile
+  ships in a release.
+
+**Trade-off, and who should use this.** On a stock 1 MHz C64 the
+onchip profile is **slower** than the default build, unavoidably:
+REU DMA hands the 6502 a finished product row it would otherwise have
+to compute, 1,024 products at a time. Measured cost is
+**(VICE measurement pending)**.
+
+The profile targets accelerated hosts. REU DMA runs at the ~1 MHz bus
+rate no matter how fast the CPU is clocked, so on a turbo machine
+every row fetch is a fixed wall-clock stall that does not shrink as
+the CPU speeds up — a speed-invariant floor under the whole
+scalarmult. The generator has no such floor: it is CPU work, and it
+scales with the clock. Above the crossover clock the profile wins;
+below it, it loses. The crossover figure and the underlying per-row
+DMA stall measurement are **(VICE measurement pending)**, and every
+wall-clock claim is additionally gated on a hardware A/B at 16 / 48 /
+64 MHz on real accelerated hardware, which has not been run.
+
+**If you are targeting a stock-clock C64, use the default build**
+(or `lib-x25519-1764` if REU size is the constraint). Choose the
+onchip profile when you have a turbo host, or when you have no REU at
+all and the slower scalarmult is acceptable.
+
+The default build is unchanged at the source level — the variant is
+opt-in, and the profile is a pure `.ifdef` swap inside the existing
+segments, with no §4 segment split of its own. Downstream projects
+vendoring the source can rebuild any of the three forms from the same
+tree by toggling the make target.
 
 ## 5. Public API
 
@@ -814,6 +963,27 @@ scalarmult cost for −192 KB REU + −314 B CODE; see §4.7 and
 | `fe25519_sqr`     (batch=200)   |     135,071 |       7.924 | +30.5 %      |
 | `fe25519_mul`     (batch=200)   |      94,733 |       5.558 | 0 (mul path unchanged) |
 | Other ops                       |   unchanged |   unchanged | 0            |
+
+### onchip build variant (`make lib-x25519-onchip`)
+
+For turbo hosts, and for hosts with no REU at all. Trade: a **slower**
+scalarmult at stock 1 MHz in exchange for removing the REU entirely
+and removing the DMA wall-clock floor that does not scale with CPU
+clock; see §4.11 and `docs/design/issue_72_onchip_mul.md`.
+
+| Operation                       | Cycles | Jiffies | Δ vs default |
+| ------------------------------- | -----: | ------: | -----------: |
+| `x25519_scalarmult` (basepoint) | (VICE measurement pending) | (VICE measurement pending) | (pending) |
+| `fe25519_mul`     (batch=200)   | (VICE measurement pending) | (VICE measurement pending) | (pending) |
+| `fe25519_sqr`     (batch=200)   | (VICE measurement pending) | (VICE measurement pending) | same mult66 path as the 1764 variant (`SQR_DMA_K = 0`) |
+
+The turbo crossover clock depends on the true per-row DMA stall, which
+is itself **(VICE measurement pending)** — the estimate in
+`docs/REU_USAGE_ANALYSIS.md` and the transfer-rate calculation
+disagree by roughly 3x, so no crossover figure is quoted here until it
+is measured directly. All VICE figures are cycle-exact at 1 MHz only;
+wall-clock claims for accelerated hosts are gated on the deferred
+hardware A/B at 16 / 48 / 64 MHz.
 
 ### Historical baselines
 

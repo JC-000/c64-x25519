@@ -1,6 +1,8 @@
 # CT_ANALYSIS — Constant-Time Audit for c64-x25519
 
-Status: **Phases 0–7 landed: L1–L29 CT-clean** — tracking issue
+Status: **Phases 0–7 landed: L1–L29 CT-clean.** L30a-d catalogue the
+`X25519_ONCHIP_MUL` on-chip row generator (issue #72) — new hot-path
+surface, CT-clean by construction, profile-scoped. Tracking issue
 [#20](https://github.com/JC-000/c64-x25519/issues/20).
 
 This document catalogues every currently-known secret-dependent branch and
@@ -18,6 +20,17 @@ fixed, the library is now CT-clean across the entire `fe25519_*` /
 `mul_8x8` / `x25519_scalarmult` surface for network-facing use,
 subject to the usual caveats about caller-installed ISRs and host
 NMI hooks documented in `docs/LIBRARY.md` §9.
+
+**Profile note (issue #72).** The `X25519_ONCHIP_MUL` build profile
+(`make lib-x25519-onchip`, `docs/LIBRARY.md` §4.11) replaces
+`fe25519_mul`'s per-row REU DMA fetch with an on-chip generator built
+from the §8.3 `ct_mul_8x8` body. That is the only new secret-data code
+path either profile has gained since Phase 7, and it is catalogued as
+**L30a-d** below. Every L1–L29 closure is shared verbatim by both
+profiles: the profile is a `.ifdef` swap of the row-acquisition step
+inside `fe25519_mul`, and it changes no accumulate body, no reduction
+stage, and no ladder code. See
+`docs/design/issue_72_onchip_mul.md` §2-§3 for the design rationale.
 
 ## Threat model
 
@@ -123,16 +136,57 @@ still relevant.
 | L29c | src/fe25519.s:~209   | branch      | med      | fixed  | `fe25519_sub` borrow-handling branch — Phase 7, mirror of L29b idiom (sub-p → add-p via masked p_byte path) |
 | L29d | src/fe25519.s:~346   | branch      | **HIGH** | fixed  | `fe25519_reduce_final` conditional sub-p — Phase 7, two-iteration unconditional masked-subp (works because `fe_reduce_wide` output bound ≤ 2p). Sufficiency regression: `tools/test_fe_reduce_wide_bound.py` |
 | L29e | src/fe25519.s:~370   | branch      | med      | fixed  | `fe25519_reduce_final` byte-level cascade in mask propagation — Phase 7, unconditional via `fe_subp_rhs` per-iter scratch (= p_byte AND mask) |
+| L30a | src/fe25519.s:688-702 | branch     | (HIGH)   | clean  | **`X25519_ONCHIP_MUL` profile only.** On-chip row generator loop (`@gen_row`). Fixed 32 iterations, terminated by `dex / bpl` on the public counter X; no zero-skip on either operand — neither `a = src1[i]` (the L25 invariant, restated below) nor `b = src2[j]`. Deliberately rejects nist-curves' `og_common` `beq` zero-byte skip, whose row time counts the secret nonzero bytes of the operand (`docs/design/issue_72_onchip_mul.md` §2) |
+| L30b | src/fe25519.s:691-696 | page-cross | (HIGH)   | clean  | **`X25519_ONCHIP_MUL` profile only.** The two SMC-patched `ldy mul_src2_buf,x` sites (`@gen_src2_a`, `@gen_src2_b`) that fetch the secret `b = src2[j]`. Absolute-indexed, patched at `fe25519_mul` entry from `fe25519_src2` alongside `@ldy_src2_a..d` — same addressing shape and same 32-byte caller-buffer alignment contract (`docs/LIBRARY.md` §6) as those four body sites, so no `(zp),y` and no data-dependent page cross |
+| L30c | src/fe25519.s:697-700 | page-cross | (HIGH)   | clean  | **`X25519_ONCHIP_MUL` profile only.** `sta mul_dma_lo,y` / `sta mul_dma_hi,y` generator stores, indexed by the **secret** `b`. Fixed 5 cycles for any Y because both buffers are page-aligned — previously asserted only indirectly through the `LIB_SHARED_REU_MUL_STAGE` aliases in `src/reu_config.s`, now hard-asserted at the definition site (`src/data.s:150-152`) |
+| L30d | src/mul_8x8.s:231-268 | promotion  | (HIGH)   | clean  | **`X25519_ONCHIP_MUL` profile only.** `jsr ct_mul_8x8` moves the §8.3 body onto the ladder hot path with **both** operands secret (`a = src1[i]` SMC-baked into `smc_sum_a_imm+1` / `smc_diff_a_imm+1`, `b = src2[j]` in Y). No code change — the promotion is what is catalogued: the L1/L2 closures become load-bearing under the network threat model rather than retained canonical shape. See the rewritten Phase 1 landing note below |
+
+**L30a-d are new-surface entries, not closed leaks.** Status `clean`
+reads "audited, no leak present" — nothing was ever shipped in a
+leaking form on this path. They are catalogued because the
+`X25519_ONCHIP_MUL` profile puts a new secret-data code path on the
+hot path, and the project rule (CLAUDE.md, "Constant-time discipline")
+is that CT-relevant additions get an inventory entry rather than an
+assumption of "probably fine". The Severity column is parenthesised
+because it records what each site *would* have scored had the obvious
+non-CT shape been taken — the `og_common` zero-skip for L30a, a
+`(zp),y` or unaligned staged-buffer load for L30b, an unaligned store
+base for L30c, and a data-dependent multiply body for L30d.
 
 ### Phase landing notes
 
 - **Phase 1 — L1, L2 fixed in `src/mul_8x8.s`**. Branchless `|a-b|` via
   sign-mask XOR, SMC hi-byte patching of the sum load on page-aligned
-  `sqtab_lo` / `sqtab_hi` (at `$7800`/`$7A00` absolute). Zero `mul_8x8`
-  callers remain on the ladder hot path — the primitive is now only used
-  by `reu_mul_init`'s one-time table build (no secret inputs reach it) —
-  so Phase 1 contributes ~0 jiffies to the scalarmult budget despite
-  the ~2x cycle growth (~107 cy vs ~50 cy per call).
+  `sqtab_lo` / `sqtab_hi` (at `$7800`/`$7A00` absolute).
+
+  **Where the body runs — profile-dependent since issue #72 (L30d).**
+
+  - *Default and `lib-x25519-1764` profiles:* zero `ct_mul_8x8` callers
+    remain on the ladder hot path. The primitive's only in-library
+    caller is `reu_mul_init`'s one-time table build, which enumerates
+    the full public `(a, b)` product space at boot — no secret input
+    reaches it, and it runs outside the network-observable window. So
+    Phase 1 contributes ~0 jiffies to the scalarmult budget despite the
+    ~2x cycle growth (~107 cy vs ~50 cy per call), and L1/L2 are, for
+    these profiles, retained canonical §8.3 shape rather than an active
+    defence. (The body is also callable at runtime by a deferring
+    sibling in an owner-mode composed build — see `docs/LIBRARY.md`
+    §4.10 rule 3 — in which case its CT posture is that sibling's to
+    rely on, not this library's.)
+  - *`X25519_ONCHIP_MUL` profile:* `ct_mul_8x8` **is** the hot path.
+    The generator calls it 1,024 times per `fe25519_mul` with both
+    operands secret — `a = src1[i]` baked into the two immediate
+    operands, `b = src2[j]` passed in Y — for ~1,031 muls per
+    scalarmult. **L1 and L2 are load-bearing under the network threat
+    model in this profile.** A regression in either (a reintroduced
+    `bcs` sign branch, a `beq` on the zero sum) would leak per-byte
+    field-element structure directly into ladder-step timing, at the
+    highest exposure multiple anywhere in the library. The body's
+    fixed cycle count is currently established by inspection (the
+    straight-line sequence above contains no branch at all) plus
+    `tools/ct_mul_brute_check.py`'s exhaustive functional check; a
+    dedicated per-proc cycle guard is a recorded follow-up (see
+    Follow-ups below), not yet in the suite.
 
   **§8.3 adoption (issue #14):** the L1/L2-fixed body was reorganized to
   the canonical sum-first SMC-baked `ct_mul_8x8` shape — byte-identical
@@ -535,6 +589,109 @@ still relevant.
   entry, neither of which was separately scoped in the original
   Phase 7 budget. RFC 7748 vector 1 PASS.
 
+- **On-chip generator audit (issue #72) — L30a-d in `.proc
+  fe25519_mul`, `X25519_ONCHIP_MUL` profile only.** Under the profile,
+  the per-outer-row REU DMA FETCH is replaced by a generator that
+  computes the 32 `mul_dma_lo/hi` entries the four unrolled accumulate
+  bodies will read (`src/fe25519.s:658-702`). This is the profile's
+  only new secret-data code; the accumulate bodies, the reduction, and
+  the ladder are byte-identical to the default build.
+
+  **Why it could not be ported mechanically.** The concept comes from
+  c64-nist-curves' `FP_ONCHIP_MUL` (`og_common`), which is non-CT by
+  design and acceptable there because ECDSA *verify* runs on public
+  inputs only. x25519 has no public-input operation: every row value
+  and every generated index is ladder state. Each of `og_common`'s
+  four shortcuts was therefore replaced — the zero-byte `beq` skip
+  deleted outright (L30a), the diff-sign and sum-page branches taken
+  from the canonical branchless/SMC body instead (L1/L2, now
+  load-bearing — L30d), and the unaligned staged-buffer load replaced
+  by an aligned SMC-patched load (L30b). The full disposition table is
+  in `docs/design/issue_72_onchip_mul.md` §2.
+
+  **CT argument.**
+
+  1. **Loop shape (L30a).** Exactly 32 iterations per outer-i, always.
+     The only branch is `dex / bpl @gen_row` on X, which is the public
+     index `j`. X does not survive `ct_mul_8x8` (it clobbers A/X/Y), so
+     `j` is parked in `fe_mul_j` across the call — public data in a ZP
+     slot that is free here (only `fe25519_sqr`'s inner loop uses it,
+     and mul/sqr never nest).
+  2. **Secret-indexed loads (L30b).** `b = src2[j]` is read through two
+     SMC-patched `ldy mul_src2_buf,x` sites, patched from
+     `fe25519_src2` at proc entry in the same block that patches
+     `@ldy_src2_a..d`. Absolute-indexed, so the CLAUDE.md "no `(zp),y`
+     on secret operands" rule holds; page-cross safety rides on the
+     same 32-byte caller-buffer alignment contract the four body sites
+     already depend on. Two sites rather than one-plus-a-scratch-byte:
+     it costs 4 cycles per product and allocates no new ZP or data.
+  3. **Secret-indexed stores (L30c).** The products land at
+     `mul_dma_lo,y` / `mul_dma_hi,y` with Y = the secret `b`. Both
+     buffers are page-aligned, so the store is a flat 5 cycles for
+     every Y. Issue #72 promotes that alignment from an indirect
+     assertion via the `LIB_SHARED_REU_MUL_STAGE` aliases in
+     `src/reu_config.s` to a hard `.assert` at the definition site,
+     `src/data.s:150-152` — the same alignment the eight `adc
+     mul_dma_*,y` consumer sites have always relied on, now stated
+     where the buffers are declared.
+  4. **Multiply body (L30d).** Fixed-cycle for all inputs; see the
+     rewritten Phase 1 landing note above for the promotion and what
+     it makes load-bearing.
+  5. **Duplicates.** Repeated values in `src2` regenerate and rewrite
+     the same entry. The write is idempotent and the product count
+     stays 32 — the generator does not deduplicate, because
+     deduplicating would make row time depend on the secret multiset
+     shape of `src2`.
+
+  **L25 restated under sparse generation.** L25 (the `fe25519_mul`
+  outer-i zero-skip) was closed on the invariant "**DMA row 0 is
+  all-zero**" — `reu_mul_init` writes an all-zeros row at offset 0, so
+  when `src1[i] == 0` every `adc mul_dma_*,y` adds 0 with no carry and
+  the unconditional body is a functional no-op. Under the onchip
+  profile no DMA row exists, and the invariant becomes:
+
+  > **every generated entry of the `a == 0` row is zero.**
+
+  This holds because the generator computes `0 * b = 0` for all 32
+  entries unconditionally. The `a == 0` case must **not** be
+  short-circuited: doing so would be a secret-dependent branch *and*
+  would leave the previous row's entries live in `mul_dma_lo/hi` for
+  the bodies to read.
+
+  **L12-L15 acquire no new obligation.** Those four closures depend on
+  reads at `y == 0` returning zero. Index 0 is in the generated set
+  iff `src2` contains a zero byte, and only generated indices are ever
+  read — the eight `adc mul_dma_*,y` sites across the four unrolled
+  bodies are the complete consumer set, and they index by the same
+  `src2[j]` values the generator just wrote. A read at `y == 0`
+  therefore implies index 0 was generated on this row, with value
+  `src1[i] * 0 = 0`. `mul_dma_carry` is neither generated nor read
+  under the profile: it is consumed only by `fe25519_sqr`'s DMA path,
+  which the profile's forced `SQR_DMA_K = 0` removes.
+
+  **SMC residue (recorded for completeness, not a timing channel).**
+  `a = src1[i]` — a secret byte — is baked into `smc_sum_a_imm+1` and
+  `smc_diff_a_imm+1` and persists in code memory between calls, until
+  the next row overwrites it. It is not a timing leak: both are
+  immediate operands, and `adc #imm` / `sbc #imm` cost the same 2
+  cycles for every value. This is a memory-residue observation,
+  outside the network-timing threat model this document scopes, and it
+  is not new in kind — the default profile leaves the same residue via
+  `reu_mul_init`'s per-row bake, and the library does not scrub
+  secrets from ZP or its working buffers between calls in any profile.
+  A caller needing post-call hygiene must zero the library's working
+  set itself.
+
+  **Validation status.** VICE-only for this arc, and the CT gate
+  specific to this path is still outstanding: an onchip-profile
+  `fe25519_mul` cycle-spread guard on the `test_ct_square_cycles.py`
+  pattern (structurally distinct secret inputs — all-zeros, all-`$FF`,
+  sparse, dense, duplicate-heavy `src2` — held to the ≤1 jif
+  threshold) is specified in `docs/design/issue_72_onchip_mul.md` §6
+  and has not yet landed. Measured cycle cost for the profile is
+  **(VICE measurement pending)**. Hardware A/B at 16/48/64 MHz remains
+  a deferred merge gate for any wall-clock claim.
+
 ### Follow-ups
 
 **Queued performance-recovery options** (Phase 6 CT-clean landing
@@ -593,6 +750,29 @@ perf cost is the price paid for that guarantee):
   timer (e.g. CIA timer-A polled directly, or VICE binary-monitor
   cycle stamps). Open follow-up — does not block CT certification.
 
+**Open for the `X25519_ONCHIP_MUL` profile (issue #72):**
+
+- **CT cycle guard for the onchip `fe25519_mul`.** Same shape as
+  `tools/test_ct_square_cycles.py`: ≤1 jif spread across structurally
+  distinct secret inputs (all-zeros, all-`$FF`, sparse, dense,
+  duplicate-heavy `src2` — the last one specifically exercising the
+  no-deduplication property of L30a). Specified in
+  `docs/design/issue_72_onchip_mul.md` §6, not yet landed.
+- **Per-proc cycle guard for `ct_mul_8x8` itself.** Warranted now that
+  L30d puts the body on the hot path with secret operands; today its
+  fixed-cycle property is held by inspection plus the functional
+  exhaustive check in `tools/ct_mul_brute_check.py`.
+- **`tools/ct_mul_brute_check.py` shim audit.** The sibling
+  c64-nist-curves tool of the same name was silently broken from its
+  §8.3 adoption onward — its `$C000` shim still used the pre-§8.3
+  `A = a` / `X = b` convention. Confirm ours bakes the SMC immediates
+  and passes `b` in Y before leaning on it as an L30d gate.
+- **Runtime no-REU proof.** Link-level absence of the REU symbols
+  (`make lib-x25519-onchip` + profile-aware `lib-verify`) is necessary
+  but not sufficient — a single REU status poll would hang a stock
+  machine. The differential suite must also pass in a VICE instance
+  with no REU attached.
+
 ### Class legend
 
 - **branch**: secret-dependent conditional branch (direction depends on
@@ -604,6 +784,14 @@ perf cost is the price paid for that guarantee):
   at the moment — but the pattern is fragile under reassembly and any
   future base change. Flagged `high` because addressing the same class
   of leak systematically is cheaper than doing it case by case.
+  The class also covers secret-indexed **absolute** `abs,x` / `abs,y`
+  accesses (L30b/L30c), whose freedom from the same penalty rests on
+  the library's page-alignment and 32-byte buffer-alignment contracts
+  rather than on the addressing mode itself.
+- **promotion**: no code change — an existing primitive moves from a
+  boot-only or public-input context onto the secret-data hot path, so
+  its already-closed leak entries become load-bearing under the
+  network threat model (L30d).
 
 ### Severity
 
@@ -704,6 +892,19 @@ perf cost is the price paid for that guarantee):
   budget — attributable to L25-L29 closures plus the PR #36
   defensive REU init).
 
+- **On-chip generator audit (issue #72, v0.8-prep)** — catalogue
+  **L30a-d** in `.proc fe25519_mul`, scoped to the
+  `X25519_ONCHIP_MUL` profile. No leak was fixed: the entries record
+  new hot-path secret-data surface that is CT-clean by construction,
+  plus the promotion of `ct_mul_8x8` from boot-only to hot-path
+  (L30d), which makes the Phase 1 L1/L2 closures load-bearing under
+  the network threat model for the first time. Supporting change in
+  `src/data.s`: the `mul_dma_lo/hi/carry` page alignment gains a hard
+  `.assert` at the definition site. The L25 invariant is restated for
+  sparse generation and L12-L15 are shown to acquire no new
+  obligation; see the "On-chip generator audit" landing notes above.
+  Profile-specific CT cycle guards are open follow-ups.
+
 Issue [#20](https://github.com/JC-000/c64-x25519/issues/20) was the
 origin report for L1-L15. L16-L22 were discovered during the Phase 3
 audit. L25-L29 were catalogued in the v0.4.0 sweep and closed in
@@ -732,6 +933,7 @@ VICE warp, VIC-II blanked). Measured via `python3 tools/bench_x25519.py`.
 | Post-ladder/cswap audit (L24) | 10,739 | +1,219 (+12.8 %) | flat; branchless bit-extract, 3-run median (measured on ladder branch alone) |
 | **Post-both audits (L23+L24)** | **~12,070** | **~+2,550 (~+26.8 %)** | **L1–L24 fixed; combined bench pending post-merge remeasurement** |
 | Post-Phase 7 (L25-L29)         | **see note** | **see note**            | **L1-L29 fixed; bench instrumentation broken post-PR-#35 (jiffy clock masked); per-proc CT spreads 0.005-0.01 jif** |
+| `X25519_ONCHIP_MUL` (L30a-d)   | (VICE measurement pending) | (VICE measurement pending) | Separate build profile, not a state of the default build — slower at stock 1 MHz by construction (the generator replaces DMA the 6502 does not pay for); the point of the profile is turbo hosts, where the REU row-fetch wall-clock floor does not scale with CPU clock. Wall-clock claims gated on hardware A/B (16/48/64 MHz) |
 
 ### Regression budget (original plan) vs. actual (through L29)
 
@@ -776,7 +978,12 @@ caller state pollution that surface when the library is composed with
 other REU consumers (e.g. sibling crypto libraries, NIC drivers). They
 are documented here because the investigation that found them ran
 alongside the CT audit work and used the same `tools/test_*` harness
-discipline. They do **not** affect the L1–L24 timing-leak posture.
+discipline. They do **not** affect the L1–L30 timing-leak posture.
+
+**Profile scope (issue #72).** S2 and S3 are REU-state defences, so
+their applicability is profile-dependent — see the amendment notes
+under each. S1 (IRQ masking) and S4 (RFC 7748 decode) are
+profile-independent and apply unchanged to every build.
 
 ### S1 — IRQ-during-call defence (PR #35, landed 2026-05-06)
 
@@ -852,6 +1059,42 @@ registers is already harmless. The minimal repro for the bug used
 `reu_reu_lo=$5A` alone (5 bytes of injected pre-state); see issue
 investigation report.
 
+**Amendment — `X25519_ONCHIP_MUL` profile (issue #72).** Both the S2
+block at `x25519_scalarmult` entry and the H2 mirrors of it at the
+`fe25519_mul` / `fe25519_sqr` / `fe25519_mul_a24` entry points are
+**gated out** under the onchip profile (`src/x25519.s:105-107`,
+`src/fe25519.s:584-594`, `:1168`, `:1875`). Two independent reasons,
+both load-bearing:
+
+1. **The defence is vacuous there.** S2 protects an in-flight DMA from
+   caller-set register residue. The profile issues no DMA at all —
+   `reu_clear_wide`'s CPU clear stays, its autoload-restore tail is
+   gated out (`src/x25519_init.s:551-571`), and `fe25519_mul`'s per-row
+   fetch is replaced by the on-chip generator. There is no transfer
+   for residue to corrupt.
+2. **The defence would be actively harmful there.** S2 works by
+   *writing* `$DF04` and `$DF0A`. On a REU-less host `$DF00-$DFFF` is
+   not unconditionally free I/O2 space — GeoRAM and Ethernet
+   cartridges decode it — so an unconditional write would poke a
+   sibling device's registers. Keeping the block under a profile gate
+   is what makes "runs on a stock expansion-less C64" true in the
+   strong sense, and it is why the profile's acceptance gate requires
+   the differential suite to pass in a VICE instance with **no REU
+   attached**, not merely to link without the REU symbols.
+
+The onchip profile is correspondingly out of scope for
+`tools/test_issue33_adversarial.py`'s `reu_low_dirty` /
+`reu_addr_ctrl_dirty` / `reu_full_dirty` cases: those inject REU
+register pre-state, which the profile neither reads nor writes. The
+`irq_during_call`, `nmi_corrupts_zp40`, and clean/baseline cases stay
+in scope unchanged — S1 and the ZP-ownership contract are
+profile-independent.
+
+**CT impact of the gating: none.** The removed stores were
+unconditional and ran before any secret-dependent code, so deleting
+them changes no branch and no secret-indexed access. The L30a-d
+argument does not depend on them.
+
 ### S3 — Autoload-latch invariant in `reu_fetch_doubled_row` (c64-lib-contract issue #15, landed PR #61)
 
 PR #61 SMC-patches `reu_fetch_doubled_row`'s first 512-byte DMA to
@@ -920,6 +1163,18 @@ depends on which inner iteration corrupted the fetch) is
 indistinguishable from a CT bias if a future regression bypassed
 both the S3 invariant and the test_fe_sqr_then_mul.py guard — hence
 co-located with S1/S2 here.
+
+**Amendment — `X25519_ONCHIP_MUL` profile (issue #72).** Same
+disposition as `lib-x25519-1764`, reached by the same mechanism: the
+profile forces `SQR_DMA_K = 0`, so the entire doubled-fetch dispatch
+— and with it the autoload-latch invariant this section documents —
+is gated out. The profile goes further and removes the REU path
+altogether: `reu_fetch_mul_row` itself is gated out
+(`src/x25519_init.s:355-376`), along with `reu_clear_wide`'s
+autoload-restore tail (`:551-571`; the CPU clear stays). The S3
+invariant is therefore vacuously satisfied under the profile, and
+`tools/test_fe_sqr_then_mul.py` — while still a valid correctness
+test there — no longer exercises the bug class it was written for.
 
 **Design doc:** [`docs/design/issue_15_smc_patch_doubled_fetch.md`](design/issue_15_smc_patch_doubled_fetch.md).
 

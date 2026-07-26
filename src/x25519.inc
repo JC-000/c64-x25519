@@ -199,7 +199,8 @@
 ; ZERO-PAGE USAGE (the library OWNS these slots while running)
 ; ----------------------------------------------------------------------------
 ;
-; Live ZP surface (post-Phase-7, L1-L29 CT-clean): 85 bytes at
+; Live ZP surface (post-Phase-7, L1-L30 CT-clean; L30a-d are
+; X25519_ONCHIP_MUL-profile entries): 85 bytes at
 ;   $14-$16, $1C, $1E-$2A, $2C-$2F, $40-$7F.
 ;
 ;   $14      fe_cmp_mask          (Phase 7: fe_cmp_p_ct $00/$FF mask)
@@ -230,7 +231,8 @@
 ;
 ; CT certification: with Phase 7 landed, every catalogued
 ; secret-data-dependent branch and (zp),y page-cross leak
-; (L1 through L29) in the X25519 library is fixed. The library is
+; (L1 through L29, plus the L30a-d onchip-profile entries added by
+; issue #72) in the X25519 library is fixed. The library is
 ; CT-clean across the entire fe25519_* / mul_8x8 / x25519_scalarmult
 ; surface for network-facing use. See docs/CT_ANALYSIS.md for the
 ; full leak catalogue and Phase 7 closure mechanism.
