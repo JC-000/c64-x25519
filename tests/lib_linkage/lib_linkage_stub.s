@@ -54,7 +54,10 @@ start:
 ; the relocation entries for each address, which is what ld65 needs
 ; to see to resolve the archive members.
 public_refs:
-        .addr sqtab_init, mul_tables_init, reu_mul_init
+        .addr sqtab_init, mul_tables_init
+.if ::X25519_ONCHIP_MUL = 0
+        .addr reu_mul_init
+.endif
         .addr x25519_clamp, x25519_scalarmult, x25519_base
         .addr fe25519_add, fe25519_sub, fe25519_mul, fe25519_sqr
         .addr fe25519_copy, fe25519_zero, fe25519_one, fe25519_cswap
@@ -81,6 +84,7 @@ public_zp_refs:
 
 ; REU layout equates from src/reu_config.s. .word reference forces ld65
 ; to pull reu_config.o out of the archive.
+.if ::X25519_ONCHIP_MUL = 0
 .import X25519_REU_BANK, X25519_REU_OFFSET
 ; c64-lib-contract §8.2 placement equates (v0.7-prep+).
 .import LIB_SHARED_REU_MUL_BANK, LIB_SHARED_REU_MUL_OFFSET
@@ -92,6 +96,7 @@ public_reu_refs:
         .word LIB_SHARED_REU_MUL_BANK, LIB_SHARED_REU_MUL_OFFSET
         .word LIB_SHARED_REU_MUL_BANKS_USED
         .word X25519_REU_BANK_DOUBLED, X25519_REU_BANK_CARRY
+.endif ; X25519_ONCHIP_MUL = 0 (issue #72 — REU config surface)
 
 ; Manifest aggregate equates (c64-lib-contract §5). Same .word reference
 ; trick to force ld65 archive-member resolution of lib_version.o.
@@ -117,6 +122,7 @@ public_manifest_refs:
 ; in the lib-verify shell target (grep against stub.labels), which
 ; doesn't need them in a stub.o-side import to resolve.
 
+.if ::X25519_ONCHIP_MUL = 0
 ; SPEC §8.2 canonical entry point (v0.7-prep+).
 .import reu_mul_tables_init
 ; SPEC §8.2 SMC patch hook (v0.7-prep+); unlocks the #15 follow-up.
@@ -124,3 +130,4 @@ public_manifest_refs:
 public_spec_82_refs:
         .addr reu_mul_tables_init
         .addr reu_fetch_mul_row_bank_patch
+.endif ; X25519_ONCHIP_MUL = 0 (issue #72 — §8.2 surface absent in onchip)

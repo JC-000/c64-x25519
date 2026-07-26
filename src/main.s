@@ -18,7 +18,9 @@
 .import sqtab_init
 
 ; --- Imports from x25519_init.s ---
+.if ::X25519_ONCHIP_MUL = 0
 .import reu_mul_init
+.endif
 
 ; --- Exports defined in this file ---
 .export input_buffer
@@ -84,8 +86,12 @@ start:
         ; Initialize quarter-square table
         jsr sqtab_init
 
+.if ::X25519_ONCHIP_MUL = 0
         ; Initialize REU multiplication tables
         jsr reu_mul_init
+.endif
+        ; (Onchip profile boots with sqtab_init only — no REU init,
+        ;  no REU present required. Issue #72.)
 
         ; display ready message
         lda #<(ready_msg)

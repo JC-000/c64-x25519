@@ -50,6 +50,14 @@
 .ifndef REU_CONFIG_S_INCLUDED
 REU_CONFIG_S_INCLUDED = 1
 
+; Onchip-profile flag (issue #72). This file is both .include'd via
+; constants.s AND assembled standalone as reu_config.o, so it needs
+; its own .ifndef default for the gates below (same composition idiom
+; as every other override in this file).
+.ifndef X25519_ONCHIP_MUL
+  X25519_ONCHIP_MUL = 0
+.endif
+
 .ifndef X25519_REU_BANK
   X25519_REU_BANK = $00
 .endif
@@ -136,6 +144,9 @@ LIB_SHARED_REU_MUL_BANKS_USED = (1 .shl LIB_SHARED_REU_MUL_BANK) | (1 .shl (LIB_
 ; standalone build is bit-identical. The `:= reu_init_a` form is a
 ; link-time alias (not a value-baked equate) so neither symbol must be
 ; resolved at the time constants.s is parsed.
+.if ::X25519_ONCHIP_MUL = 0
+; (Aliases gated under onchip, issue #72: reu_init_a/b live inside the
+;  gated-out reu_mul_init proc, so a link-time alias would dangle.)
 .ifndef LIB_SHARED_REU_MUL_ZP_INIT_A
   .global reu_init_a
   LIB_SHARED_REU_MUL_ZP_INIT_A := reu_init_a
@@ -143,6 +154,7 @@ LIB_SHARED_REU_MUL_BANKS_USED = (1 .shl LIB_SHARED_REU_MUL_BANK) | (1 .shl (LIB_
 .ifndef LIB_SHARED_REU_MUL_ZP_INIT_B
   .global reu_init_b
   LIB_SHARED_REU_MUL_ZP_INIT_B := reu_init_b
+.endif
 .endif
 
 ; --- SPEC §8.2 staging-buffer contract ---
@@ -184,7 +196,12 @@ LIB_SHARED_REU_MUL_BANKS_USED = (1 .shl LIB_SHARED_REU_MUL_BANK) | (1 .shl (LIB_
 .export X25519_REU_BANK_DOUBLED: abs
 .export X25519_REU_BANK_CARRY:   abs
 
-; SPEC §8.2 canonical equates.
+.if ::X25519_ONCHIP_MUL = 0
+; SPEC §8.2 canonical equates. Whole §8.2 surface gated out under the
+; onchip profile (issue #72): the build neither provides nor consumes
+; the canonical REU mul table, so exporting its bank/offset/staging
+; contract would advertise a shape that does not exist in this build
+; (LIB_X25519_REU_BANKS_USED = 0 is the authoritative claim).
 .export LIB_SHARED_REU_MUL_BANK:        abs
 .export LIB_SHARED_REU_MUL_OFFSET:      abs
 .export LIB_SHARED_REU_MUL_BANKS_USED:  abs
@@ -199,6 +216,7 @@ LIB_SHARED_REU_MUL_BANKS_USED = (1 .shl LIB_SHARED_REU_MUL_BANK) | (1 .shl (LIB_
 .export LIB_SHARED_REU_MUL_ZP_INIT_B
 .export LIB_SHARED_REU_MUL_STAGE_LO
 .export LIB_SHARED_REU_MUL_STAGE_HI
+.endif ; X25519_ONCHIP_MUL = 0 (issue #72 — §8.2 export surface)
 
 .endif ; REU_CONFIG_NO_EXPORTS
 

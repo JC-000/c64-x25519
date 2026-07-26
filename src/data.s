@@ -140,6 +140,17 @@ mul_dma_hi:
 mul_dma_carry:
         .res 256, 0           ; DMA target: 17th-bit carry of 2*a*b (0 or 1)
 
+; Page alignment of mul_dma_lo/hi is a CT invariant, not a perf hint:
+; the eight `adc mul_dma_*,y` sites in fe25519_mul (and the sqr DMA
+; bodies) index with secret Y over the full 0..255 range — an
+; unaligned base would add a data-dependent page-cross cycle. It was
+; previously asserted only indirectly via the LIB_SHARED_REU_MUL_STAGE
+; aliases in src/reu_config.s; issue #72 makes it explicit here (the
+; onchip generator also stores through abs,Y at secret indices).
+.assert (mul_dma_lo & $00FF) = 0, lderror, "mul_dma_lo must be page-aligned (CT invariant)"
+.assert (mul_dma_hi & $00FF) = 0, lderror, "mul_dma_hi must be page-aligned (CT invariant)"
+.assert (mul_dma_carry & $00FF) = 0, lderror, "mul_dma_carry must be page-aligned (CT invariant)"
+
 ; (sqtab2_lo / sqtab2_hi removed after Phase 2: the branchless CT
 ;  quarter-square path in fe25519_sqr no longer needs a second
 ;  negative-diff table — ~512 bytes of binary reclaimed.)

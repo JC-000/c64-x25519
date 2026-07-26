@@ -25,6 +25,14 @@
 .ifndef CONSTANTS_S_INCLUDED
 CONSTANTS_S_INCLUDED = 1
 
+; --- issue #72: on-chip multiply build profile ---
+; Defined FIRST: reu_config.s (included just below) and everything
+; after it gate on this symbol. Full description at the SQR_DMA_K
+; block further down.
+.ifndef X25519_ONCHIP_MUL
+  X25519_ONCHIP_MUL = 0
+.endif
+
 ; Public REU layout configuration (X25519_REU_BANK / X25519_REU_OFFSET).
 ; The library uses six contiguous REU banks starting at X25519_REU_BANK
 ; (default 0). See src/reu_config.s and c64-lib-contract SPEC §3.
@@ -134,9 +142,32 @@ ZP_CONFIG_NO_EXPORTS = 1
 fe_wide         = $40
 .assert (fe_wide & $FF00) = 0, lderror, "fe_wide must be in zero page (CT/SMC invariant)"
 
+; --- issue #72: on-chip multiply build profile ---
+; X25519_ONCHIP_MUL=1 replaces fe25519_mul's per-row REU DMA fetch with
+; a constant-time on-chip row generator (products via the §8.3
+; ct_mul_8x8 body) and forces SQR_DMA_K=0 so fe25519_sqr runs the
+; REU-free mult66 path. The resulting build issues NO REU traffic at
+; all: no banks claimed, no reu_mul_init required, runs on a stock
+; expansion-less C64. Slower at stock 1 MHz (the DMA tables exist
+; because they win there); the profile exists for turbo hosts, where
+; REU DMA is pinned to ~1 MHz bus rate and becomes a wall-clock floor
+; (see docs/design/issue_72_onchip_mul.md and issue #72).
+; (Symbol itself is defined at the top of this file, before the
+;  reu_config.s include, so every gated region sees it.)
+
 ; --- fe25519_sqr hybrid DMA threshold (8f+8g) ---
+; Under X25519_ONCHIP_MUL the profile forces K=0: the pre-doubled DMA
+; tables cannot exist without an REU. A caller-supplied nonzero K is a
+; configuration error, hard-failed below rather than silently ignored.
 .ifndef SQR_DMA_K
-  SQR_DMA_K        = 22          ; outer i < K uses pre-doubled DMA tables
+  .if ::X25519_ONCHIP_MUL
+    SQR_DMA_K      = 0           ; forced: no REU, no doubled tables
+  .else
+    SQR_DMA_K      = 22          ; outer i < K uses pre-doubled DMA tables
+  .endif
+.endif
+.if ::X25519_ONCHIP_MUL
+.assert SQR_DMA_K = 0, error, "X25519_ONCHIP_MUL requires SQR_DMA_K=0 (no REU, no pre-doubled tables)"
 .endif
 
 ; --- c64-lib-contract §8.1: shared 8x8 quarter-square multiply table ---
