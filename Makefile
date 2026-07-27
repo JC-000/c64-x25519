@@ -45,7 +45,7 @@ CA65_OBJS = $(BUILD_DIR)/main.o $(LIB_OBJS)
 LIBX25519 = $(LIB_DIR)/libx25519.a
 
 .PHONY: all clean test test-slow test-ref test-vice lib lib-verify dist \
-        bench-record perf-diff lib-x25519-1764
+        bench-record perf-diff lib-x25519-1764 lib-x25519-onchip
 
 all: $(PRG)
 
@@ -164,36 +164,60 @@ LIB_VERIFY_DIR = $(BUILD_DIR)/lib_verify
 LIB_VERIFY_PRG = $(LIB_VERIFY_DIR)/lib_linkage_stub.prg
 LIB_VERIFY_STUB = tests/lib_linkage/lib_linkage_stub.s
 
+# Profile selector for lib-verify's symbol expectations. The onchip
+# profile (issue #72) ships no REU surface, so its expected-symbol set
+# both DROPS the reu_* / §8.2 names and ASSERTS their absence (a
+# present-but-should-be-gone symbol is as much a bug as a missing one).
+# Default `make lib-verify` behavior is unchanged.
+X25519_PROFILE ?= default
+
+LIB_VERIFY_SYMS_COMMON = x25519_clamp x25519_scalarmult x25519_base \
+	fe25519_add fe25519_sub fe25519_mul fe25519_sqr \
+	sqtab_init \
+	x25_scalar x25_u x25_result \
+	vic_blank vic_unblank bench_start bench_stop \
+	bench_cycles_start bench_cycles_stop bench_cycles \
+	LIB_VERSION_MAJOR LIB_VERSION_MINOR LIB_VERSION_PATCH \
+	LIB_ABI_VERSION \
+	fe25519_src1 fe25519_src2 fe25519_dst \
+	fe_carry poly_carry \
+	LIB_X25519_ZP_USAGE_BYTES LIB_X25519_REU_BANKS_USED \
+	LIB_X25519_RESIDENT_BYTES LIB_X25519_COLD_BYTES \
+	LIB_X25519_SHARED_PRIMITIVES \
+	LIB_SHARED_PRIMITIVES_SQTAB LIB_SHARED_PRIMITIVES_REU_MUL \
+	LIB_SHARED_PRIMITIVES_CT_MUL_8X8 \
+	LIB_PRECALC_sqtab_SIZE \
+	mul_tables_init
+
+LIB_VERIFY_SYMS_REU = reu_mul_init reu_mul_tables_init \
+	reu_fetch_mul_row_bank_patch \
+	X25519_REU_BANK X25519_REU_OFFSET \
+	X25519_REU_BANK_DOUBLED X25519_REU_BANK_CARRY \
+	LIB_SHARED_REU_MUL_BANK LIB_SHARED_REU_MUL_OFFSET \
+	LIB_SHARED_REU_MUL_BANKS_USED \
+	LIB_PRECALC_reu_mul_SIZE
+
+ifeq ($(X25519_PROFILE),onchip)
+LIB_VERIFY_SYMS_EXPECT = $(LIB_VERIFY_SYMS_COMMON)
+LIB_VERIFY_SYMS_ABSENT = $(LIB_VERIFY_SYMS_REU)
+else
+LIB_VERIFY_SYMS_EXPECT = $(LIB_VERIFY_SYMS_COMMON) $(LIB_VERIFY_SYMS_REU)
+LIB_VERIFY_SYMS_ABSENT =
+endif
+
 lib-verify: lib $(LIB_VERIFY_PRG)
 	@set -e; \
 	test -s $(LIB_VERIFY_PRG) || (echo "FAIL: $(LIB_VERIFY_PRG) is empty" && exit 1); \
-	for sym in x25519_clamp x25519_scalarmult x25519_base \
-	           fe25519_add fe25519_sub fe25519_mul fe25519_sqr \
-	           sqtab_init reu_mul_init reu_mul_tables_init \
-	           reu_fetch_mul_row_bank_patch \
-	           x25_scalar x25_u x25_result \
-	           vic_blank vic_unblank bench_start bench_stop \
-	           bench_cycles_start bench_cycles_stop bench_cycles \
-	           LIB_VERSION_MAJOR LIB_VERSION_MINOR LIB_VERSION_PATCH \
-	           LIB_ABI_VERSION \
-	           fe25519_src1 fe25519_src2 fe25519_dst \
-	           fe_carry poly_carry \
-	           X25519_REU_BANK X25519_REU_OFFSET \
-	           X25519_REU_BANK_DOUBLED X25519_REU_BANK_CARRY \
-	           LIB_SHARED_REU_MUL_BANK LIB_SHARED_REU_MUL_OFFSET \
-	           LIB_SHARED_REU_MUL_BANKS_USED \
-	           LIB_X25519_ZP_USAGE_BYTES LIB_X25519_REU_BANKS_USED \
-	           LIB_X25519_RESIDENT_BYTES LIB_X25519_COLD_BYTES \
-	           LIB_X25519_SHARED_PRIMITIVES \
-	           LIB_SHARED_PRIMITIVES_SQTAB LIB_SHARED_PRIMITIVES_REU_MUL \
-	           LIB_SHARED_PRIMITIVES_CT_MUL_8X8 \
-	           LIB_PRECALC_sqtab_SIZE LIB_PRECALC_reu_mul_SIZE \
-	           mul_tables_init; do \
+	for sym in $(LIB_VERIFY_SYMS_EXPECT); do \
 	  grep -q "\\b$$sym\\b" $(LIB_VERIFY_DIR)/stub.labels \
 	    || (echo "FAIL: expected symbol $$sym not in linked binary" && exit 1); \
 	done; \
+	for sym in $(LIB_VERIFY_SYMS_ABSENT); do \
+	  ! grep -q "\\b$$sym\\b" $(LIB_VERIFY_DIR)/stub.labels \
+	    || (echo "FAIL: symbol $$sym present but must be gated out in $(X25519_PROFILE) profile" && exit 1); \
+	done; \
 	bytes=$$(wc -c < $(LIB_VERIFY_PRG)); \
-	echo "OK: $(LIB_VERIFY_PRG) is $$bytes bytes, all expected symbols present"
+	echo "OK: $(LIB_VERIFY_PRG) is $$bytes bytes, $(X25519_PROFILE)-profile symbol surface verified"
 
 # --- v0.6: 1764-targeted build variant (Group B) -----------------------------
 #
@@ -216,12 +240,51 @@ lib-verify: lib $(LIB_VERIFY_PRG)
 # via $(CA65FLAGS), and to lib_version.o + x25519_init.o via the
 # `.if SQR_DMA_K > 0` guards in those translation units.
 
+# --- issue #72: on-chip multiply variant (turbo hosts / no REU) --------------
+#
+# `make lib-x25519-onchip` produces the X25519_ONCHIP_MUL profile:
+# fe25519_mul generates product rows on-chip via the CT §8.3
+# ct_mul_8x8 body (constant-time, unlike nist-curves' FP_ONCHIP_MUL
+# generator — x25519 has no public-input operation), SQR_DMA_K is
+# forced to 0 (mult66 sqr path), and the archive contains no REU code
+# or claims at all: LIB_X25519_REU_BANKS_USED = 0, no reu_mul_init,
+# boot obligation is sqtab_init only. Runs on a stock expansion-less
+# C64.
+#
+# Trade-off: slower at stock 1 MHz (DMA tables win there); on turbo
+# hosts the REU row-fetch wall-clock floor (~1 MHz bus rate regardless
+# of CPU clock) disappears. See docs/design/issue_72_onchip_mul.md.
+# Wall-clock claims require the hardware A/B gate (16/48/64 MHz) —
+# VICE numbers are cycle-exact at 1 MHz only.
+
+lib-x25519-onchip:
+	@echo "=== Building lib-x25519-onchip (issue #72: X25519_ONCHIP_MUL=1, no REU) ==="
+	rm -rf build-onchip
+	$(MAKE) BUILD_DIR=build-onchip LIB_DIR=build-onchip/lib \
+	        CA65FLAGS="-D X25519_ONCHIP_MUL=1" \
+	        X25519_PROFILE=onchip \
+	        lib lib-verify
+	@mkdir -p build/lib
+	@cp build-onchip/lib/libx25519.a build/lib/libx25519-onchip.a
+	@echo "SPEC §6 archive: build/lib/libx25519-onchip.a"
+	@echo "(header: the canonical build/lib/x25519.inc serves both profiles —"
+	@echo " consumers of this archive assemble with -D X25519_ONCHIP_MUL=1)"
+	@echo
+	@echo "Manifest equates for the onchip variant:"
+	@grep "LIB_X25519_\|LIB_VERSION_" build-onchip/lib_verify/stub.labels | sort
+	@echo
+	@echo "Segment sizes (lib .o):"
+	@od65 --dump-segsize build-onchip/lib/x25519_init.o build-onchip/lib/fe25519.o build-onchip/lib/x25519.o build-onchip/lib/data.o build-onchip/lib/mul_8x8.o build-onchip/lib/util.o 2>&1 | awk '/^build-onchip|CODE:|DATA:|LIB_X25519_INIT_CODE:/'
+
 lib-x25519-1764:
 	@echo "=== Building lib-x25519-1764 (Group B: SQR_DMA_K=0, banks 0,1 only) ==="
 	rm -rf build-1764
 	$(MAKE) BUILD_DIR=build-1764 LIB_DIR=build-1764/lib \
 	        CA65FLAGS="-D SQR_DMA_K=0" \
 	        lib lib-verify
+	@mkdir -p build/lib
+	@cp build-1764/lib/libx25519.a build/lib/libx25519-1764.a
+	@echo "SPEC §6 archive: build/lib/libx25519-1764.a"
 	@echo
 	@echo "Manifest equates for the 1764 variant:"
 	@grep "LIB_X25519_\|LIB_VERSION_" build-1764/lib_verify/stub.labels | sort
@@ -274,7 +337,7 @@ dist:
 	@tools/build_release.sh $(VERSION)
 
 $(LIB_VERIFY_PRG): $(LIB_VERIFY_STUB) $(LIBX25519) cfg/x25519-example.cfg | $(LIB_VERIFY_DIR)
-	$(CA65) -I $(SRC_DIR) -o $(LIB_VERIFY_DIR)/stub.o $(LIB_VERIFY_STUB)
+	$(CA65) $(CA65FLAGS) -I $(SRC_DIR) -o $(LIB_VERIFY_DIR)/stub.o $(LIB_VERIFY_STUB)
 	$(LD65) -C cfg/x25519-example.cfg -o $@ \
 	    -Ln $(LIB_VERIFY_DIR)/stub.labels \
 	    $(LIB_VERIFY_DIR)/stub.o $(LIBX25519)

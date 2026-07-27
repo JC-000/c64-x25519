@@ -2,7 +2,7 @@
 
 X25519 Diffie-Hellman (RFC 7748) for the Commodore 64.
 
-An optimized implementation of X25519 / Curve25519 scalar multiplication written in ca65 6502 assembly, targeting the stock C64 with a 1750 REU. Validated against pyca/cryptography via VICE emulator and hardware-compatible test harness.
+An optimized implementation of X25519 / Curve25519 scalar multiplication written in ca65 6502 assembly, targeting the stock C64 with a 1750 REU — plus an opt-in `lib-x25519-onchip` build variant that needs no REU at all, computing multiplication rows on the 6502 for expansion-less and accelerated hosts. Validated against pyca/cryptography via VICE emulator and hardware-compatible test harness.
 
 ## Status
 
@@ -31,6 +31,20 @@ declare the new segment — see `docs/LIBRARY.md` §4.10 and
   `align = 256`) — bundled with #68's cfg change so consumers
   migrate once. See `docs/LIBRARY.md` §3/§4 and
   `cfg/x25519-example.cfg` constraints 1–2.
+
+- New `make lib-x25519-onchip` build variant
+  ([#72](https://github.com/JC-000/c64-x25519/issues/72)):
+  `fe25519_mul` generates its multiplication rows on the 6502 via a
+  constant-time generator over the §8.3 `ct_mul_8x8` body, so the
+  profile issues **no REU traffic at all** — the library's first
+  no-REU configuration, boot obligation `sqtab_init` only,
+  `LIB_X25519_REU_BANKS_USED = 0`, `LIB_X25519_SHARED_PRIMITIVES =
+  $0005`. Slower at stock clock; aimed at turbo hosts, where REU DMA's
+  ~1 MHz bus rate is a wall-clock floor that CPU acceleration cannot
+  lift. Additive and opt-in — the default build surface is unchanged.
+  Cycle costs, the turbo crossover, and the hardware A/B at
+  16/48/64 MHz are all pending measurement. CT audit: `L30a-d` in
+  `docs/CT_ANALYSIS.md`.
 
 ---
 
@@ -298,7 +312,7 @@ full perf and CT-posture story.
 
 - **CPU:** 6502 (stock C64)
 - **Assembler:** ca65/ld65 (cc65 suite)
-- **REU:** 1750 REU or equivalent (6 banks of 64 KB = 384 KB required for mul tables)
+- **REU:** 1750 REU or equivalent (6 banks of 64 KB = 384 KB required for mul tables) — default build. Lowered to 256 KB by `make lib-x25519-1764`, and removed entirely by `make lib-x25519-onchip` (see "Build variants" below)
 - **RAM:** BASIC ROM banked out at startup; library owns specific ZP + RAM regions
 - **Test harness:** VICE emulator + `c64-test-harness` Python package
 
@@ -379,6 +393,20 @@ ca65 -D X25519_REU_BANK=3 -o build/x25519_init.o src/x25519_init.s
 ```
 
 `X25519_REU_BANK` defaults to `0` (banks 0–5). Setting it to `3` shifts the library's claim to banks 3–8, leaving banks 0–2 free for a sibling REU consumer. Every library translation unit must be assembled with the same value because the bank constant is baked in at assemble time. The library's standalone `make` / `make lib` build always uses the default; consumer projects rebuild from source with the override. See `docs/LIBRARY.md` §4.5 for the override walkthrough and §4.4 for the `LIB_X25519_REU_BANKS_USED` aggregate bitmask consumers can `.assert` against for compile-time collision detection.
+
+**Build variants.** Three profiles build from the same source tree; the default is what `make lib` produces.
+
+```sh
+make lib                  # default — 512 KB REU (1750), fastest at stock clock
+make lib-x25519-1764      # 256 KB REU (stock 1764), drops the pre-doubled tables
+make lib-x25519-onchip    # no REU at all — multiplication rows generated on the 6502
+```
+
+`lib-x25519-onchip` ([#72](https://github.com/JC-000/c64-x25519/issues/72)) replaces `fe25519_mul`'s per-row REU DMA fetch with a constant-time on-chip generator built on the c64-lib-contract §8.3 `ct_mul_8x8` body. It is the first configuration that issues no REU traffic whatsoever: the boot obligation is `sqtab_init` alone, `LIB_X25519_REU_BANKS_USED` reports `0`, and it runs on a stock expansion-less C64. Consumers must assemble with `-D X25519_ONCHIP_MUL=1` so `x25519.inc`'s gated REU import surface matches the archive.
+
+**If you are running at stock clock, keep the default build.** The onchip profile is unavoidably slower there — REU DMA hands the CPU a finished product row that the generator has to compute instead. Its purpose is accelerated hosts, where the REU transfers at the ~1 MHz bus rate no matter how fast the CPU is clocked and the row fetches become a wall-clock floor that turbo cannot lift; and hosts with no REU available at any price. Measured costs and the turbo crossover clock are pending VICE measurement, with wall-clock claims additionally gated on a hardware A/B at 16 / 48 / 64 MHz.
+
+See `docs/LIBRARY.md` §4.11 for the integration details and manifest deltas, `docs/design/issue_72_onchip_mul.md` for the design, and `docs/CT_ANALYSIS.md` L30a-d for the constant-time audit of the generator.
 
 Upstream maintainers can also reproduce the release tarball locally via `make lib` (which builds `build/lib/libx25519.a` and individual `.o` files for in-tree verification) — this is not what downstream projects consume.
 

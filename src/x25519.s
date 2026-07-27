@@ -102,9 +102,14 @@
         ;  fe25519_mul/sqr/mul_a24 still does, and each of those
         ;  routines also has its own defensive H2 init at entry —
         ;  belt-and-braces for callers that bypass scalarmult.)
+.if ::X25519_ONCHIP_MUL = 0
         lda #0
         sta reu_reu_lo            ; $df04
         sta reu_addr_ctrl         ; $df0a
+.endif
+        ; (S2 gated out under X25519_ONCHIP_MUL, issue #72: no DMA on
+        ;  the hot path, and $DFxx is not unconditionally free on
+        ;  REU-less hosts.)
 
         ; Initialize ladder state
         ; x_2 = 1

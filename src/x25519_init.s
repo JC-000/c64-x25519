@@ -6,7 +6,13 @@
 
 .include "constants.s"
 
-.export reu_fetch_mul_row, reu_clear_wide
+.export reu_clear_wide
+.if ::X25519_ONCHIP_MUL = 0
+; Onchip profile (issue #72): no REU on the hot path — the row-fetch
+; helper and its SMC bank-patch export drop out entirely (same
+; .export-demands-a-definition rule as the SQR_DMA_K gate below).
+.export reu_fetch_mul_row
+.endif
 .if ::SQR_DMA_K
 ; reu_fetch_doubled_row only exists in the SQR_DMA_K > 0 (default)
 ; build. The K=0 / lib-x25519-1764 variant gates the proc body out
@@ -68,6 +74,14 @@
 ; final REU state with the same observable side effects (the full
 ; ~3 s init runs again). NOT idempotent in the no-op sense.
 ; =============================================================================
+.if ::X25519_ONCHIP_MUL = 0
+; (Whole init block gated out under the onchip profile, issue #72:
+;  there are no REU tables to build. The profile's boot obligation is
+;  sqtab_init only. Do NOT express this via SHARED_REU_MUL_INIT — that
+;  switch means "defers to a canonical §8.2 provider", and under
+;  onchip there is no provider and no table; the §8.2 bit is simply
+;  omitted from LIB_X25519_SHARED_PRIMITIVES. See SPEC §8.0 mask
+;  construction rules and docs/design/issue_72_onchip_mul.md.)
 .ifndef SHARED_REU_MUL_INIT
 .export reu_mul_init
 ; SPEC §8.2 canonical entry point. In standalone builds, aliases the
@@ -305,6 +319,7 @@ reu_init_a:     .byte 0
 reu_init_b:     .byte 0
 .endproc
 .endif ; SHARED_REU_MUL_INIT
+.endif ; X25519_ONCHIP_MUL = 0 (issue #72 — init block)
 
 ; =============================================================================
 ; reu_fetch_mul_row - DMA a multiplication table row from REU to C64
@@ -337,6 +352,7 @@ reu_init_b:     .byte 0
 ; reu_clear_wide is runtime-hot (issue #68 cold-split boundary).
 .segment "LIB_X25519_CODE"
 
+.if ::X25519_ONCHIP_MUL = 0
 .proc reu_fetch_mul_row
         lda mul_cached_a
         asl                    ; A = multiplier * 2, carry = bit 7
@@ -357,6 +373,7 @@ bank_lda:
 ; rebuilding the library. No-op for in-tree / canonical callers.
 reu_fetch_mul_row_bank_patch := reu_fetch_mul_row::bank_lda + 1
 .export reu_fetch_mul_row_bank_patch
+.endif ; X25519_ONCHIP_MUL = 0 (issue #72 — reu_fetch_mul_row + patch export)
 
 ; =============================================================================
 ; reu_fetch_doubled_row - DMA pre-doubled multiplication row for fe25519_sqr
@@ -531,6 +548,7 @@ reu_fetch_mul_row_bank_patch := reu_fetch_mul_row::bank_lda + 1
         dex
         bpl @loop
 
+.if ::X25519_ONCHIP_MUL = 0
         ; Restore mul-row autoload state. fe25519_mul's per-row inline
         ; DMA expects:
         ;   reu_c64_lo/hi   = mul_dma_lo
@@ -550,6 +568,8 @@ reu_fetch_mul_row_bank_patch := reu_fetch_mul_row::bank_lda + 1
         sta reu_len_lo
         lda #2
         sta reu_len_hi
+.endif ; X25519_ONCHIP_MUL = 0 (issue #72 — autoload-restore tail; the
+       ; CPU clear above is all the onchip profile needs)
         rts
 .endproc
 
@@ -590,6 +610,11 @@ reu_fetch_mul_row_bank_patch := reu_fetch_mul_row::bank_lda + 1
 ; it does not preserve the autoload latch.
 .segment "LIB_X25519_INIT_CODE"
 
+.if ::X25519_ONCHIP_MUL = 0
+; (reu_probe gated out under onchip, issue #72: the profile by
+;  definition runs without an REU, so presence detection is
+;  meaningless inside it. Hosts that want runtime hardware dispatch
+;  link the default-profile archive and probe there.)
 .export reu_probe
 .proc reu_probe
         ; Save original REU register set we are about to disturb so the
@@ -737,3 +762,4 @@ reu_fetch_mul_row_bank_patch := reu_fetch_mul_row::bank_lda + 1
 @save_len_lo:   .byte 0
 @save_len_hi:   .byte 0
 .endproc
+.endif ; X25519_ONCHIP_MUL = 0 (issue #72 — reu_probe)

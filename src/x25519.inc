@@ -199,7 +199,8 @@
 ; ZERO-PAGE USAGE (the library OWNS these slots while running)
 ; ----------------------------------------------------------------------------
 ;
-; Live ZP surface (post-Phase-7, L1-L29 CT-clean): 85 bytes at
+; Live ZP surface (post-Phase-7, L1-L30 CT-clean; L30a-d are
+; X25519_ONCHIP_MUL-profile entries): 85 bytes at
 ;   $14-$16, $1C, $1E-$2A, $2C-$2F, $40-$7F.
 ;
 ;   $14      fe_cmp_mask          (Phase 7: fe_cmp_p_ct $00/$FF mask)
@@ -230,7 +231,8 @@
 ;
 ; CT certification: with Phase 7 landed, every catalogued
 ; secret-data-dependent branch and (zp),y page-cross leak
-; (L1 through L29) in the X25519 library is fixed. The library is
+; (L1 through L29, plus the L30a-d onchip-profile entries added by
+; issue #72) in the X25519 library is fixed. The library is
 ; CT-clean across the entire fe25519_* / mul_8x8 / x25519_scalarmult
 ; surface for network-facing use. See docs/CT_ANALYSIS.md for the
 ; full leak catalogue and Phase 7 closure mechanism.
@@ -300,15 +302,30 @@
 ; =============================================================================
 
 ; Imports for downstream use — .include this file to get all public symbols.
-.import sqtab_init, mul_tables_init, reu_mul_init
+
+; Onchip-profile guard (issue #72). When linking the lib-x25519-onchip
+; archive, define X25519_ONCHIP_MUL=1 (ca65 -D) before .include'ing
+; this header: the REU-side surface below does not exist in that
+; archive (no REU traffic at all; boot obligation is sqtab_init only).
+; Default (0) leaves the header identical to the pre-#72 surface.
+.ifndef X25519_ONCHIP_MUL
+  X25519_ONCHIP_MUL = 0
+.endif
+
+.import sqtab_init, mul_tables_init
+.if ::X25519_ONCHIP_MUL = 0
+.import reu_mul_init
 .import reu_mul_tables_init          ; c64-lib-contract §8.2 canonical entry
                                      ; (alias of reu_mul_init, same address)
+.endif
 .import mul_8x8, ct_mul_8x8          ; c64-lib-contract §8.3 canonical CT
                                      ; multiply body; mul_8x8 is the
                                      ; back-compat alias (same address)
+.if ::X25519_ONCHIP_MUL = 0
 .import reu_fetch_mul_row_bank_patch ; §8.2 SMC bank-patch hook (byte
                                      ; address of reu_fetch_mul_row's
                                      ; bank-LDA immediate)
+.endif
 .import x25519_clamp, x25519_scalarmult, x25519_base
 .import fe25519_add, fe25519_sub, fe25519_mul, fe25519_sqr
 .import fe25519_copy, fe25519_zero, fe25519_one, fe25519_cswap
@@ -321,6 +338,7 @@
 .import LIB_VERSION_MAJOR, LIB_VERSION_MINOR, LIB_VERSION_PATCH
 .import LIB_ABI_VERSION
 
+.if ::X25519_ONCHIP_MUL = 0
 ; REU layout equates (c64-lib-contract §3). Default 0; override via
 ; ca65 -D X25519_REU_BANK=$N when rebuilding the library from source.
 .import X25519_REU_BANK, X25519_REU_OFFSET
@@ -331,6 +349,7 @@
 .import LIB_SHARED_REU_MUL_BANK, LIB_SHARED_REU_MUL_OFFSET
 .import LIB_SHARED_REU_MUL_BANKS_USED
 .import X25519_REU_BANK_DOUBLED, X25519_REU_BANK_CARRY
+.endif ; X25519_ONCHIP_MUL = 0 (issue #72 — no REU surface in onchip archive)
 
 ; §5 aggregate manifest equates — assemble-time fit / collision checks
 ; (ZP footprint, REU bank claim, resident bytes; see LIBRARY.md §4.5).

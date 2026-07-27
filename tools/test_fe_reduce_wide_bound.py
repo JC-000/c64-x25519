@@ -122,9 +122,16 @@ def main():
     t2 = labels["fe25519_tmp2"]
     t3 = labels["fe25519_tmp3"]
 
+    # C64_NO_REU=1 launches VICE with no REU at all: runtime proof that a
+    # no-REU build profile (e.g. X25519_ONCHIP_MUL) never polls $DFxx.
+    # The default build reads REU mul tables and needs the REU attached.
+    if os.environ.get("C64_NO_REU"):
+        reu_args = ["+reu"]
+    else:
+        reu_args = ["-reu", "-reusize", "512"]
     config = ViceConfig(
         prg_path=PRG_PATH, warp=True, ntsc=True, sound=False,
-        extra_args=["-reu", "-reusize", "512"],
+        extra_args=reu_args,
     )
 
     print("fe_reduce_wide R<=2p strict-bound regression test")

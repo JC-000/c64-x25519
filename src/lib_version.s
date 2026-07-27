@@ -196,7 +196,17 @@ LIB_ABI_VERSION   = 1
 ; bank-base shift.
 
 LIB_X25519_ZP_USAGE_BYTES = 85
-.if SQR_DMA_K
+.if ::X25519_ONCHIP_MUL
+; Onchip profile (issue #72): zero REU banks — this zero IS the SPEC §5
+; "no REU" declaration ("Zero if no REU", SPEC.md §5; polyval
+; precedent). RESIDENT = LIB_X25519_CODE (3599) + LIB_X25519_DATA
+; (3584) + sqtab (1024); COLD = LIB_X25519_INIT_CODE (sqtab_init only
+; — reu_mul_init/reu_probe are gated out). Measured via od65 at
+; v0.8.0 (`make lib-x25519-onchip` prints the per-object dump).
+LIB_X25519_REU_BANKS_USED = 0
+LIB_X25519_RESIDENT_BYTES = 8207
+LIB_X25519_COLD_BYTES     = 160
+.elseif SQR_DMA_K
 LIB_X25519_REU_BANKS_USED = $3B << X25519_REU_BANK
 LIB_X25519_RESIDENT_BYTES = 8383
 LIB_X25519_COLD_BYTES     = 826
@@ -229,7 +239,18 @@ _OWN_SQTAB   = 0
 .else
 _OWN_SQTAB   = LIB_SHARED_PRIMITIVES_SQTAB
 .endif
-.ifdef SHARED_REU_MUL_INIT
+.if ::X25519_ONCHIP_MUL
+; Onchip profile does not CONSUME §8.2 at all (no REU table exists), so
+; the bit is omitted from the mask expression entirely — per SPEC §8.0
+; "OR only the primitives this lib uses" (SPEC.md mask-construction
+; comment; polyval non-consumer precedent). This is deliberately NOT
+; the SHARED_REU_MUL_INIT deferral switch, which would mean "a
+; canonical provider owns the table" — under onchip there is no
+; provider and no table. Standalone onchip mask: $0005.
+; (nist-curves' onchip manifest still claims $0002 — a known
+;  inconsistency we do not replicate; see issue #72 discussion.)
+_OWN_REU_MUL = 0
+.elseif .defined(SHARED_REU_MUL_INIT)
 _OWN_REU_MUL = 0
 .else
 _OWN_REU_MUL = LIB_SHARED_PRIMITIVES_REU_MUL
@@ -284,7 +305,14 @@ LIB_X25519_SHARED_PRIMITIVES = _OWN_SQTAB | _OWN_REU_MUL | _OWN_CT_MUL
 .include "precalc_table.inc"
 
 LIB_PRECALC_TABLE "sqtab",           1024,   PRECALC_REGION_RAM, PRECALC_SHARED_YES
+.if ::X25519_ONCHIP_MUL = 0
+; reu_mul claim dropped under the onchip profile (issue #72): the
+; profile builds no REU table. Per the SPEC §8.0 symmetry rule the
+; matching docs/precalc-tables.md row carries a per-profile
+; annotation (see that file). sqtab stays — the onchip generator
+; reads it on every product.
 LIB_PRECALC_TABLE "reu_mul",         131072, PRECALC_REGION_REU, PRECALC_SHARED_YES
+.endif
 .if SQR_DMA_K
 ; The pre-doubled tables (banks +3..+5) only exist in the default
 ; SQR_DMA_K > 0 build; gated out in the lib-x25519-1764 variant so this

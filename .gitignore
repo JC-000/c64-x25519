@@ -1,5 +1,6 @@
 build/
 build-1764/
+build-onchip/
 __pycache__/
 *.pyc
 .DS_Store

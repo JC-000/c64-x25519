@@ -23,6 +23,14 @@
 
 ; --- Imports from mul_8x8.s ---
 .import poly_prod_lo, poly_prod_hi
+.if ::X25519_ONCHIP_MUL
+; Onchip profile (issue #72): fe25519_mul generates product rows
+; on-chip via the canonical §8.3 ct_mul_8x8 body instead of REU DMA.
+; The SMC immediate-operand sites are the §8.3 calling convention
+; (caller bakes `a`, passes b in Y).
+.import ct_mul_8x8
+.import smc_sum_a_imm, smc_diff_a_imm
+.endif
 ; sqtab_lo / sqtab_hi are now `.ifndef`-guarded equates in constants.s
 ; (c64-lib-contract §8.1 shared-primitive adoption) — visible here via
 ; the `.include "constants.s"` at the top of this file. No .import.
@@ -573,14 +581,19 @@
 ; Clobbers: A, X, Y
 ; =============================================================================
 .proc fe25519_mul
+.if ::X25519_ONCHIP_MUL = 0
         ; H2 defensive REU register init (mirrors S2 in x25519_scalarmult).
         ; Direct callers of public field ops must not be exposed to issue #33
         ; (caller-controlled $DF04/$DF0A residue silently corrupting DMA).
+        ; Gated out under onchip (issue #72): no DMA exists to corrupt,
+        ; and $DFxx is not unconditionally free I/O2 space on REU-less
+        ; hosts (GeoRAM / ethernet carts decode it).
         lda #0
         sta reu_reu_lo            ; $DF04
         sta reu_addr_ctrl         ; $DF0A
+.endif
 
-        ; 1. Zero the 64-byte product buffer via REU DMA FETCH from bank 2
+        ; 1. Zero the 64-byte product buffer (CPU clear since W2)
         jsr reu_clear_wide
 
         ; 2. Self-mod patch the four `ldy src2_buf,x` sites in the inner loop
@@ -591,11 +604,19 @@
         sta @ldy_src2_b+1
         sta @ldy_src2_c+1
         sta @ldy_src2_d+1
+.if ::X25519_ONCHIP_MUL
+        sta @gen_src2_a+1      ; onchip row generator's src2 loads (issue #72)
+        sta @gen_src2_b+1
+.endif
         lda fe25519_src2+1
         sta @ldy_src2_a+2
         sta @ldy_src2_b+2
         sta @ldy_src2_c+2
         sta @ldy_src2_d+2
+.if ::X25519_ONCHIP_MUL
+        sta @gen_src2_a+2
+        sta @gen_src2_b+2
+.endif
         lda fe25519_src1
         sta @load_src1+1
         lda fe25519_src1+1
@@ -624,11 +645,62 @@
 @load_src1:
         lda mul_src2_buf,y     ; PATCHED at proc entry: abs = src1 base
         ; CT: zero-skip `bne @nonzero_i / jmp @skip_zero` removed (L25).
-        ; src1[i]==0 is handled by mul_dma_lo[0]==mul_dma_hi[0]==0 from
-        ; reu_mul_init (same invariant that closes L12-L15). The DMA
-        ; fetch below loads bank-2 row 0 (all zeros), so every body's
-        ; `adc mul_dma_*,y` adds 0 with no carry. Body runs as no-op.
+        ; src1[i]==0 is handled by every consumed mul_dma_lo/hi entry of
+        ; the a==0 row being zero, so each body's `adc mul_dma_*,y` adds
+        ; 0 with no carry and runs as a no-op (same invariant family
+        ; that closes L12-L15). DMA arm: reu_mul_init wrote row 0 as
+        ; all-zeros at X25519_REU_BANK offset 0. Onchip arm: the
+        ; generator computes 0*b = 0 unconditionally for all 32
+        ; generated entries — it must NOT short-circuit a==0 (that
+        ; would be a secret-dependent branch AND leave stale entries
+        ; from the previous row).
 
+.if ::X25519_ONCHIP_MUL
+        ; --- On-chip row generation (issue #72) ---
+        ; Replaces the REU DMA row fetch. A = src1[i] (secret). Bake it
+        ; once per row into ct_mul_8x8's two SMC immediate-operand
+        ; sites (the canonical §8.3 calling convention, same bake
+        ; reu_mul_init performs at boot), then generate
+        ; mul_dma_lo/hi[src2[j]] for j = 31..0 — exactly the entry set
+        ; the four unrolled bodies below read. mul_dma_carry is not
+        ; generated: it is consumed only by fe25519_sqr's DMA path,
+        ; which does not exist under this profile (SQR_DMA_K = 0).
+        ;
+        ; CT argument (see docs/CT_ANALYSIS.md, onchip entries):
+        ;  - fixed 32 iterations, loop branch depends only on the
+        ;    public counter X (DEX/BPL);
+        ;  - src2[j] loads via the two SMC-patched abs,x sites below
+        ;    (@gen_src2_a/@gen_src2_b, patched at proc entry alongside
+        ;    @ldy_src2_a..d) — src2 is secret, so no (zp),y (CT rule),
+        ;    and page-cross safety rides on the same caller-buffer
+        ;    32-byte-alignment contract the four body sites use;
+        ;  - ct_mul_8x8 is fixed-cycle for all inputs (L1/L2);
+        ;  - stores are abs,y into page-aligned mul_dma_lo/hi — fixed
+        ;    5 cycles for any secret Y;
+        ;  - duplicate src2 values regenerate the same entry (writes
+        ;    are idempotent, count stays 32);
+        ;  - no a==0 or b==0 special case anywhere.
+        ; X is not preserved across ct_mul_8x8 (it clobbers A/X/Y), so
+        ; j is parked in fe_mul_j — free here, only fe25519_sqr's inner
+        ; loop uses it, and mul/sqr never nest.
+        sta smc_sum_a_imm+1    ; bake a = src1[i] (secret byte lives in
+        sta smc_diff_a_imm+1   ;  code memory between calls — CT doc note)
+        ldx #31
+@gen_row:
+        stx fe_mul_j           ; park j (public) across ct_mul_8x8
+@gen_src2_a:
+        ldy mul_src2_buf,x     ; PATCHED at proc entry: abs = src2 base
+        jsr ct_mul_8x8         ; poly_prod_lo/hi = a * src2[j], fixed-cycle
+        ldx fe_mul_j
+@gen_src2_b:
+        ldy mul_src2_buf,x     ; PATCHED at proc entry: abs = src2 base
+        lda poly_prod_lo
+        sta mul_dma_lo,y
+        lda poly_prod_hi
+        sta mul_dma_hi,y
+        dex
+        bpl @gen_row           ; public index countdown: 32 rounds, always
+.else
         ; DMA the multiplication row for src1[i] from REU (inlined).
         ; A already holds src1[i]; mul_cached_a store removed (dead in fe_mul).
         asl                    ; A = multiplier * 2, carry = bit 7
@@ -638,6 +710,7 @@
         sta reu_reu_bank
         lda #%10110001         ; execute + autoload + FETCH (REU->C64)
         sta reu_command
+.endif
 
         ; Self-mod: patch accumulation addresses to base = fe_wide + i
         ; fe_wide is in zero page ($40..$7F) so we only patch the ZP operand byte.
@@ -1092,14 +1165,17 @@ mul38_hi:  .byte 0
 ; Clobbers: A, X, Y
 ; =============================================================================
 .proc fe25519_sqr
+.if ::X25519_ONCHIP_MUL = 0
         ; H2 defensive REU register init (mirrors S2 in x25519_scalarmult).
         ; Direct callers of public field ops must not be exposed to issue #33
         ; (caller-controlled $DF04/$DF0A residue silently corrupting DMA).
+        ; Gated out under onchip (issue #72) — see fe25519_mul's H2 note.
         lda #0
         sta reu_reu_lo            ; $DF04
         sta reu_addr_ctrl         ; $DF0A
+.endif
 
-        ; 1. Zero the 64-byte product buffer via REU DMA FETCH from bank 2
+        ; 1. Zero the 64-byte product buffer (CPU clear since W2)
         jsr reu_clear_wide
 
         ; 2. Copy src1 to absolute buffer (src1==src2 for squaring)
@@ -1796,12 +1872,17 @@ sqr_ripple_start:  .byte 0
         ; fe_wide+35, fe_wide+36 = $63, $64) lands on zero scratch.
         ; fe_wide is the 64-byte ZP buffer at $40-$7F (src/constants.s),
         ; well within range.
+.if ::X25519_ONCHIP_MUL = 0
         ; H2 defensive REU register init (mirrors S2 in x25519_scalarmult).
         ; Direct callers of public field ops must not be exposed to issue #33
         ; (caller-controlled $DF04/$DF0A residue silently corrupting DMA).
+        ; Gated out under onchip (issue #72) — see fe25519_mul's H2 note.
+        ; (This block was already vestigial here: fe25519_mul_a24 uses
+        ; the RAM a24_b* tables and issues no DMA of its own.)
         lda #0
         sta reu_reu_lo            ; $DF04
         sta reu_addr_ctrl         ; $DF0A
+.endif
 
         ldx #36
         lda #0
