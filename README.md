@@ -6,6 +6,18 @@ An optimized implementation of X25519 / Curve25519 scalar multiplication written
 
 ## Status
 
+**v0.8.0 released 2026-07-27 (DRAFT until tagged)** — rolls up the
+cold-segment split (#68/#69), the SPEC §4 segment-prefix migration
+(#70/#71), and the **`X25519_ONCHIP_MUL` no-REU build profile**
+(#72/#73). One consumer action item: ld65 cfgs need the three new
+`LIB_X25519_*` segment declarations (see the migration callout in
+[`docs/RELEASE_NOTES_v0.8.0.md`](docs/RELEASE_NOTES_v0.8.0.md)).
+Hardware-measured on both Ultimate generations: onchip is **1.85×
+faster at 48 MHz (U64E)** and **2.00× at 64 MHz (C64U)**, crossovers
+~17/~20 MHz on those devices (~7.7 MHz projected for a real 1750);
+stock-clock users keep the default build. Details below and in the
+release notes.
+
 **Since v0.7.0 (v0.8-prep on master)** — cold-segment split
 ([#68](https://github.com/JC-000/c64-x25519/issues/68)): init-only
 code (`sqtab_init`, `reu_mul_init`, `reu_probe`) moved to the new
@@ -39,12 +51,19 @@ declare the new segment — see `docs/LIBRARY.md` §4.10 and
   profile issues **no REU traffic at all** — the library's first
   no-REU configuration, boot obligation `sqtab_init` only,
   `LIB_X25519_REU_BANKS_USED = 0`, `LIB_X25519_SHARED_PRIMITIVES =
-  $0005`. Slower at stock clock; aimed at turbo hosts, where REU DMA's
-  ~1 MHz bus rate is a wall-clock floor that CPU acceleration cannot
-  lift. Additive and opt-in — the default build surface is unchanged.
-  Cycle costs, the turbo crossover, and the hardware A/B at
-  16/48/64 MHz are all pending measurement. CT audit: `L30a-d` in
-  `docs/CT_ANALYSIS.md`.
+  $0005`. Slower at stock clock (449,589,657 cy = 1.718× default;
+  the REU tables exist because they win at 1 MHz); aimed at turbo
+  hosts, where REU DMA is a wall-clock floor that CPU acceleration
+  cannot lift. Additive and opt-in — the default build is
+  byte-identical with the profile undefined. **Hardware-measured
+  (same-boot A/B, oracle-gated): 1.85× at 48 MHz on the U64E, 2.00×
+  at 64 MHz on the C64U**; measured crossovers ~17 MHz (U64E) /
+  ~20 MHz (C64U), ~7.7 MHz projected for a real discrete 1750 (the
+  Ultimates' FPGA REUs transfer ~3× faster than 1 cy/byte under
+  turbo). Also proven on a no-REU stock configuration on both
+  devices and in REU-less VICE. CT audit: `L30a-d` in
+  `docs/CT_ANALYSIS.md`; full measurement story in
+  `docs/design/issue_72_onchip_mul.md`.
 
 ---
 
@@ -287,7 +306,10 @@ ladder/cswap audit).
 
 | Operation | Cost |
 |---|---|
-| `x25519_scalarmult` (basepoint 9, v0.4.0 / Phase 7 landed) | **15,350 jiffies / ~256.4s NTSC / ~307.7s PAL** (261,640,265 cycles, CIA1-timer measurement) |
+| `x25519_scalarmult` (basepoint 9, v0.8.0 default build) | **262,318,045 cycles / ~4.3 min NTSC** (−0.48% vs v0.7.0, layout win) |
+| `x25519_scalarmult` (v0.8.0 `lib-x25519-onchip`, stock 1 MHz) | 449,589,657 cycles / ~7.3 min NTSC (1.718× default — stock users keep the default build) |
+| `x25519_scalarmult` (onchip vs default, turbo hardware) | **1.85× faster @ 48 MHz (U64E), 2.00× @ 64 MHz (C64U)** — same-boot A/B, oracle-gated; crossovers ~17/~20 MHz |
+| `x25519_scalarmult` (basepoint 9, v0.4.0 / Phase 7 landed) | 15,350 jiffies / ~256.4s NTSC / ~307.7s PAL (261,640,265 cycles, CIA1-timer measurement) |
 | `x25519_scalarmult` (basepoint 9, v0.3.0) | 12,070 jiffies / ~201.2s NTSC / ~241.4s PAL |
 | `x25519_scalarmult` (basepoint 9, v0.2.0) | 12,485 jiffies / ~208.1s NTSC / ~249.7s PAL |
 | `x25519_scalarmult` (basepoint 9, v0.1.0 baseline) | 9,520 jiffies / ~158.7s NTSC |
