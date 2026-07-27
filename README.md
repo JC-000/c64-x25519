@@ -6,7 +6,7 @@ An optimized implementation of X25519 / Curve25519 scalar multiplication written
 
 ## Status
 
-**v0.8.0 released 2026-07-27 (DRAFT until tagged)** — rolls up the
+**v0.8.0 released 2026-07-27** — [GitHub release](https://github.com/JC-000/c64-x25519/releases/tag/v0.8.0). — rolls up the
 cold-segment split (#68/#69), the SPEC §4 segment-prefix migration
 (#70/#71), and the **`X25519_ONCHIP_MUL` no-REU build profile**
 (#72/#73). One consumer action item: ld65 cfgs need the three new

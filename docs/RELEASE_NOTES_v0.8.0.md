@@ -1,8 +1,5 @@
 # c64-x25519 v0.8.0 — cold-segment split, §4 segment prefixes, X25519_ONCHIP_MUL no-REU profile
 
-> **DRAFT until tagged** — tarball SHA256 + size are placeholders until
-> the SHA-fill PR after `make dist`.
-
 Rolls up three arcs since v0.7.0, all additive (MINOR bump; `LIB_ABI_VERSION`
 unchanged at 1; no CT posture regression — the catalogue extends L1–L29 →
 L1–L30 with the new profile-scoped entries):
@@ -149,11 +146,11 @@ from the tag or move to v0.8.0.
 
 ```
 File:     c64-x25519-v0.8.0.tar.gz
-Size:     TBD bytes
-SHA256:   TBD
+Size:     116,679 bytes
+SHA256:   dd5a0375e95438fedd30c0a8e3bdb0cdfc0c4f254ab0dc80d0661decc93a2ac6
 ```
 
 ```
 shasum -a 256 c64-x25519-v0.8.0.tar.gz
-# expect: TBD
+# expect: dd5a0375e95438fedd30c0a8e3bdb0cdfc0c4f254ab0dc80d0661decc93a2ac6
 ```
