@@ -199,13 +199,13 @@ LIB_X25519_ZP_USAGE_BYTES = 85
 .if ::X25519_ONCHIP_MUL
 ; Onchip profile (issue #72): zero REU banks — this zero IS the SPEC §5
 ; "no REU" declaration ("Zero if no REU", SPEC.md §5; polyval
-; precedent). RESIDENT/COLD are provisional pending `make
-; lib-x25519-onchip` od65 segsize measurement: resident grows by the
-; generator block in fe25519_mul and shrinks by the gated H2/S2 blocks
-; + reu_fetch_mul_row; cold shrinks to sqtab_init + reu-free init.
+; precedent). RESIDENT = LIB_X25519_CODE (3599) + LIB_X25519_DATA
+; (3584) + sqtab (1024); COLD = LIB_X25519_INIT_CODE (sqtab_init only
+; — reu_mul_init/reu_probe are gated out). Measured via od65 at
+; v0.8.0 (`make lib-x25519-onchip` prints the per-object dump).
 LIB_X25519_REU_BANKS_USED = 0
-LIB_X25519_RESIDENT_BYTES = 8300  ; PROVISIONAL — refresh from od65 before release
-LIB_X25519_COLD_BYTES     = 260   ; PROVISIONAL — refresh from od65 before release
+LIB_X25519_RESIDENT_BYTES = 8207
+LIB_X25519_COLD_BYTES     = 160
 .elseif SQR_DMA_K
 LIB_X25519_REU_BANKS_USED = $3B << X25519_REU_BANK
 LIB_X25519_RESIDENT_BYTES = 8383

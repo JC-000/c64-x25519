@@ -58,6 +58,7 @@ git archive \
   src/constants.s src/data.s src/fe25519.s src/main.s src/mul_8x8.s \
   src/util.s src/x25519.s src/x25519_init.s src/x25519.inc \
   src/lib_version.s src/zp_config.s src/reu_config.s \
+  src/precalc_table.inc \
   cfg/x25519-example.cfg \
   docs/LIBRARY.md docs/CT_ANALYSIS.md "$NOTES" \
   LICENSE ORIGIN.txt.template \

@@ -264,6 +264,11 @@ lib-x25519-onchip:
 	        CA65FLAGS="-D X25519_ONCHIP_MUL=1" \
 	        X25519_PROFILE=onchip \
 	        lib lib-verify
+	@mkdir -p build/lib
+	@cp build-onchip/lib/libx25519.a build/lib/libx25519-onchip.a
+	@echo "SPEC §6 archive: build/lib/libx25519-onchip.a"
+	@echo "(header: the canonical build/lib/x25519.inc serves both profiles —"
+	@echo " consumers of this archive assemble with -D X25519_ONCHIP_MUL=1)"
 	@echo
 	@echo "Manifest equates for the onchip variant:"
 	@grep "LIB_X25519_\|LIB_VERSION_" build-onchip/lib_verify/stub.labels | sort
@@ -277,6 +282,9 @@ lib-x25519-1764:
 	$(MAKE) BUILD_DIR=build-1764 LIB_DIR=build-1764/lib \
 	        CA65FLAGS="-D SQR_DMA_K=0" \
 	        lib lib-verify
+	@mkdir -p build/lib
+	@cp build-1764/lib/libx25519.a build/lib/libx25519-1764.a
+	@echo "SPEC §6 archive: build/lib/libx25519-1764.a"
 	@echo
 	@echo "Manifest equates for the 1764 variant:"
 	@grep "LIB_X25519_\|LIB_VERSION_" build-1764/lib_verify/stub.labels | sort
