@@ -15,6 +15,7 @@ make                 # build build/x25519.prg (standalone test harness)
 make clean
 make lib             # build build/lib/libx25519.a + .o + x25519.inc + cfg
 make lib-verify      # smoke-test libx25519.a via tests/lib_linkage stub
+make lib-verify-shared  # linkage matrix for the four SHARED_* deferral builds (R6)
 
 make test            # python3 tools/ref_x25519.py (no VICE, fastest)
 make test-vice       # subset: mul38, fe25519, fe_mul/sqr stress, ct_square_cycles, reduce_wide_carry

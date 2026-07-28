@@ -145,8 +145,13 @@ LIB_SHARED_REU_MUL_BANKS_USED = (1 .shl LIB_SHARED_REU_MUL_BANK) | (1 .shl (LIB_
 ; link-time alias (not a value-baked equate) so neither symbol must be
 ; resolved at the time constants.s is parsed.
 .if ::X25519_ONCHIP_MUL = 0
+.ifndef SHARED_REU_MUL_INIT
 ; (Aliases gated under onchip, issue #72: reu_init_a/b live inside the
-;  gated-out reu_mul_init proc, so a link-time alias would dangle.)
+;  gated-out reu_mul_init proc, so a link-time alias would dangle.
+;  Same dangle under SHARED_REU_MUL_INIT — the proc that owns the
+;  scratch slots is deferred to the canonical §8.2 provider, which
+;  then also owns the ZP_INIT_A/B equates. Caught by R6 /
+;  `make lib-verify-shared`.)
 .ifndef LIB_SHARED_REU_MUL_ZP_INIT_A
   .global reu_init_a
   LIB_SHARED_REU_MUL_ZP_INIT_A := reu_init_a
@@ -155,6 +160,7 @@ LIB_SHARED_REU_MUL_BANKS_USED = (1 .shl LIB_SHARED_REU_MUL_BANK) | (1 .shl (LIB_
   .global reu_init_b
   LIB_SHARED_REU_MUL_ZP_INIT_B := reu_init_b
 .endif
+.endif ; SHARED_REU_MUL_INIT not defined
 .endif
 
 ; --- SPEC §8.2 staging-buffer contract ---
@@ -212,8 +218,15 @@ LIB_SHARED_REU_MUL_BANKS_USED = (1 .shl LIB_SHARED_REU_MUL_BANK) | (1 .shl (LIB_
 ; to `abs`: ca65 would emit a "size mismatch" warning since the target
 ; labels carry their own address sizes. Plain `.export` leaves
 ; resolution to the linker.
+.ifndef SHARED_REU_MUL_INIT
+; ZP_INIT_A/B additionally gated under SHARED_REU_MUL_INIT (R6): the
+; alias definitions above are dropped in a deferral build (reu_init_a/b
+; live inside the gated-out reu_mul_init proc), and the canonical §8.2
+; provider owns these equates. STAGE_LO/HI stay — mul_dma_lo/hi back
+; the retained per-row fetch surface.
 .export LIB_SHARED_REU_MUL_ZP_INIT_A
 .export LIB_SHARED_REU_MUL_ZP_INIT_B
+.endif ; SHARED_REU_MUL_INIT not defined
 .export LIB_SHARED_REU_MUL_STAGE_LO
 .export LIB_SHARED_REU_MUL_STAGE_HI
 .endif ; X25519_ONCHIP_MUL = 0 (issue #72 — §8.2 export surface)

@@ -135,8 +135,9 @@ ca65/ld65 **library archive** and vendor it alongside the public header
 and a linker-config fragment:
 
 ```
-make lib          # produces build/lib/
-make lib-verify   # smoke-tests the archive links against a stub
+make lib                # produces build/lib/
+make lib-verify         # smoke-tests the archive links against a stub
+make lib-verify-shared  # same, for the four §8.x SHARED_* deferral builds
 ```
 
 `make lib` produces `build/lib/`:
@@ -714,10 +715,16 @@ Rules:
    library still exports `sqtab_init`/`mul_tables_init` as an `rts`
    stub, but under `SHARED_REU_MUL_INIT` the `reu_mul_init`/
    `reu_mul_tables_init` exports are gated out entirely — your
-   shared-primitives module provides them (and the
-   `LIB_SHARED_REU_MUL_ZP_INIT_A/B` defaults) instead, per §4.8. The
-   repo's own `lib-verify` stub imports everything unconditionally
-   and is not deferral-aware.
+   shared-primitives module provides the canonical
+   `reu_mul_tables_init` (and the `LIB_SHARED_REU_MUL_ZP_INIT_A/B`
+   equates, which the deferral build no longer exports) instead, per
+   §4.8; the x25519-private `reu_mul_init` name is not part of the
+   deferral surface at all. `make lib-verify-shared` proves each
+   deferral build links in exactly this composed shape: it links the
+   stub against a stand-in provider
+   (`tests/lib_linkage/shared_provider_stub.s`), asserts the deferred
+   x25519-own exports are absent, and checks the §8.0 conditional
+   mask value per profile ($0006 / $0005 / $0003 / $0000).
 5. The standalone `make` build reclaims nothing — the segment loads
    and runs in place; behaviour is identical to pre-split releases.
 

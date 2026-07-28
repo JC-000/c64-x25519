@@ -56,7 +56,13 @@ start:
 public_refs:
         .addr sqtab_init, mul_tables_init
 .if ::X25519_ONCHIP_MUL = 0
+.ifndef SHARED_REU_MUL_INIT
+        ; x25519-private init name — absent from a §8.2 deferral build
+        ; (the canonical reu_mul_tables_init reference below stays and
+        ; resolves against the provider stand-in; see
+        ; shared_provider_stub.s / `make lib-verify-shared`).
         .addr reu_mul_init
+.endif
 .endif
         .addr x25519_clamp, x25519_scalarmult, x25519_base
         .addr fe25519_add, fe25519_sub, fe25519_mul, fe25519_sqr
