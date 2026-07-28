@@ -44,7 +44,8 @@ CA65_OBJS = $(BUILD_DIR)/main.o $(LIB_OBJS)
 
 LIBX25519 = $(LIB_DIR)/libx25519.a
 
-.PHONY: all clean test test-slow test-ref test-vice lib lib-verify dist \
+.PHONY: all clean test test-slow test-ref test-vice lib lib-verify \
+        lib-verify-shared dist \
         bench-record perf-diff lib-x25519-1764 lib-x25519-onchip
 
 all: $(PRG)
@@ -163,12 +164,16 @@ $(LIB_DIR)/cfg/x25519-example.cfg: cfg/x25519-example.cfg | $(LIB_DIR)
 LIB_VERIFY_DIR = $(BUILD_DIR)/lib_verify
 LIB_VERIFY_PRG = $(LIB_VERIFY_DIR)/lib_linkage_stub.prg
 LIB_VERIFY_STUB = tests/lib_linkage/lib_linkage_stub.s
+LIB_VERIFY_PROVIDER = tests/lib_linkage/shared_provider_stub.s
 
 # Profile selector for lib-verify's symbol expectations. The onchip
 # profile (issue #72) ships no REU surface, so its expected-symbol set
 # both DROPS the reu_* / §8.2 names and ASSERTS their absence (a
 # present-but-should-be-gone symbol is as much a bug as a missing one).
-# Default `make lib-verify` behavior is unchanged.
+# The shared-* profiles (R6 / `make lib-verify-shared`) verify the
+# §8.x SHARED_* deferral builds link against a provider stand-in
+# (tests/lib_linkage/shared_provider_stub.s) with the deferred
+# x25519-own names absent. Default `make lib-verify` is unchanged.
 X25519_PROFILE ?= default
 
 LIB_VERIFY_SYMS_COMMON = x25519_clamp x25519_scalarmult x25519_base \
@@ -189,20 +194,69 @@ LIB_VERIFY_SYMS_COMMON = x25519_clamp x25519_scalarmult x25519_base \
 	LIB_PRECALC_sqtab_SIZE \
 	mul_tables_init
 
-LIB_VERIFY_SYMS_REU = reu_mul_init reu_mul_tables_init \
-	reu_fetch_mul_row_bank_patch \
+# §8.3 body surface. ct_mul_8x8 is the canonical name (resolves to the
+# provider stand-in under SHARED_CT_MUL_8X8); mul_8x8 is the x25519-own
+# back-compat alias, gated out of a §8.3 deferral build.
+LIB_VERIFY_SYMS_CT_CANON = ct_mul_8x8
+LIB_VERIFY_SYMS_CT_OWN = mul_8x8
+
+# §8.2 REU surface, split by deferral behavior under SHARED_REU_MUL_INIT:
+#   _REU_OWN     x25519-private init name — gated out of a deferral build
+#   _REU_CANON   canonical §8.2 entry — own standalone, provider stand-in
+#                under deferral, present either way
+#   _REU_SURFACE fetch hook + placement equates + precalc row — x25519-own
+#                in every REU-consuming build (the deferral moves the init
+#                provider, not the table consumption)
+LIB_VERIFY_SYMS_REU_OWN = reu_mul_init
+LIB_VERIFY_SYMS_REU_CANON = reu_mul_tables_init
+LIB_VERIFY_SYMS_REU_SURFACE = reu_fetch_mul_row_bank_patch \
 	X25519_REU_BANK X25519_REU_OFFSET \
 	X25519_REU_BANK_DOUBLED X25519_REU_BANK_CARRY \
 	LIB_SHARED_REU_MUL_BANK LIB_SHARED_REU_MUL_OFFSET \
 	LIB_SHARED_REU_MUL_BANKS_USED \
 	LIB_PRECALC_reu_mul_SIZE
 
+LIB_VERIFY_SYMS_REU = $(LIB_VERIFY_SYMS_REU_OWN) $(LIB_VERIFY_SYMS_REU_CANON) \
+	$(LIB_VERIFY_SYMS_REU_SURFACE)
+
+# Per-profile expected symbol sets + the expected
+# LIB_X25519_SHARED_PRIMITIVES value (PR #63 conditional-mask matrix,
+# as 6-hex-digit ld65 -Ln label value). The mask assert is a regression
+# guard on the §8.0 conditional-mask construction in src/lib_version.s.
 ifeq ($(X25519_PROFILE),onchip)
-LIB_VERIFY_SYMS_EXPECT = $(LIB_VERIFY_SYMS_COMMON)
+LIB_VERIFY_SYMS_EXPECT = $(LIB_VERIFY_SYMS_COMMON) \
+	$(LIB_VERIFY_SYMS_CT_CANON) $(LIB_VERIFY_SYMS_CT_OWN)
 LIB_VERIFY_SYMS_ABSENT = $(LIB_VERIFY_SYMS_REU)
-else
-LIB_VERIFY_SYMS_EXPECT = $(LIB_VERIFY_SYMS_COMMON) $(LIB_VERIFY_SYMS_REU)
+LIB_VERIFY_MASK_EXPECT = 000005
+else ifeq ($(X25519_PROFILE),shared-sqtab)
+LIB_VERIFY_SYMS_EXPECT = $(LIB_VERIFY_SYMS_COMMON) \
+	$(LIB_VERIFY_SYMS_CT_CANON) $(LIB_VERIFY_SYMS_CT_OWN) \
+	$(LIB_VERIFY_SYMS_REU)
 LIB_VERIFY_SYMS_ABSENT =
+LIB_VERIFY_MASK_EXPECT = 000006
+else ifeq ($(X25519_PROFILE),shared-reu)
+LIB_VERIFY_SYMS_EXPECT = $(LIB_VERIFY_SYMS_COMMON) \
+	$(LIB_VERIFY_SYMS_CT_CANON) $(LIB_VERIFY_SYMS_CT_OWN) \
+	$(LIB_VERIFY_SYMS_REU_CANON) $(LIB_VERIFY_SYMS_REU_SURFACE)
+LIB_VERIFY_SYMS_ABSENT = $(LIB_VERIFY_SYMS_REU_OWN)
+LIB_VERIFY_MASK_EXPECT = 000005
+else ifeq ($(X25519_PROFILE),shared-ct)
+LIB_VERIFY_SYMS_EXPECT = $(LIB_VERIFY_SYMS_COMMON) \
+	$(LIB_VERIFY_SYMS_CT_CANON) $(LIB_VERIFY_SYMS_REU)
+LIB_VERIFY_SYMS_ABSENT = $(LIB_VERIFY_SYMS_CT_OWN)
+LIB_VERIFY_MASK_EXPECT = 000003
+else ifeq ($(X25519_PROFILE),shared-all)
+LIB_VERIFY_SYMS_EXPECT = $(LIB_VERIFY_SYMS_COMMON) \
+	$(LIB_VERIFY_SYMS_CT_CANON) \
+	$(LIB_VERIFY_SYMS_REU_CANON) $(LIB_VERIFY_SYMS_REU_SURFACE)
+LIB_VERIFY_SYMS_ABSENT = $(LIB_VERIFY_SYMS_CT_OWN) $(LIB_VERIFY_SYMS_REU_OWN)
+LIB_VERIFY_MASK_EXPECT = 000000
+else
+LIB_VERIFY_SYMS_EXPECT = $(LIB_VERIFY_SYMS_COMMON) \
+	$(LIB_VERIFY_SYMS_CT_CANON) $(LIB_VERIFY_SYMS_CT_OWN) \
+	$(LIB_VERIFY_SYMS_REU)
+LIB_VERIFY_SYMS_ABSENT =
+LIB_VERIFY_MASK_EXPECT = 000007
 endif
 
 lib-verify: lib $(LIB_VERIFY_PRG)
@@ -216,8 +270,49 @@ lib-verify: lib $(LIB_VERIFY_PRG)
 	  ! grep -q "\\b$$sym\\b" $(LIB_VERIFY_DIR)/stub.labels \
 	    || (echo "FAIL: symbol $$sym present but must be gated out in $(X25519_PROFILE) profile" && exit 1); \
 	done; \
+	grep -q "^al $(LIB_VERIFY_MASK_EXPECT) \.LIB_X25519_SHARED_PRIMITIVES$$" \
+	    $(LIB_VERIFY_DIR)/stub.labels \
+	  || (echo "FAIL: LIB_X25519_SHARED_PRIMITIVES != \$$$(LIB_VERIFY_MASK_EXPECT) in $(X25519_PROFILE) profile:" \
+	      && grep "LIB_X25519_SHARED_PRIMITIVES" $(LIB_VERIFY_DIR)/stub.labels \
+	      && exit 1); \
 	bytes=$$(wc -c < $(LIB_VERIFY_PRG)); \
-	echo "OK: $(LIB_VERIFY_PRG) is $$bytes bytes, $(X25519_PROFILE)-profile symbol surface verified"
+	echo "OK: $(LIB_VERIFY_PRG) is $$bytes bytes, $(X25519_PROFILE)-profile symbol surface verified (mask \$$$(LIB_VERIFY_MASK_EXPECT))"
+
+# --- §8.x deferral-build linkage matrix (R6) ---------------------------------
+#
+# `make lib-verify-shared` proves each c64-lib-contract SHARED_*
+# deferral build of libx25519.a actually LINKS in a composed-consumer
+# shape: the stub link adds shared_provider_stub.s as a stand-in for
+# the canonical provider the deferral trusts, and lib-verify asserts
+# the deferred x25519-own exports are absent + the §8.0 conditional
+# mask dropped the right bits. This is the R6 regression gate: the
+# SHARED_REU_MUL_INIT leg used to die on four unresolved externals
+# (reu_mul_init, reu_mul_tables_init, and the dangling reu_init_a/b
+# ZP-alias .globals in reu_config.s).
+#
+# NOTE: always -D SWITCH=1 — a bare ca65 -D defines the symbol as 0,
+# which .ifdef still sees as defined, but keep the idiom uniform with
+# X25519_ONCHIP_MUL (where bare -D silently selects the WRONG profile).
+lib-verify-shared:
+	@echo "=== lib-verify-shared: SPEC §8.x deferral-build linkage matrix ==="
+	rm -rf build-shared
+	$(MAKE) BUILD_DIR=build-shared LIB_DIR=build-shared/lib \
+	        CA65FLAGS="-D SHARED_SQTAB_INIT=1" \
+	        X25519_PROFILE=shared-sqtab lib-verify
+	rm -rf build-shared
+	$(MAKE) BUILD_DIR=build-shared LIB_DIR=build-shared/lib \
+	        CA65FLAGS="-D SHARED_REU_MUL_INIT=1" \
+	        X25519_PROFILE=shared-reu lib-verify
+	rm -rf build-shared
+	$(MAKE) BUILD_DIR=build-shared LIB_DIR=build-shared/lib \
+	        CA65FLAGS="-D SHARED_CT_MUL_8X8=1" \
+	        X25519_PROFILE=shared-ct lib-verify
+	rm -rf build-shared
+	$(MAKE) BUILD_DIR=build-shared LIB_DIR=build-shared/lib \
+	        CA65FLAGS="-D SHARED_SQTAB_INIT=1 -D SHARED_REU_MUL_INIT=1 -D SHARED_CT_MUL_8X8=1" \
+	        X25519_PROFILE=shared-all lib-verify
+	rm -rf build-shared
+	@echo "OK: all four SHARED_* deferral profiles link and verify"
 
 # --- v0.6: 1764-targeted build variant (Group B) -----------------------------
 #
@@ -336,11 +431,12 @@ dist:
 	fi
 	@tools/build_release.sh $(VERSION)
 
-$(LIB_VERIFY_PRG): $(LIB_VERIFY_STUB) $(LIBX25519) cfg/x25519-example.cfg | $(LIB_VERIFY_DIR)
+$(LIB_VERIFY_PRG): $(LIB_VERIFY_STUB) $(LIB_VERIFY_PROVIDER) $(LIBX25519) cfg/x25519-example.cfg | $(LIB_VERIFY_DIR)
 	$(CA65) $(CA65FLAGS) -I $(SRC_DIR) -o $(LIB_VERIFY_DIR)/stub.o $(LIB_VERIFY_STUB)
+	$(CA65) $(CA65FLAGS) -I $(SRC_DIR) -o $(LIB_VERIFY_DIR)/shared_provider.o $(LIB_VERIFY_PROVIDER)
 	$(LD65) -C cfg/x25519-example.cfg -o $@ \
 	    -Ln $(LIB_VERIFY_DIR)/stub.labels \
-	    $(LIB_VERIFY_DIR)/stub.o $(LIBX25519)
+	    $(LIB_VERIFY_DIR)/stub.o $(LIB_VERIFY_DIR)/shared_provider.o $(LIBX25519)
 
 $(LIB_VERIFY_DIR):
 	mkdir -p $(LIB_VERIFY_DIR)

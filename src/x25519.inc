@@ -314,13 +314,23 @@
 
 .import sqtab_init, mul_tables_init
 .if ::X25519_ONCHIP_MUL = 0
-.import reu_mul_init
-.import reu_mul_tables_init          ; c64-lib-contract §8.2 canonical entry
-                                     ; (alias of reu_mul_init, same address)
+.ifndef SHARED_REU_MUL_INIT
+.import reu_mul_init                 ; x25519-private init name; gated out of
+                                     ; a SHARED_REU_MUL_INIT deferral build —
+                                     ; only the canonical §8.2 name below is
+                                     ; part of the composed-link surface
 .endif
-.import mul_8x8, ct_mul_8x8          ; c64-lib-contract §8.3 canonical CT
-                                     ; multiply body; mul_8x8 is the
-                                     ; back-compat alias (same address)
+.import reu_mul_tables_init          ; c64-lib-contract §8.2 canonical entry
+                                     ; (alias of reu_mul_init standalone;
+                                     ; provider-owned under SHARED_REU_MUL_INIT)
+.endif
+.import ct_mul_8x8                   ; c64-lib-contract §8.3 canonical CT
+                                     ; multiply body
+.ifndef SHARED_CT_MUL_8X8
+.import mul_8x8                      ; back-compat alias (same address) —
+                                     ; x25519-own name, absent when the body
+                                     ; is deferred to the §8.3 canonical owner
+.endif
 .if ::X25519_ONCHIP_MUL = 0
 .import reu_fetch_mul_row_bank_patch ; §8.2 SMC bank-patch hook (byte
                                      ; address of reu_fetch_mul_row's
