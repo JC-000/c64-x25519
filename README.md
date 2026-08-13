@@ -6,6 +6,18 @@ An optimized implementation of X25519 / Curve25519 scalar multiplication written
 
 ## Status
 
+**v0.9.0 (DRAFT until tagged)** — c64-lib-contract SPEC v0.7.0/v0.5.0
+manifest migration (#77–#81, PR #82): library-prefixed manifest
+exports (`LIB_X25519_VERSION_*`, `LIB_X25519_PRECALC_*`), the
+`LIB_NO_BARE_EXPORTS` composing-consumer gate, the
+`LIB_X25519_SHARED_CONSUMES` companion mask, and un-exported §8.x bit
+constants — a consumer can now link c64-x25519 and
+c64-ChaCha20-Poly1305 in one PRG and import both manifests. Zero code
+change: the PRG is byte-identical to v0.8.0, so all v0.8.0 perf and
+CT results carry over. One narrow migration edge for hand-written
+`.import LIB_SHARED_PRIMITIVES_*` lines (see
+[`docs/RELEASE_NOTES_v0.9.0.md`](docs/RELEASE_NOTES_v0.9.0.md)).
+
 **v0.8.0 released 2026-07-27** — [GitHub release](https://github.com/JC-000/c64-x25519/releases/tag/v0.8.0). — rolls up the
 cold-segment split (#68/#69), the SPEC §4 segment-prefix migration
 (#70/#71), and the **`X25519_ONCHIP_MUL` no-REU build profile**
