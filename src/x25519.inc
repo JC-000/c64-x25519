@@ -27,7 +27,7 @@
 ; ----------------------------------------------------------------------------
 ;
 ;   LIB_X25519_VERSION_MAJOR   semver major (currently 0)
-;   LIB_X25519_VERSION_MINOR   semver minor (currently 8)
+;   LIB_X25519_VERSION_MINOR   semver minor (currently 9)
 ;   LIB_X25519_VERSION_PATCH   semver patch (currently 0)
 ;   LIB_X25519_ABI_VERSION     coarse ABI compat level (currently 1)
 ;
