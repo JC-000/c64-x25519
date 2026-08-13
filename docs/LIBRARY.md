@@ -194,12 +194,14 @@ Every library-owned ZP equate lives in `src/zp_config.s` (per
 and is wrapped in `.ifndef <name>` / `.endif`, so a host project that
 wants to place the library's ZP scratch at different addresses can:
 
-1. **Override via `--asm-define`** (recommended). Pass `--asm-define
+1. **Override via `ca65 -D`** (recommended). Pass `-D
    fe25519_src1=$40` on the `ca65` command line when building the
    library. All translation units that include `zp_config.s` see the
    override. The library must be rebuilt from source with the same
-   `--asm-define` values for every `.o` file; the slot value is baked
-   in at assemble time.
+   `-D` values for every `.o` file; the slot value is baked in at
+   assemble time. (`-D name[=value]` is ca65's actual symbol-define
+   flag per SPEC v0.7.1 §2 — `--asm-define` is `cl65`'s spelling and
+   is rejected by a direct `ca65` invocation.)
 
 2. **Override via a wrapper `.s` file.** Pre-define the equate, then
    `.include "zp_config.s"` (or `.include "constants.s"`, which
@@ -261,28 +263,43 @@ units. Host overrides must be defined *before* the first `.include
 ## 4.3 Version constants
 
 The library exports four integer equates per
-[c64-lib-contract §1](https://github.com/JC-000/c64-lib-contract/blob/master/SPEC.md#1-version-identification):
+[c64-lib-contract §1](https://github.com/JC-000/c64-lib-contract/blob/master/SPEC.md#1-version-identification)
+(v0.7.0 library-prefixed forms):
 
 | Symbol | Current value | Semantics |
 |---|---|---|
-| `LIB_VERSION_MAJOR` | `0` | semver major (breaking ABI change) |
-| `LIB_VERSION_MINOR` | `8` | semver minor (additive ABI change) |
-| `LIB_VERSION_PATCH` | `0` | semver patch (no ABI change) |
-| `LIB_ABI_VERSION`   | `1` | coarse ABI compat level — tracks MAJOR |
+| `LIB_X25519_VERSION_MAJOR` | `0` | semver major (breaking ABI change) |
+| `LIB_X25519_VERSION_MINOR` | `8` | semver minor (additive ABI change) |
+| `LIB_X25519_VERSION_PATCH` | `0` | semver patch (no ABI change) |
+| `LIB_X25519_ABI_VERSION`   | `1` | coarse ABI compat level — tracks MAJOR |
 
 Consumers should `.import` these and `.if`-guard at assemble time
 against an unsupported library version:
 
 ```ca65
-.import LIB_VERSION_MAJOR, LIB_VERSION_MINOR
-.if LIB_VERSION_MAJOR <> 0 .or LIB_VERSION_MINOR < 5
-    .error "this consumer needs c64-x25519 v0.5 or later"
+.import LIB_X25519_VERSION_MAJOR, LIB_X25519_VERSION_MINOR
+.if LIB_X25519_VERSION_MAJOR <> 0 .or LIB_X25519_VERSION_MINOR < 8
+    .error "this consumer needs c64-x25519 v0.8 or later"
 .endif
 ```
 
 The guard fires before the 30-minute link/test cycle, complementing
-git-submodule SHA pinning with a defense-in-depth assert. The
-equates live in `src/lib_version.s`.
+git-submodule SHA pinning with a defense-in-depth assert.
+
+The unprefixed `LIB_VERSION_{MAJOR,MINOR,PATCH}` / `LIB_ABI_VERSION`
+aliases are still exported by default but **deprecated** (contract
+v0.7.0; removed at contract v1.0): they are identical across every
+contract library, so two libraries in one link collide on them. A
+consumer composing c64-x25519 with any other contract library builds
+every library — and assembles its own imports — with
+`ca65 -D LIB_NO_BARE_EXPORTS=1`, which suppresses the bare aliases,
+and uses the prefixed forms only.
+
+The equates live in `src/lib_version.s`, a translation unit that
+exports *nothing else* (SPEC v0.7.0 §1 TU isolation): ld65 links whole
+object members, so the deprecated bare names must not share a member
+with symbols a consumer legitimately imports. The §4.4/§4.7 manifest
+surface lives in `src/lib_manifest.s`.
 
 ## 4.4 Aggregate manifest equates
 
@@ -301,7 +318,7 @@ compile + VICE test cycle:
 The values are approximate ("within 5% is fine" per SPEC §5). The
 library author refreshes them when a release substantively changes
 any one of them. The two `lib-x25519-onchip` byte figures are flagged
-provisional in `src/lib_version.s` itself and must be refreshed from
+provisional in `src/lib_manifest.s` itself and must be refreshed from
 `make lib-x25519-onchip`'s segsize dump before that profile ships in a
 release.
 
@@ -311,7 +328,7 @@ c64-nist-curves):
 ```ca65
 .import LIB_NISTCURVES_REU_BANKS_USED
 .import LIB_X25519_REU_BANKS_USED
-.assert (LIB_NISTCURVES_REU_BANKS_USED .and LIB_X25519_REU_BANKS_USED) = 0, \
+.assert (LIB_NISTCURVES_REU_BANKS_USED & LIB_X25519_REU_BANKS_USED) = 0, \
         error, "REU bank collision: relocate one library with -D"
 ```
 
@@ -392,7 +409,7 @@ sqtab_hi = LIB_SHARED_SQTAB_BASE + $0200
 .assert sqtab_hi = sqtab_lo + $0200, error, "SMC dispatch contract"
 ```
 
-Override base via `ca65 --asm-define LIB_SHARED_SQTAB_BASE=$N`
+Override base via `ca65 -D LIB_SHARED_SQTAB_BASE=$N`
 (applied to every library translation unit). The asserts catch any
 override that breaks page-alignment or the +`$0200` lo→hi delta that
 `mul_8x8`'s SMC dispatch depends on.
@@ -437,13 +454,19 @@ LIB_SHARED_PRIMITIVES_SQTAB  = $0001     ; c64-lib-contract §8.1 bit
 ; set in LIB_X25519_SHARED_PRIMITIVES unless SHARED_SQTAB_INIT is defined
 ```
 
+The per-primitive bit constants (`LIB_SHARED_PRIMITIVES_SQTAB` etc.)
+are **assemble-time equates, not link symbols** (issues #77/#78):
+every §8 adopter carries the same names and values, and only exported
+symbols can collide at link time. They arrive via `x25519.inc` as
+`.ifndef`-guarded local equates; do not `.import` them.
+
 A consumer composing c64-x25519 with another sqtab-using library can
 detect the unhandled-double-build case at assemble time:
 
 ```ca65
 .import LIB_X25519_SHARED_PRIMITIVES
 .import LIB_OTHER_SHARED_PRIMITIVES
-.assert (LIB_X25519_SHARED_PRIMITIVES .and \
+.assert (LIB_X25519_SHARED_PRIMITIVES & \
          LIB_OTHER_SHARED_PRIMITIVES) = 0, error, \
         "both libs claim a §8 primitive; define SHARED_SQTAB_INIT in one"
 ```
@@ -452,6 +475,38 @@ With the conditional mask this assert *passes* once exactly one lib
 owns each shared primitive — the deferring side's bit drops out
 instead of tripping the assert on legitimate sharing
 (c64-lib-contract#21).
+
+**Companion mask `LIB_X25519_SHARED_CONSUMES`** (SPEC v0.5.0,
+issues #78/#81): bit set iff this build configuration *consumes* the
+primitive at all. A `SHARED_*` deferral switch clears the ownership
+bit but NOT the consumes bit (the build still reads the primitive and
+needs exactly one owner in the link plus boot-time init); a profile
+gate (`X25519_ONCHIP_MUL`) clears both. This distinguishes the two
+builds that both report `LIB_X25519_SHARED_PRIMITIVES = $0005`:
+
+| Build | `SHARED_PRIMITIVES` | `SHARED_CONSUMES` |
+|---|---|---|
+| standalone default / 1764 | `$0007` | `$0007` |
+| any `SHARED_*` deferral | bit(s) dropped | `$0007` |
+| `X25519_ONCHIP_MUL` profile | `$0005` | `$0005` |
+
+The consumer-side coverage assert then closes the composition story —
+every consumed primitive has an owner somewhere in the link:
+
+```ca65
+.import LIB_X25519_SHARED_CONSUMES, LIB_OTHER_SHARED_CONSUMES
+.assert ((LIB_X25519_SHARED_CONSUMES | LIB_OTHER_SHARED_CONSUMES) \
+         & ~(LIB_X25519_SHARED_PRIMITIVES | \
+             LIB_OTHER_SHARED_PRIMITIVES)) = 0, error, \
+        "consumed shared primitive with no owner in the link"
+```
+
+(Bitwise `&`/`|`/`~`, not the boolean `.and`/`.or` — on multi-bit
+masks the boolean forms collapse operands to 0/1 and pass/fail on the
+wrong condition; c64-lib-contract#41.)
+
+The library pins the adopter-side subset invariant
+(`OWNED ⊆ CONSUMED`) at assemble time in `src/lib_manifest.s`.
 
 ## 4.7 The `lib-x25519-1764` build variant (v0.6+)
 
@@ -488,7 +543,7 @@ Mechanism: a single `-D SQR_DMA_K=0` define (threaded through
 `$(CA65FLAGS)` in the Makefile) makes `fe25519_sqr`'s `bcs
 @sqr_use_mult66` always taken, so the DMA dispatch never fires. The
 matching `.if ::SQR_DMA_K` guards in `src/x25519_init.s:reu_mul_init`
-and `src/lib_version.s` then gate out the doubled-table generation
+and `src/lib_manifest.s` then gate out the doubled-table generation
 + stash sections and re-emit the smaller bank/resident equates.
 
 The default build is unchanged at the source level — the variant is
@@ -522,7 +577,7 @@ LIB_SHARED_REU_MUL_BANKS_USED = \
 .assert LIB_SHARED_REU_MUL_BANK < $FE,    error, ...
 ```
 
-Override the base bank via `ca65 --asm-define LIB_SHARED_REU_MUL_BANK=$N`
+Override the base bank via `ca65 -D LIB_SHARED_REU_MUL_BANK=$N`
 (applied to every library translation unit). `_OFFSET` is pinned to
 `$0000` per a v0.x.0 SPEC constraint; loosen only on a justified non-
 zero need from a future adopter. `_BANKS_USED` is a derived equate
@@ -632,17 +687,25 @@ because of the conditional construction.
 ## 4.9 Precalc-table enumeration (c64-lib-contract §8.0 step-6)
 
 c64-x25519 ships [`docs/precalc-tables.md`](precalc-tables.md) plus
-`LIB_PRECALC_TABLE` macro invocations in `src/lib_version.s` satisfying
+`LIB_PRECALC_TABLE` macro invocations in `src/lib_manifest.s` satisfying
 SPEC §8.0's catch-loop intake step. Each precalculated table that meets
 the §8.0 floor (≥ 256 B AND one of: REU-resident, hot-loop-read,
 page-aligned) is enumerated in both forms:
 
 - the doc captures shape + classification + the load-bearing
   *rationale* for the classification;
-- the macro emits three exported equates per table
-  (`LIB_PRECALC_<name>_{SIZE,REGION,SHARED}`) that cross-adopter
-  audits grep via `od65 --dump-exports build/lib/libx25519.a |
-  grep LIB_PRECALC_`.
+- the macro emits, per table, the prefixed exported triple
+  `LIB_X25519_PRECALC_<name>_{SIZE,REGION,SHARED}` (SPEC v0.7.0 §8.4
+  fifth argument) plus — unless the build defines
+  `LIB_NO_BARE_EXPORTS` — the deprecated bare triple
+  `LIB_PRECALC_<name>_*`. Cross-adopter audits grep via
+  `od65 --dump-exports build/lib/lib_manifest.o | grep _PRECALC_` —
+  the pattern is `_PRECALC_`, which matches both forms; the old
+  `LIB_PRECALC_` pattern silently misses every prefixed export. Note
+  `od65` reads objects, not archives: pointed at a `.a` it prints
+  `(no xo65 object file)` and exits 0, so audit the extracted member
+  (or the shipped per-object files), never the archive itself
+  (SPEC v0.7.2).
 
 Three tables are enumerated today: `sqtab` (1024 B, RAM, shared per
 §8.1), `reu_mul` (131072 B, REU, shared per §8.2), `reu_mul_doubled`
@@ -831,7 +894,7 @@ Two of these carry contract meaning worth spelling out:
 - The `RESIDENT`/`COLD` figures are **placeholders pending an `od65
   --dump-segsize` refresh**; `make lib-x25519-onchip` prints the dump
   at the end of its run. They are marked provisional in
-  `src/lib_version.s` too, and must be corrected before the profile
+  `src/lib_manifest.s` too, and must be corrected before the profile
   ships in a release.
 
 **Trade-off, and who should use this.** On a stock 1 MHz C64 the

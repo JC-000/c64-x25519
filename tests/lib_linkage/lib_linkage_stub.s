@@ -76,9 +76,22 @@ public_refs:
 ; Version constants — integer equates, referenced via .word so ld65 pulls
 ; lib_version.o into the archive resolution. .byte would fail because
 ; ca65 cannot prove the import fits in a byte until link time.
+;
+; The PREFIXED forms (contract v0.7.0 §1) are the primary reference —
+; they exist in every build mode and are what forces the lib_version.o
+; member pull. The deprecated bare forms are additionally referenced
+; only when the archive still exports them (gated on the same
+; LIB_NO_BARE_EXPORTS define the archive build uses; CA65FLAGS
+; propagates to this stub's assembly, so the two sides stay in step).
+.import LIB_X25519_VERSION_MAJOR, LIB_X25519_VERSION_MINOR
+.import LIB_X25519_VERSION_PATCH, LIB_X25519_ABI_VERSION
 public_version_refs:
+        .word LIB_X25519_VERSION_MAJOR, LIB_X25519_VERSION_MINOR
+        .word LIB_X25519_VERSION_PATCH, LIB_X25519_ABI_VERSION
+.ifndef LIB_NO_BARE_EXPORTS
         .word LIB_VERSION_MAJOR, LIB_VERSION_MINOR
         .word LIB_VERSION_PATCH, LIB_ABI_VERSION
+.endif
 
 ; ZP slot exports from src/zp_config.s. .importzp + .byte references
 ; force ld65 to pull zp_config.o out of the archive.
@@ -105,23 +118,29 @@ public_reu_refs:
 .endif ; X25519_ONCHIP_MUL = 0 (issue #72 — REU config surface)
 
 ; Manifest aggregate equates (c64-lib-contract §5). Same .word reference
-; trick to force ld65 archive-member resolution of lib_version.o.
+; trick to force ld65 archive-member resolution of lib_manifest.o
+; (split out of lib_version.o per SPEC v0.7.0 §1 TU isolation,
+; issues #78/#79).
 .import LIB_X25519_ZP_USAGE_BYTES, LIB_X25519_REU_BANKS_USED
 .import LIB_X25519_RESIDENT_BYTES, LIB_X25519_COLD_BYTES
-; c64-lib-contract §8.1 + §8.2 + §8.3 shared-primitives bitmask
-; (v0.7-prep+; §8.3 bit + conditional mask form per SPEC v0.4.0).
+; §8.x ownership + consumes masks (SPEC v0.4.0 conditional form +
+; v0.5.0 companion). The per-primitive bit constants are NOT imported:
+; since issues #77/#78 they are unexported assemble-time equates that
+; arrive via x25519.inc (SPEC §8.0 copy-the-block shape) — referenced
+; below as plain constants, and asserted ABSENT from stub.labels by
+; the lib-verify LIB_VERIFY_SYMS_ABSENT_ALWAYS check.
 .import LIB_X25519_SHARED_PRIMITIVES
-.import LIB_SHARED_PRIMITIVES_SQTAB, LIB_SHARED_PRIMITIVES_REU_MUL
-.import LIB_SHARED_PRIMITIVES_CT_MUL_8X8
+.import LIB_X25519_SHARED_CONSUMES
 public_manifest_refs:
         .word LIB_X25519_ZP_USAGE_BYTES, LIB_X25519_REU_BANKS_USED
         .word LIB_X25519_RESIDENT_BYTES, LIB_X25519_COLD_BYTES
         .word LIB_X25519_SHARED_PRIMITIVES
+        .word LIB_X25519_SHARED_CONSUMES
         .word LIB_SHARED_PRIMITIVES_SQTAB, LIB_SHARED_PRIMITIVES_REU_MUL
         .word LIB_SHARED_PRIMITIVES_CT_MUL_8X8
 
 ; c64-lib-contract §8.0 catch-loop exports (v0.7-prep+) are emitted by
-; the LIB_PRECALC_TABLE macro invocations in lib_version.s. We do NOT
+; the LIB_PRECALC_TABLE macro invocations in lib_manifest.s. We do NOT
 ; .import them here because the SIZE export for reu_mul (131072) is
 ; auto-sized to `far` by ca65 and the 6502 target has no `far` import
 ; address-size hint to match. The smoke check for these symbols lives
