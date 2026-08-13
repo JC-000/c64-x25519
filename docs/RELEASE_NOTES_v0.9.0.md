@@ -107,13 +107,17 @@ which per the repo's byte-identity standard carries the v0.8.0
 cycles), hardware A/B results, and CT catalogue L1–L30 forward
 unchanged.
 
-## Tarball (DRAFT — filled by the post-tag SHA-fill PR)
+## Tarball
 
 ```
 File:     c64-x25519-v0.9.0.tar.gz
-Size:     DRAFT
-SHA256:   DRAFT
+Size:     120,885 bytes
+SHA256:   639de22b243647356fc6ae59cde973381f6ac43482f0a26c42b6e45ec2204ca9
 ```
+
+Byte-identical across two independent `make dist` runs; every shipped
+source (including the new `src/lib_manifest.s`) verified to assemble
+standalone from the extracted tarball — the v0.7.0-erratum check.
 
 Built via `make dist VERSION=v0.9.0` (reproducible; `git archive` +
 `gzip -n`). The file list now includes `src/lib_manifest.s`.

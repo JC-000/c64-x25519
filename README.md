@@ -6,7 +6,7 @@ An optimized implementation of X25519 / Curve25519 scalar multiplication written
 
 ## Status
 
-**v0.9.0 (DRAFT until tagged)** — c64-lib-contract SPEC v0.7.0/v0.5.0
+**v0.9.0 released 2026-08-13** — [GitHub release](https://github.com/JC-000/c64-x25519/releases/tag/v0.9.0) — c64-lib-contract SPEC v0.7.0/v0.5.0
 manifest migration (#77–#81, PR #82): library-prefixed manifest
 exports (`LIB_X25519_VERSION_*`, `LIB_X25519_PRECALC_*`), the
 `LIB_NO_BARE_EXPORTS` composing-consumer gate, the
