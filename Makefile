@@ -24,6 +24,7 @@ LIB_OBJS = $(BUILD_DIR)/x25519_init.o \
            $(BUILD_DIR)/data.o \
            $(BUILD_DIR)/util.o \
            $(BUILD_DIR)/lib_version.o \
+           $(BUILD_DIR)/lib_manifest.o \
            $(BUILD_DIR)/zp_config.o \
            $(BUILD_DIR)/reu_config.o
 
@@ -37,6 +38,7 @@ CA65_SRCS = $(SRC_DIR)/main.s \
             $(SRC_DIR)/data.s \
             $(SRC_DIR)/util.s \
             $(SRC_DIR)/lib_version.s \
+            $(SRC_DIR)/lib_manifest.s \
             $(SRC_DIR)/zp_config.s \
             $(SRC_DIR)/reu_config.s
 
@@ -184,15 +186,26 @@ LIB_VERIFY_SYMS_COMMON = x25519_clamp x25519_scalarmult x25519_base \
 	bench_cycles_start bench_cycles_stop bench_cycles \
 	LIB_VERSION_MAJOR LIB_VERSION_MINOR LIB_VERSION_PATCH \
 	LIB_ABI_VERSION \
+	LIB_X25519_VERSION_MAJOR LIB_X25519_VERSION_MINOR \
+	LIB_X25519_VERSION_PATCH LIB_X25519_ABI_VERSION \
 	fe25519_src1 fe25519_src2 fe25519_dst \
 	fe_carry poly_carry \
 	LIB_X25519_ZP_USAGE_BYTES LIB_X25519_REU_BANKS_USED \
 	LIB_X25519_RESIDENT_BYTES LIB_X25519_COLD_BYTES \
 	LIB_X25519_SHARED_PRIMITIVES \
-	LIB_SHARED_PRIMITIVES_SQTAB LIB_SHARED_PRIMITIVES_REU_MUL \
-	LIB_SHARED_PRIMITIVES_CT_MUL_8X8 \
+	LIB_X25519_SHARED_CONSUMES \
 	LIB_PRECALC_sqtab_SIZE \
+	LIB_X25519_PRECALC_sqtab_SIZE \
 	mul_tables_init
+
+# §8.x bit constants must NEVER be exported (issues #77/#78 item 3):
+# they are unprefixed names with identical values in every §8 adopter,
+# so any export collides at link time with a sibling library (the
+# c64-ChaCha20-Poly1305 pair). Asserted absent in EVERY profile —
+# consumers get them by copying the SPEC §8.0 equate block instead.
+LIB_VERIFY_SYMS_ABSENT_ALWAYS = \
+	LIB_SHARED_PRIMITIVES_SQTAB LIB_SHARED_PRIMITIVES_REU_MUL \
+	LIB_SHARED_PRIMITIVES_CT_MUL_8X8
 
 # §8.3 body surface. ct_mul_8x8 is the canonical name (resolves to the
 # provider stand-in under SHARED_CT_MUL_8X8); mul_8x8 is the x25519-own
@@ -214,49 +227,60 @@ LIB_VERIFY_SYMS_REU_SURFACE = reu_fetch_mul_row_bank_patch \
 	X25519_REU_BANK_DOUBLED X25519_REU_BANK_CARRY \
 	LIB_SHARED_REU_MUL_BANK LIB_SHARED_REU_MUL_OFFSET \
 	LIB_SHARED_REU_MUL_BANKS_USED \
-	LIB_PRECALC_reu_mul_SIZE
+	LIB_PRECALC_reu_mul_SIZE \
+	LIB_X25519_PRECALC_reu_mul_SIZE
 
 LIB_VERIFY_SYMS_REU = $(LIB_VERIFY_SYMS_REU_OWN) $(LIB_VERIFY_SYMS_REU_CANON) \
 	$(LIB_VERIFY_SYMS_REU_SURFACE)
 
 # Per-profile expected symbol sets + the expected
-# LIB_X25519_SHARED_PRIMITIVES value (PR #63 conditional-mask matrix,
-# as 6-hex-digit ld65 -Ln label value). The mask assert is a regression
-# guard on the §8.0 conditional-mask construction in src/lib_version.s.
+# LIB_X25519_SHARED_PRIMITIVES / LIB_X25519_SHARED_CONSUMES values
+# (PR #63 conditional-mask matrix + SPEC v0.5.0 consumes companion,
+# as 6-hex-digit ld65 -Ln label values). The mask asserts are a
+# regression guard on the §8.0 mask construction in
+# src/lib_manifest.s. CONSUMES stays $0007 across every SHARED_*
+# deferral profile (deferral moves ownership, not consumption) and
+# drops the §8.2 bit only under the onchip profile gate.
 ifeq ($(X25519_PROFILE),onchip)
 LIB_VERIFY_SYMS_EXPECT = $(LIB_VERIFY_SYMS_COMMON) \
 	$(LIB_VERIFY_SYMS_CT_CANON) $(LIB_VERIFY_SYMS_CT_OWN)
 LIB_VERIFY_SYMS_ABSENT = $(LIB_VERIFY_SYMS_REU)
 LIB_VERIFY_MASK_EXPECT = 000005
+LIB_VERIFY_CONSUMES_EXPECT = 000005
 else ifeq ($(X25519_PROFILE),shared-sqtab)
 LIB_VERIFY_SYMS_EXPECT = $(LIB_VERIFY_SYMS_COMMON) \
 	$(LIB_VERIFY_SYMS_CT_CANON) $(LIB_VERIFY_SYMS_CT_OWN) \
 	$(LIB_VERIFY_SYMS_REU)
 LIB_VERIFY_SYMS_ABSENT =
 LIB_VERIFY_MASK_EXPECT = 000006
+LIB_VERIFY_CONSUMES_EXPECT = 000007
 else ifeq ($(X25519_PROFILE),shared-reu)
 LIB_VERIFY_SYMS_EXPECT = $(LIB_VERIFY_SYMS_COMMON) \
 	$(LIB_VERIFY_SYMS_CT_CANON) $(LIB_VERIFY_SYMS_CT_OWN) \
 	$(LIB_VERIFY_SYMS_REU_CANON) $(LIB_VERIFY_SYMS_REU_SURFACE)
 LIB_VERIFY_SYMS_ABSENT = $(LIB_VERIFY_SYMS_REU_OWN)
 LIB_VERIFY_MASK_EXPECT = 000005
+LIB_VERIFY_CONSUMES_EXPECT = 000007
 else ifeq ($(X25519_PROFILE),shared-ct)
 LIB_VERIFY_SYMS_EXPECT = $(LIB_VERIFY_SYMS_COMMON) \
 	$(LIB_VERIFY_SYMS_CT_CANON) $(LIB_VERIFY_SYMS_REU)
 LIB_VERIFY_SYMS_ABSENT = $(LIB_VERIFY_SYMS_CT_OWN)
 LIB_VERIFY_MASK_EXPECT = 000003
+LIB_VERIFY_CONSUMES_EXPECT = 000007
 else ifeq ($(X25519_PROFILE),shared-all)
 LIB_VERIFY_SYMS_EXPECT = $(LIB_VERIFY_SYMS_COMMON) \
 	$(LIB_VERIFY_SYMS_CT_CANON) \
 	$(LIB_VERIFY_SYMS_REU_CANON) $(LIB_VERIFY_SYMS_REU_SURFACE)
 LIB_VERIFY_SYMS_ABSENT = $(LIB_VERIFY_SYMS_CT_OWN) $(LIB_VERIFY_SYMS_REU_OWN)
 LIB_VERIFY_MASK_EXPECT = 000000
+LIB_VERIFY_CONSUMES_EXPECT = 000007
 else
 LIB_VERIFY_SYMS_EXPECT = $(LIB_VERIFY_SYMS_COMMON) \
 	$(LIB_VERIFY_SYMS_CT_CANON) $(LIB_VERIFY_SYMS_CT_OWN) \
 	$(LIB_VERIFY_SYMS_REU)
 LIB_VERIFY_SYMS_ABSENT =
 LIB_VERIFY_MASK_EXPECT = 000007
+LIB_VERIFY_CONSUMES_EXPECT = 000007
 endif
 
 lib-verify: lib $(LIB_VERIFY_PRG)
@@ -266,7 +290,7 @@ lib-verify: lib $(LIB_VERIFY_PRG)
 	  grep -q "\\b$$sym\\b" $(LIB_VERIFY_DIR)/stub.labels \
 	    || (echo "FAIL: expected symbol $$sym not in linked binary" && exit 1); \
 	done; \
-	for sym in $(LIB_VERIFY_SYMS_ABSENT); do \
+	for sym in $(LIB_VERIFY_SYMS_ABSENT) $(LIB_VERIFY_SYMS_ABSENT_ALWAYS); do \
 	  ! grep -q "\\b$$sym\\b" $(LIB_VERIFY_DIR)/stub.labels \
 	    || (echo "FAIL: symbol $$sym present but must be gated out in $(X25519_PROFILE) profile" && exit 1); \
 	done; \
@@ -274,6 +298,11 @@ lib-verify: lib $(LIB_VERIFY_PRG)
 	    $(LIB_VERIFY_DIR)/stub.labels \
 	  || (echo "FAIL: LIB_X25519_SHARED_PRIMITIVES != \$$$(LIB_VERIFY_MASK_EXPECT) in $(X25519_PROFILE) profile:" \
 	      && grep "LIB_X25519_SHARED_PRIMITIVES" $(LIB_VERIFY_DIR)/stub.labels \
+	      && exit 1); \
+	grep -q "^al $(LIB_VERIFY_CONSUMES_EXPECT) \.LIB_X25519_SHARED_CONSUMES$$" \
+	    $(LIB_VERIFY_DIR)/stub.labels \
+	  || (echo "FAIL: LIB_X25519_SHARED_CONSUMES != \$$$(LIB_VERIFY_CONSUMES_EXPECT) in $(X25519_PROFILE) profile:" \
+	      && grep "LIB_X25519_SHARED_CONSUMES" $(LIB_VERIFY_DIR)/stub.labels \
 	      && exit 1); \
 	bytes=$$(wc -c < $(LIB_VERIFY_PRG)); \
 	echo "OK: $(LIB_VERIFY_PRG) is $$bytes bytes, $(X25519_PROFILE)-profile symbol surface verified (mask \$$$(LIB_VERIFY_MASK_EXPECT))"
@@ -332,7 +361,7 @@ lib-verify-shared:
 # Output goes to build-1764/ so it doesn't clobber the default build.
 # Internally re-invokes `make lib lib-verify` with BUILD_DIR overridden
 # and CA65FLAGS set; the override propagates to every .s -> .o rule
-# via $(CA65FLAGS), and to lib_version.o + x25519_init.o via the
+# via $(CA65FLAGS), and to lib_manifest.o + x25519_init.o via the
 # `.if SQR_DMA_K > 0` guards in those translation units.
 
 # --- issue #72: on-chip multiply variant (turbo hosts / no REU) --------------

@@ -116,7 +116,7 @@ X25519_REU_BANK_CARRY   = X25519_REU_BANK + 3
 ; LIB_<X>_REU_BANKS_USED (§5) when they consume the canonical primitive.
 ;
 ; `.shl` (not `<<`) matches the existing LIB_*_REU_BANKS_USED idiom in
-; src/lib_version.s and the c64-lib-contract SPEC §8.2 canonical text.
+; src/lib_manifest.s and the c64-lib-contract SPEC §8.2 canonical text.
 LIB_SHARED_REU_MUL_BANKS_USED = (1 .shl LIB_SHARED_REU_MUL_BANK) | (1 .shl (LIB_SHARED_REU_MUL_BANK + 1))
 
 ; SPEC §8.2 assemble-time guards:

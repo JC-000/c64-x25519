@@ -26,18 +26,24 @@
 ; VERSION CONSTANTS (assemble-time guards for consumer pinning)
 ; ----------------------------------------------------------------------------
 ;
-;   LIB_VERSION_MAJOR   semver major (currently 0)
-;   LIB_VERSION_MINOR   semver minor (currently 5)
-;   LIB_VERSION_PATCH   semver patch (currently 0)
-;   LIB_ABI_VERSION     coarse ABI compat level (currently 1)
+;   LIB_X25519_VERSION_MAJOR   semver major (currently 0)
+;   LIB_X25519_VERSION_MINOR   semver minor (currently 8)
+;   LIB_X25519_VERSION_PATCH   semver patch (currently 0)
+;   LIB_X25519_ABI_VERSION     coarse ABI compat level (currently 1)
 ;
-; Per c64-lib-contract §1, consumers may assemble-time guard against an
-; unsupported library version:
+; Per c64-lib-contract §1 (v0.7.0), consumers may assemble-time guard
+; against an unsupported library version:
 ;
-;     .import LIB_VERSION_MAJOR, LIB_VERSION_MINOR
-;     .if LIB_VERSION_MAJOR <> 0 .or LIB_VERSION_MINOR < 5
-;         .error "this consumer needs c64-x25519 v0.5 or later"
+;     .import LIB_X25519_VERSION_MAJOR, LIB_X25519_VERSION_MINOR
+;     .if LIB_X25519_VERSION_MAJOR <> 0 .or LIB_X25519_VERSION_MINOR < 8
+;         .error "this consumer needs c64-x25519 v0.8 or later"
 ;     .endif
+;
+; The unprefixed LIB_VERSION_* / LIB_ABI_VERSION forms still exist but
+; are deprecated (identical across every contract library, so they
+; collide when two libraries share a link; removed at contract v1.0).
+; A consumer composing two or more contract libraries builds them all
+; with `ca65 -D LIB_NO_BARE_EXPORTS=1` and imports prefixed forms only.
 ;
 ; ----------------------------------------------------------------------------
 ; INITIALIZATION (must be called once before any X25519 / fe25519 op)
@@ -344,9 +350,16 @@
 .import vic_blank, vic_unblank, bench_start, bench_stop, bench_ticks
 .import bench_cycles_start, bench_cycles_stop, bench_cycles
 
-; Library version constants (c64-lib-contract §1).
+; Library version constants (c64-lib-contract §1, v0.7.0 prefixed
+; forms). The deprecated bare aliases are only present in the archive
+; when it was built without LIB_NO_BARE_EXPORTS; the same define gates
+; the consumer-side imports so the two sides stay in step.
+.import LIB_X25519_VERSION_MAJOR, LIB_X25519_VERSION_MINOR
+.import LIB_X25519_VERSION_PATCH, LIB_X25519_ABI_VERSION
+.ifndef LIB_NO_BARE_EXPORTS
 .import LIB_VERSION_MAJOR, LIB_VERSION_MINOR, LIB_VERSION_PATCH
 .import LIB_ABI_VERSION
+.endif
 
 .if ::X25519_ONCHIP_MUL = 0
 ; REU layout equates (c64-lib-contract §3). Default 0; override via
@@ -367,11 +380,35 @@
 .import LIB_X25519_RESIDENT_BYTES, LIB_X25519_COLD_BYTES
 
 ; Shared-primitives manifest (c64-lib-contract §5 / §8.0-§8.3).
-; Bitmask of the §8.x primitives this build of c64-x25519 OWNS — per
-; SPEC v0.4.0 §8.0 a bit is set iff the build did NOT define that
-; primitive's deferral switch (SHARED_SQTAB_INIT / SHARED_REU_MUL_INIT
-; / SHARED_CT_MUL_8X8). Use for assemble-time double-ownership
-; detection when composing c64-x25519 with another lib that consumes
-; the same primitives. See LIBRARY.md §4.7.
-.import LIB_X25519_SHARED_PRIMITIVES, LIB_SHARED_PRIMITIVES_SQTAB
-.import LIB_SHARED_PRIMITIVES_REU_MUL, LIB_SHARED_PRIMITIVES_CT_MUL_8X8
+; LIB_X25519_SHARED_PRIMITIVES: bitmask of the §8.x primitives this
+; build of c64-x25519 OWNS — per SPEC v0.4.0 §8.0 a bit is set iff the
+; build did NOT define that primitive's deferral switch
+; (SHARED_SQTAB_INIT / SHARED_REU_MUL_INIT / SHARED_CT_MUL_8X8). Use
+; for assemble-time double-ownership detection when composing
+; c64-x25519 with another lib that consumes the same primitives.
+; LIB_X25519_SHARED_CONSUMES (SPEC v0.5.0): bit set iff this build
+; config consumes the primitive at all — deferral switches do NOT
+; clear it, profile gates (X25519_ONCHIP_MUL) do. Every consumed bit
+; must have exactly one owner in the composed link:
+;   .assert ((LIB_X25519_SHARED_CONSUMES | LIB_<other>_SHARED_CONSUMES) \
+;            & ~(LIB_X25519_SHARED_PRIMITIVES | \
+;                LIB_<other>_SHARED_PRIMITIVES)) = 0, error, \
+;           "consumed shared primitive with no owner in the link"
+; See LIBRARY.md §4.7.
+.import LIB_X25519_SHARED_PRIMITIVES, LIB_X25519_SHARED_CONSUMES
+
+; §8.x per-primitive bit constants (c64-lib-contract §8.0). Plain
+; assemble-time equates, deliberately NOT link symbols: every §8
+; adopter carries the same names/values, and only exported symbols can
+; collide at link time (issues #77/#78). .ifndef-guarded so a consumer
+; that already defines them (e.g. via another adopter's header or -D)
+; does not get a redefinition error.
+.ifndef LIB_SHARED_PRIMITIVES_SQTAB
+LIB_SHARED_PRIMITIVES_SQTAB      = $0001   ; SPEC §8.1 quarter-square table
+.endif
+.ifndef LIB_SHARED_PRIMITIVES_REU_MUL
+LIB_SHARED_PRIMITIVES_REU_MUL    = $0002   ; SPEC §8.2 REU mul table
+.endif
+.ifndef LIB_SHARED_PRIMITIVES_CT_MUL_8X8
+LIB_SHARED_PRIMITIVES_CT_MUL_8X8 = $0004   ; SPEC §8.3 CT multiply body
+.endif

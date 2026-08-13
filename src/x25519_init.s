@@ -199,7 +199,7 @@ reu_mul_tables_init = reu_mul_init
         ;   K=0 build                    → banks 0,1 only.
         ;
         ; The corresponding LIB_X25519_REU_BANKS_USED manifest mask
-        ; flips from $3B to $03 in src/lib_version.s under the same
+        ; flips from $3B to $03 in src/lib_manifest.s under the same
         ; guard, so consumer collision checks see the smaller claim.
         ldx #0
 @dbl_gen:
@@ -436,7 +436,7 @@ reu_fetch_mul_row_bank_patch := reu_fetch_mul_row::bank_lda + 1
 ; is dead code. Gating it out drops dead references to
 ; reu_fetch_mul_row_bank_patch from the K=0 build image (mirrors the
 ; existing SQR_DMA_K gate inside reu_mul_init above and
-; LIB_X25519_REU_BANKS_USED's $3B↔$03 flip in src/lib_version.s).
+; LIB_X25519_REU_BANKS_USED's $3B↔$03 flip in src/lib_manifest.s).
 ; The matching `.export reu_fetch_doubled_row` at the top of this
 ; file is gated under the same condition, and `src/fe25519.s`'s
 ; `.import` + DMA-dispatch block are gated too — see the issue #15
