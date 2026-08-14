@@ -89,6 +89,17 @@ Your own code and data can use whatever segment names you like
 `cfg/x25519-example.cfg`, which declares all three with the correct
 ordering (file-emitting segments before bss-type ones).
 
+**Cfg attributes the library depends on** (contract #63 class: the
+consumer authors `SEGMENTS{}`, the library silently depends on it —
+know each one's failure mode; measured on ld65 V2.18):
+
+| Segment / region | Required attribute | If wrong |
+|---|---|---|
+| `LIB_X25519_DATA` | `align = 256` | **Hard link error** (`lderror` asserts in `src/data.s` / `src/reu_config.s`: "must be page-aligned (CT invariant)"). Cannot ship misaligned. |
+| `LIB_X25519_DATA` | file-emitting `type` (`rw`), in a file-backed area | `type = bss` links with only a **warning** ("segment with type 'bss' contains initialized data") and silently drops ~3.7 KB of tables, constants, and buffers from the PRG — the binary shrinks and every field op reads garbage. |
+| `LIB_X25519_INIT_CODE` | last file-emitting segment, declared **before** any bss-type segment | Links **clean with zero diagnostics**; the init code loads `__BSS_SIZE__` bytes below its linked address and `jsr sqtab_init` executes consumer data (design-doc R5). No machine check exists — ordering discipline only. |
+| `SQTAB` MEMORY region | base equal to `LIB_SHARED_SQTAB_BASE` (default `$7800`), 1 KB reserved | **Fully silent.** No source emits into the SQTAB segment; `sqtab_lo`/`sqtab_hi` are equates off `LIB_SHARED_SQTAB_BASE`, and `sqtab_init` writes 1 KB at the *equate* address no matter what the cfg reserves. Moving/dropping the region, or growing MAIN past `$7800`, without the matching `-D LIB_SHARED_SQTAB_BASE=` override = clean link + 1 KB overwrite of live data at init. Keep the MEMORY block and the `-D` value in lockstep. |
+
 In your source, `.import` the symbols you need:
 
 ```ca65
@@ -273,18 +284,33 @@ The library exports four integer equates per
 | `LIB_X25519_VERSION_PATCH` | `0` | semver patch (no ABI change) |
 | `LIB_X25519_ABI_VERSION`   | `2` | monotonic generation counter for the exported surface (contract v0.7.5) — bumped on any breaking export change, independent of MAJOR; the load-bearing consumer breakage gate pre-1.0. `1 → 2` at v0.10.0 acknowledges the v0.9.0 `LIB_SHARED_PRIMITIVES_*` export removal |
 
-Consumers should `.import` these and `.if`-guard at assemble time
-against an unsupported library version:
+Consumers should `.import` these and gate with `.assert`/`lderror`
+(SPEC v0.8.1 §1):
 
 ```ca65
 .import LIB_X25519_VERSION_MAJOR, LIB_X25519_VERSION_MINOR
-.if LIB_X25519_VERSION_MAJOR <> 0 .or LIB_X25519_VERSION_MINOR < 8
-    .error "this consumer needs c64-x25519 v0.8 or later"
-.endif
+.assert (LIB_X25519_VERSION_MAJOR > 0) .or (LIB_X25519_VERSION_MINOR >= 10), lderror, "this consumer needs c64-x25519 v0.10 or later"
 ```
 
-The guard fires before the 30-minute link/test cycle, complementing
-git-submodule SHA pinning with a defense-in-depth assert.
+And the load-bearing breakage gate on the exported-surface generation:
+
+```ca65
+.import LIB_X25519_ABI_VERSION
+.assert LIB_X25519_ABI_VERSION = 2, lderror, "c64-x25519 exported-surface generation changed; re-check the integration"
+```
+
+(Snippets are deliberately single-line: ca65 rejects `\` line
+continuation with `Invalid input character` unless the consumer
+enables `.linecont +`.)
+
+**Not `.if`/`.error`** — an `.import`ed symbol has no value until
+link, so ca65 rejects an `.if` guard outright with `Constant
+expression expected`; an `.if`-based version gate never assembles at
+all. `.assert` with the `lderror` action defers evaluation to ld65.
+The guard therefore fires at link rather than assemble time — still
+before the multi-minute VICE test cycle and before anything runs —
+complementing git-submodule SHA pinning with a defense-in-depth
+assert.
 
 The unprefixed `LIB_VERSION_{MAJOR,MINOR,PATCH}` / `LIB_ABI_VERSION`
 aliases are still exported by default but **deprecated** (contract
@@ -312,15 +338,14 @@ compile + VICE test cycle:
 |---|---|---|
 | `LIB_X25519_ZP_USAGE_BYTES` | `85` | Total bytes of ZP slots the library claims (sum of `.exportzp`-ed slots in `src/zp_config.s` + the pinned `fe_wide` region) |
 | `LIB_X25519_REU_BANKS_USED` | `$3B` default / `$03` for `lib-x25519-1764` / `0` for `lib-x25519-onchip` | Bitmask of REU banks claimed for mul tables. **Default build** (banks 0, 1, 3, 4, 5): `$3B << X25519_REU_BANK`. **1764 variant** (`make lib-x25519-1764`, `SQR_DMA_K=0`): `$03 << X25519_REU_BANK` — banks 0, 1 only, drops the doubled-table cluster. Bank 2 is never claimed in either build. **onchip variant** (`make lib-x25519-onchip`, `X25519_ONCHIP_MUL=1`): plain `0` — no shift, no banks. Per SPEC §5 the zero *is* the "no REU" declaration, not an unset field; see §4.11. See [`REU_USAGE_ANALYSIS.md`](REU_USAGE_ANALYSIS.md) §"Group B SHIPPED" for the 1764 rationale + measured trade-offs |
-| `LIB_X25519_RESIDENT_BYTES` | `8383` default / `8247` for `lib-x25519-1764` / `8300` provisional for `lib-x25519-onchip` | Approximate code + data + sqtab footprint that must remain CPU-resident. Dropped from 9209/8895 at the issue-#68 cold-segment split — the init-only code is now counted in `LIB_X25519_COLD_BYTES` (SPEC §5 disjoint partition; see §4.10). The onchip figure is a **placeholder pending an `od65 --dump-segsize` refresh** (§4.11): resident grows by the generator block and shrinks by the gated-out REU code |
-| `LIB_X25519_COLD_BYTES` | `826` default / `648` for `lib-x25519-1764` / `260` provisional for `lib-x25519-onchip` | Approximate footprint a consumer MAY reclaim/overlay after init — the `LIB_X25519_INIT_CODE` segment (issue #68; see §4.10). The onchip segment holds `sqtab_init` alone, so it is much smaller; the figure is likewise **provisional pending od65 refresh** |
+| `LIB_X25519_RESIDENT_BYTES` | `8383` default / `8247` for `lib-x25519-1764` / `8207` for `lib-x25519-onchip` | Approximate code + data + sqtab footprint that must remain CPU-resident. Dropped from 9209/8895 at the issue-#68 cold-segment split — the init-only code is now counted in `LIB_X25519_COLD_BYTES` (SPEC §5 disjoint partition; see §4.10). All three figures od65-measured; the onchip value has been measured-exact since the profile shipped in v0.8.0 |
+| `LIB_X25519_COLD_BYTES` | `826` default / `648` for `lib-x25519-1764` / `160` for `lib-x25519-onchip` | Approximate footprint a consumer MAY reclaim/overlay after init — the `LIB_X25519_INIT_CODE` segment (issue #68; see §4.10). The onchip segment holds `sqtab_init` alone, so it is much smaller |
 
-The values are approximate ("within 5% is fine" per SPEC §5). The
+The values are approximate ("within 5% is fine" per SPEC §5), though
+all nine profile figures are currently od65-measured exact. The
 library author refreshes them when a release substantively changes
-any one of them. The two `lib-x25519-onchip` byte figures are flagged
-provisional in `src/lib_manifest.s` itself and must be refreshed from
-`make lib-x25519-onchip`'s segsize dump before that profile ships in a
-release.
+any one of them; `make lib-x25519-onchip` / `lib-x25519-1764` print
+the per-object segsize dump used for the refresh.
 
 **Consumer-side collision check** (composing c64-x25519 with
 c64-nist-curves):
@@ -461,14 +486,13 @@ symbols can collide at link time. They arrive via `x25519.inc` as
 `.ifndef`-guarded local equates; do not `.import` them.
 
 A consumer composing c64-x25519 with another sqtab-using library can
-detect the unhandled-double-build case at assemble time:
+detect the unhandled-double-build case at link time (the operands are
+imported, so evaluation defers to ld65 — `lderror` per SPEC v0.8.1):
 
 ```ca65
 .import LIB_X25519_SHARED_PRIMITIVES
 .import LIB_OTHER_SHARED_PRIMITIVES
-.assert (LIB_X25519_SHARED_PRIMITIVES & \
-         LIB_OTHER_SHARED_PRIMITIVES) = 0, error, \
-        "both libs claim a §8 primitive; define SHARED_SQTAB_INIT in one"
+.assert (LIB_X25519_SHARED_PRIMITIVES & LIB_OTHER_SHARED_PRIMITIVES) = 0, lderror, "both libs claim a §8 primitive; define SHARED_SQTAB_INIT in one"
 ```
 
 With the conditional mask this assert *passes* once exactly one lib
@@ -495,10 +519,7 @@ every consumed primitive has an owner somewhere in the link:
 
 ```ca65
 .import LIB_X25519_SHARED_CONSUMES, LIB_OTHER_SHARED_CONSUMES
-.assert ((LIB_X25519_SHARED_CONSUMES | LIB_OTHER_SHARED_CONSUMES) \
-         & ~(LIB_X25519_SHARED_PRIMITIVES | \
-             LIB_OTHER_SHARED_PRIMITIVES)) = 0, error, \
-        "consumed shared primitive with no owner in the link"
+.assert ((LIB_X25519_SHARED_CONSUMES | LIB_OTHER_SHARED_CONSUMES) & ~(LIB_X25519_SHARED_PRIMITIVES | LIB_OTHER_SHARED_PRIMITIVES)) = 0, lderror, "consumed shared primitive with no owner in the link"
 ```
 
 (Bitwise `&`/`|`/`~`, not the boolean `.and`/`.or` — on multi-bit
@@ -869,8 +890,8 @@ differential suite in a VICE instance with no REU attached.
 |---|---|---|
 | `LIB_X25519_REU_BANKS_USED` | `$3B` (banks 0, 1, 3, 4, 5) | `0` |
 | `LIB_X25519_SHARED_PRIMITIVES` | `$0007` (§8.1 + §8.2 + §8.3) | `$0005` (§8.1 + §8.3) |
-| `LIB_X25519_RESIDENT_BYTES` | `8383` | `8300` — **provisional** |
-| `LIB_X25519_COLD_BYTES` | `826` | `260` — **provisional** |
+| `LIB_X25519_RESIDENT_BYTES` | `8383` | `8207` |
+| `LIB_X25519_COLD_BYTES` | `826` | `160` |
 | `LIB_X25519_ZP_USAGE_BYTES` | `85` | `85` (unchanged — the generator allocates no new ZP) |
 | `LIB_PRECALC_*` exports | `sqtab`, `reu_mul`, `reu_mul_doubled` | `sqtab` only |
 
@@ -891,11 +912,10 @@ Two of these carry contract meaning worth spelling out:
   replicated here.) §8.1 stays because the generator reads `sqtab` on
   every single product — under this profile the table moves firmly
   into the resident hot set.
-- The `RESIDENT`/`COLD` figures are **placeholders pending an `od65
-  --dump-segsize` refresh**; `make lib-x25519-onchip` prints the dump
-  at the end of its run. They are marked provisional in
-  `src/lib_manifest.s` too, and must be corrected before the profile
-  ships in a release.
+- The `RESIDENT`/`COLD` figures (`8207`/`160`) are od65-measured —
+  exact since the profile shipped in v0.8.0 (`src/lib_manifest.s`
+  records the measurement provenance); `make lib-x25519-onchip`
+  prints the segsize dump for re-verification at the end of its run.
 
 **Trade-off, and who should use this.** On a stock 1 MHz C64 the
 onchip profile is **slower** than the default build, unavoidably:
@@ -987,7 +1007,6 @@ $0900+          library code (mul_8x8, fe25519, x25519, ...)
                  last in MAIN — reclaimable after init, see §4.10)
 $1800-$1Axx     page-aligned field buffers (fe_tmp*, x25_*)
 $1B00-$1DFF     mul_dma_lo/hi/carry (REU DMA staging)
-$1E00-$1FFF     sqtab2_lo/hi
 $2000-$27FF     lookup tables (mul38, sqr, a24_*)
 $2800+          strings / input buffer (test harness)
 $7800-$7BFF     sqtab_lo / sqtab_hi  (built by sqtab_init)

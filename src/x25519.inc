@@ -23,7 +23,7 @@
 ; See docs/LIBRARY.md for the full integration guide.
 ;
 ; ----------------------------------------------------------------------------
-; VERSION CONSTANTS (assemble-time guards for consumer pinning)
+; VERSION CONSTANTS (link-time .assert guards for consumer pinning)
 ; ----------------------------------------------------------------------------
 ;
 ;   LIB_X25519_VERSION_MAJOR   semver major (currently 0)
@@ -36,13 +36,23 @@
 ;                              v0.9.0 LIB_SHARED_PRIMITIVES_* export
 ;                              removal)
 ;
-; Per c64-lib-contract §1 (v0.7.0), consumers may assemble-time guard
-; against an unsupported library version:
+; Per c64-lib-contract §1 (v0.8.1), consumers guard against an
+; unsupported library version with .assert/lderror — NOT .if/.error,
+; which ca65 rejects with "Constant expression expected" because an
+; .import'ed symbol has no value until link time. The guard fires at
+; link rather than assemble time; still before anything runs:
 ;
 ;     .import LIB_X25519_VERSION_MAJOR, LIB_X25519_VERSION_MINOR
-;     .if LIB_X25519_VERSION_MAJOR <> 0 .or LIB_X25519_VERSION_MINOR < 8
-;         .error "this consumer needs c64-x25519 v0.8 or later"
-;     .endif
+;     .assert (LIB_X25519_VERSION_MAJOR > 0) .or (LIB_X25519_VERSION_MINOR >= 10), lderror, "this consumer needs c64-x25519 v0.10 or later"
+;
+;     (one line — ca65 rejects backslash continuation unless you
+;     enable `.linecont +`)
+;
+; And the load-bearing breakage gate, the exported-surface generation
+; (see LIB_X25519_ABI_VERSION above):
+;
+;     .import LIB_X25519_ABI_VERSION
+;     .assert LIB_X25519_ABI_VERSION = 2, lderror, "c64-x25519 exported-surface generation changed; re-check the integration"
 ;
 ; The unprefixed LIB_VERSION_* / LIB_ABI_VERSION forms still exist but
 ; are deprecated (identical across every contract library, so they

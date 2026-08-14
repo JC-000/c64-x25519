@@ -11,13 +11,18 @@
 ; sibling library's identical bare exports (c64-lib-contract#43). The
 ; §5 aggregate / §8.x manifest surface lives in src/lib_manifest.s.
 ;
-; Consumers import the prefixed forms for assembly-time compatibility
-; checks:
+; Consumers import the prefixed forms and gate with .assert/lderror
+; (SPEC v0.8.1 §1). NOT .if/.error: an .import'ed symbol has no value
+; until link, so ca65 rejects an .if guard outright with "Constant
+; expression expected" — the .assert defers evaluation to ld65 and
+; still fires before anything runs:
 ;
 ;   .import LIB_X25519_VERSION_MAJOR, LIB_X25519_VERSION_MINOR
-;   .if LIB_X25519_VERSION_MAJOR <> 0 .or LIB_X25519_VERSION_MINOR < 7
-;       .error "c64-x25519 v0.7 or newer is required"
-;   .endif
+;   .assert (LIB_X25519_VERSION_MAJOR > 0) .or (LIB_X25519_VERSION_MINOR >= 10), lderror, "this consumer needs c64-x25519 v0.10 or later"
+;
+; (One line — ca65 rejects backslash continuation unless the consumer
+; enables `.linecont +`; the SPEC snippets are single-line for the
+; same reason.)
 ;
 ; Versioning policy: semver 2.0.0 - https://semver.org/
 ;   MAJOR             - incompatible API changes (symbol removals,
