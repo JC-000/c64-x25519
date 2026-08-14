@@ -52,7 +52,7 @@
 
 LIB_X25519_VERSION_MAJOR = 0
 LIB_X25519_VERSION_MINOR = 10
-LIB_X25519_VERSION_PATCH = 0
+LIB_X25519_VERSION_PATCH = 1
 LIB_X25519_ABI_VERSION   = 2
 
 ; Exported as absolute (16-bit) symbols, not zeropage. ca65 would otherwise

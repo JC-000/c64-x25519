@@ -6,6 +6,16 @@ An optimized implementation of X25519 / Curve25519 scalar multiplication written
 
 ## Status
 
+**v0.10.1 (DRAFT until tagged)** — contract alignment sweep (PR #89):
+the consumer version-guard snippets now actually assemble (the old
+`.if` forms were rejected by ca65 on imported symbols — SPEC v0.8.1
+`.assert`/`lderror` forms shipped, ABI-generation gate added), cfg
+attribute failure modes declared per SPEC v0.8.0 §4 (including the
+fully-silent SQTAB region/equate divergence), onchip footprint doc
+figures corrected to measured values, `lib-verify` per-profile value
+locks. Zero code change. See
+[`docs/RELEASE_NOTES_v0.10.1.md`](docs/RELEASE_NOTES_v0.10.1.md).
+
 **v0.10.0 released 2026-08-14** — [GitHub release](https://github.com/JC-000/c64-x25519/releases/tag/v0.10.0) — `LIB_X25519_ABI_VERSION` **1 → 2**
 (erratum: the v0.9.0 `LIB_SHARED_PRIMITIVES_*` export removal was a
 breaking export change under contract v0.7.5's clarified
