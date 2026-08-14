@@ -14,6 +14,15 @@
 
 .include "constants.s"
 
+; Test-harness-local ZP scratch (contract #83): moved here from
+; zp_config.s — no library TU uses these, and shipping them as bare
+; archive exports collided with c64-nist-curves' live slots of the
+; same generic names. Harness-only; NOT part of the library's claimed
+; ZP surface (see x25519.inc ZP map).
+zp_ptr1 = $fb           ; 2-byte pointer
+zp_tmp1 = $02           ; temp byte
+zp_tmp2 = $03           ; temp byte
+
 ; --- Imports from mul_8x8.s ---
 .import sqtab_init
 

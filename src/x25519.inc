@@ -242,8 +242,9 @@
 ;   $2F      mul_ripple_start     (Phase 7: public end-of-inner ripple start)
 ;   $40-$7F  fe_wide              (64-byte product accumulator; ZP-pinned by .assert)
 ;
-;   $FB-$FE  zp_ptr1/zp_ptr2 — TEST HARNESS ONLY (used by main.s helpers,
-;                              NOT part of the library's claimed ZP surface).
+;   $FB-$FC  zp_ptr1 — TEST HARNESS ONLY (defined locally in main.s
+;                       since contract #83; not exported, not shipped,
+;                       NOT part of the library's claimed ZP surface).
 ;
 ; The library does NOT preserve any of these across calls. If your host
 ; program uses any of the listed slots, save it before calling and
