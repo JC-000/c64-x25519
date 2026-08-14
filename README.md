@@ -6,7 +6,7 @@ An optimized implementation of X25519 / Curve25519 scalar multiplication written
 
 ## Status
 
-**v0.10.1 (DRAFT until tagged)** — contract alignment sweep (PR #89):
+**v0.10.1 released 2026-08-14** — [GitHub release](https://github.com/JC-000/c64-x25519/releases/tag/v0.10.1) — contract alignment sweep (PR #89):
 the consumer version-guard snippets now actually assemble (the old
 `.if` forms were rejected by ca65 on imported symbols — SPEC v0.8.1
 `.assert`/`lderror` forms shipped, ABI-generation gate added), cfg
