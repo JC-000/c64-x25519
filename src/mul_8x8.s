@@ -11,7 +11,7 @@
 ; The sqtab base address is published as the source-level equate
 ; LIB_SHARED_SQTAB_BASE (default $7800), `.ifndef`-guarded so a
 ; multi-lib consumer can override it via
-; `ca65 --asm-define LIB_SHARED_SQTAB_BASE=$N`. Page-alignment +
+; `ca65 -D LIB_SHARED_SQTAB_BASE=$N`. Page-alignment +
 ; page-delta are hard `.assert`-checked at link time.
 ;
 ; Why source equate rather than linker-export: ct_mul_8x8 (and the

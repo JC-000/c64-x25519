@@ -121,7 +121,7 @@ cassette_buf    = $0334         ; cassette buffer (safe scratch area)
 ; emits the public symbols (avoids ld65 "exported from multiple files").
 ;
 ; A host that wants to override a slot can either:
-;   - pass --asm-define <slot>=$<addr> on the ca65 command line (every
+;   - pass -D <slot>=$<addr> on the ca65 command line (every
 ;     library translation unit must see the same value), OR
 ;   - pre-define the symbol in a wrapper .s file before .include'ing
 ;     zp_config.s directly.
@@ -175,7 +175,7 @@ fe_wide         = $40
 ; quarter-square lookup table. sqtab_lo lives at base+$0000,
 ; sqtab_hi at base+$0200 (512 B each). Default is $7800 to match
 ; the v0.5.0 / pre-§8 layout; a multi-lib consumer overrides via
-; `ca65 --asm-define LIB_SHARED_SQTAB_BASE=$<addr>` (passed to every
+; `ca65 -D LIB_SHARED_SQTAB_BASE=$<addr>` (passed to every
 ; translation unit so every module agrees on the canonical address).
 ;
 ; Page-alignment + page-delta are hard-asserted below — a

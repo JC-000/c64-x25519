@@ -599,23 +599,43 @@ LIB_SHARED_REU_MUL_BANKS_USED = \
 ```
 
 Override the base bank via `ca65 -D LIB_SHARED_REU_MUL_BANK=$N`
-(applied to every library translation unit). `_OFFSET` is pinned to
-`$0000` per a v0.x.0 SPEC constraint; loosen only on a justified non-
-zero need from a future adopter. `_BANKS_USED` is a derived equate
-naming both claimed banks (`base` and `base + 1`) as a single mask;
-consumers compose it into their REU-region `.assert` budget.
+(applied to every library translation unit). As of the contract-#82
+fix this override **genuinely relocates the table**: it drives
+`X25519_REU_BANK` (the shared mul table sits at the REU window base),
+and setting the two knobs to different values is an assemble-time
+error. Before that fix the equate was decorative — published but
+never read by any code path. `_OFFSET` is pinned to `$0000` per a
+v0.x.0 SPEC constraint; loosen only on a justified non-zero need from
+a future adopter. `_BANKS_USED` is a derived equate naming both
+claimed banks (`base` and `base + 1`) as a single mask; consumers
+compose it into their REU-region `.assert` budget.
 
-In addition to the placement equates, `src/reu_config.s` publishes the
-ZP scratch + page-aligned staging-buffer surface:
+**Export shape (contract #82).** The unprefixed `LIB_SHARED_REU_MUL_*`
+names are consumer-*input* knobs — assemble-time equates each adopter
+carries locally, never link symbols. Exporting them collides with any
+co-linked §8.2 adopter (`Duplicate external identifier`, measured
+against c64-nist-curves; the §8.1 `LIB_SHARED_SQTAB_BASE` precedent is
+exported by no adopter). What the archive *exports* is the
+library-prefixed output — "what this build baked in":
 
 ```ca65
-LIB_SHARED_REU_MUL_ZP_INIT_A / _B    ; alias reu_init_a / _b
-LIB_SHARED_REU_MUL_STAGE_LO / _HI    ; alias mul_dma_lo / mul_dma_hi
-                                     ; (page-aligned, _HI = _LO + $0100)
+LIB_X25519_SHARED_REU_MUL_BANK / _OFFSET / _BANKS_USED
+LIB_X25519_SHARED_REU_MUL_ZP_INIT_A / _B    ; alias reu_init_a / _b
+LIB_X25519_SHARED_REU_MUL_STAGE_LO / _HI    ; alias mul_dma_lo / _hi
+                                            ; (page-aligned, _HI = _LO + $0100)
 ```
 
-with the page-alignment and adjacency asserts the §8.2 fetch primitive's
-4×-unrolled `abs,y` loop depends on.
+so a consumer composing two §8.2 adopters can cross-check placements:
+
+```ca65
+.import LIB_X25519_SHARED_REU_MUL_BANK, LIB_NISTCURVES_SHARED_REU_MUL_BANK
+.assert LIB_X25519_SHARED_REU_MUL_BANK = LIB_NISTCURVES_SHARED_REU_MUL_BANK, lderror, "shared mul table placement disagreement"
+```
+
+(counterpart prefixed forms pending in the sibling; until then the
+`od65` out-of-band pattern applies to its side). The page-alignment
+and adjacency asserts the §8.2 fetch primitive's 4×-unrolled `abs,y`
+loop depends on remain in `src/reu_config.s`, enforced at link time.
 
 ### Canonical init entry
 
