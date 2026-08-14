@@ -312,15 +312,14 @@ compile + VICE test cycle:
 |---|---|---|
 | `LIB_X25519_ZP_USAGE_BYTES` | `85` | Total bytes of ZP slots the library claims (sum of `.exportzp`-ed slots in `src/zp_config.s` + the pinned `fe_wide` region) |
 | `LIB_X25519_REU_BANKS_USED` | `$3B` default / `$03` for `lib-x25519-1764` / `0` for `lib-x25519-onchip` | Bitmask of REU banks claimed for mul tables. **Default build** (banks 0, 1, 3, 4, 5): `$3B << X25519_REU_BANK`. **1764 variant** (`make lib-x25519-1764`, `SQR_DMA_K=0`): `$03 << X25519_REU_BANK` — banks 0, 1 only, drops the doubled-table cluster. Bank 2 is never claimed in either build. **onchip variant** (`make lib-x25519-onchip`, `X25519_ONCHIP_MUL=1`): plain `0` — no shift, no banks. Per SPEC §5 the zero *is* the "no REU" declaration, not an unset field; see §4.11. See [`REU_USAGE_ANALYSIS.md`](REU_USAGE_ANALYSIS.md) §"Group B SHIPPED" for the 1764 rationale + measured trade-offs |
-| `LIB_X25519_RESIDENT_BYTES` | `8383` default / `8247` for `lib-x25519-1764` / `8300` provisional for `lib-x25519-onchip` | Approximate code + data + sqtab footprint that must remain CPU-resident. Dropped from 9209/8895 at the issue-#68 cold-segment split — the init-only code is now counted in `LIB_X25519_COLD_BYTES` (SPEC §5 disjoint partition; see §4.10). The onchip figure is a **placeholder pending an `od65 --dump-segsize` refresh** (§4.11): resident grows by the generator block and shrinks by the gated-out REU code |
-| `LIB_X25519_COLD_BYTES` | `826` default / `648` for `lib-x25519-1764` / `260` provisional for `lib-x25519-onchip` | Approximate footprint a consumer MAY reclaim/overlay after init — the `LIB_X25519_INIT_CODE` segment (issue #68; see §4.10). The onchip segment holds `sqtab_init` alone, so it is much smaller; the figure is likewise **provisional pending od65 refresh** |
+| `LIB_X25519_RESIDENT_BYTES` | `8383` default / `8247` for `lib-x25519-1764` / `8207` for `lib-x25519-onchip` | Approximate code + data + sqtab footprint that must remain CPU-resident. Dropped from 9209/8895 at the issue-#68 cold-segment split — the init-only code is now counted in `LIB_X25519_COLD_BYTES` (SPEC §5 disjoint partition; see §4.10). All three figures od65-measured; the onchip value has been measured-exact since the profile shipped in v0.8.0 |
+| `LIB_X25519_COLD_BYTES` | `826` default / `648` for `lib-x25519-1764` / `160` for `lib-x25519-onchip` | Approximate footprint a consumer MAY reclaim/overlay after init — the `LIB_X25519_INIT_CODE` segment (issue #68; see §4.10). The onchip segment holds `sqtab_init` alone, so it is much smaller |
 
-The values are approximate ("within 5% is fine" per SPEC §5). The
+The values are approximate ("within 5% is fine" per SPEC §5), though
+all nine profile figures are currently od65-measured exact. The
 library author refreshes them when a release substantively changes
-any one of them. The two `lib-x25519-onchip` byte figures are flagged
-provisional in `src/lib_manifest.s` itself and must be refreshed from
-`make lib-x25519-onchip`'s segsize dump before that profile ships in a
-release.
+any one of them; `make lib-x25519-onchip` / `lib-x25519-1764` print
+the per-object segsize dump used for the refresh.
 
 **Consumer-side collision check** (composing c64-x25519 with
 c64-nist-curves):
@@ -869,8 +868,8 @@ differential suite in a VICE instance with no REU attached.
 |---|---|---|
 | `LIB_X25519_REU_BANKS_USED` | `$3B` (banks 0, 1, 3, 4, 5) | `0` |
 | `LIB_X25519_SHARED_PRIMITIVES` | `$0007` (§8.1 + §8.2 + §8.3) | `$0005` (§8.1 + §8.3) |
-| `LIB_X25519_RESIDENT_BYTES` | `8383` | `8300` — **provisional** |
-| `LIB_X25519_COLD_BYTES` | `826` | `260` — **provisional** |
+| `LIB_X25519_RESIDENT_BYTES` | `8383` | `8207` |
+| `LIB_X25519_COLD_BYTES` | `826` | `160` |
 | `LIB_X25519_ZP_USAGE_BYTES` | `85` | `85` (unchanged — the generator allocates no new ZP) |
 | `LIB_PRECALC_*` exports | `sqtab`, `reu_mul`, `reu_mul_doubled` | `sqtab` only |
 
@@ -891,11 +890,10 @@ Two of these carry contract meaning worth spelling out:
   replicated here.) §8.1 stays because the generator reads `sqtab` on
   every single product — under this profile the table moves firmly
   into the resident hot set.
-- The `RESIDENT`/`COLD` figures are **placeholders pending an `od65
-  --dump-segsize` refresh**; `make lib-x25519-onchip` prints the dump
-  at the end of its run. They are marked provisional in
-  `src/lib_manifest.s` too, and must be corrected before the profile
-  ships in a release.
+- The `RESIDENT`/`COLD` figures (`8207`/`160`) are od65-measured —
+  exact since the profile shipped in v0.8.0 (`src/lib_manifest.s`
+  records the measurement provenance); `make lib-x25519-onchip`
+  prints the segsize dump for re-verification at the end of its run.
 
 **Trade-off, and who should use this.** On a stock 1 MHz C64 the
 onchip profile is **slower** than the default build, unavoidably:
