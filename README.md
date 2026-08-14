@@ -215,7 +215,8 @@ patching:
 
 - **§1 Version identification** ([#45](https://github.com/JC-000/c64-x25519/issues/45) / [#47](https://github.com/JC-000/c64-x25519/pull/47)): new
   `src/lib_version.s` exports `LIB_VERSION_MAJOR/_MINOR/_PATCH`
-  and `LIB_ABI_VERSION` for assemble-time consumer guards.
+  and `LIB_ABI_VERSION` for consumer version guards (link-time
+  `.assert`/`lderror` since SPEC v0.8.1).
 - **§2 Zero-page contract** ([#44](https://github.com/JC-000/c64-x25519/issues/44) / [#48](https://github.com/JC-000/c64-x25519/pull/48)): every consumer-
   overridable ZP slot moved to a dedicated `src/zp_config.s` with
   `.exportzp` declarations, so consumer modules can `.importzp`
@@ -427,7 +428,7 @@ Copy `ORIGIN.txt.template` → `ORIGIN.txt` in your vendored copy, fill in the `
 
 See [`docs/LIBRARY.md`](docs/LIBRARY.md) §4 and §4.1 for the full integration walkthrough.
 
-Per the [c64-lib-contract](https://github.com/JC-000/c64-lib-contract) ABI contract, consumers can additionally `.import LIB_VERSION_MAJOR, LIB_VERSION_MINOR, LIB_VERSION_PATCH, LIB_ABI_VERSION` and `.if`-guard at assemble time against an unsupported library version — a defense-in-depth assert on top of git-submodule SHA pinning. See `docs/LIBRARY.md` §4.3.
+Per the [c64-lib-contract](https://github.com/JC-000/c64-lib-contract) ABI contract, consumers can additionally `.import` the prefixed `LIB_X25519_VERSION_*` / `LIB_X25519_ABI_VERSION` equates and gate with `.assert ..., lderror` (SPEC v0.8.1 — `.if` cannot evaluate an imported symbol; the guard fires at link time, before anything runs) — a defense-in-depth assert on top of git-submodule SHA pinning. See `docs/LIBRARY.md` §4.3.
 
 **REU bank base override.** Per [c64-lib-contract §3](https://github.com/JC-000/c64-lib-contract/blob/master/SPEC.md#3-reu-layout-contract), the six contiguous REU banks the library claims (mul tables + carry table + zero block) can be relocated at assemble time:
 

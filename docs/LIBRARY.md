@@ -284,18 +284,33 @@ The library exports four integer equates per
 | `LIB_X25519_VERSION_PATCH` | `0` | semver patch (no ABI change) |
 | `LIB_X25519_ABI_VERSION`   | `2` | monotonic generation counter for the exported surface (contract v0.7.5) — bumped on any breaking export change, independent of MAJOR; the load-bearing consumer breakage gate pre-1.0. `1 → 2` at v0.10.0 acknowledges the v0.9.0 `LIB_SHARED_PRIMITIVES_*` export removal |
 
-Consumers should `.import` these and `.if`-guard at assemble time
-against an unsupported library version:
+Consumers should `.import` these and gate with `.assert`/`lderror`
+(SPEC v0.8.1 §1):
 
 ```ca65
 .import LIB_X25519_VERSION_MAJOR, LIB_X25519_VERSION_MINOR
-.if LIB_X25519_VERSION_MAJOR <> 0 .or LIB_X25519_VERSION_MINOR < 8
-    .error "this consumer needs c64-x25519 v0.8 or later"
-.endif
+.assert (LIB_X25519_VERSION_MAJOR > 0) .or (LIB_X25519_VERSION_MINOR >= 10), lderror, "this consumer needs c64-x25519 v0.10 or later"
 ```
 
-The guard fires before the 30-minute link/test cycle, complementing
-git-submodule SHA pinning with a defense-in-depth assert.
+And the load-bearing breakage gate on the exported-surface generation:
+
+```ca65
+.import LIB_X25519_ABI_VERSION
+.assert LIB_X25519_ABI_VERSION = 2, lderror, "c64-x25519 exported-surface generation changed; re-check the integration"
+```
+
+(Snippets are deliberately single-line: ca65 rejects `\` line
+continuation with `Invalid input character` unless the consumer
+enables `.linecont +`.)
+
+**Not `.if`/`.error`** — an `.import`ed symbol has no value until
+link, so ca65 rejects an `.if` guard outright with `Constant
+expression expected`; an `.if`-based version gate never assembles at
+all. `.assert` with the `lderror` action defers evaluation to ld65.
+The guard therefore fires at link rather than assemble time — still
+before the multi-minute VICE test cycle and before anything runs —
+complementing git-submodule SHA pinning with a defense-in-depth
+assert.
 
 The unprefixed `LIB_VERSION_{MAJOR,MINOR,PATCH}` / `LIB_ABI_VERSION`
 aliases are still exported by default but **deprecated** (contract
@@ -471,14 +486,13 @@ symbols can collide at link time. They arrive via `x25519.inc` as
 `.ifndef`-guarded local equates; do not `.import` them.
 
 A consumer composing c64-x25519 with another sqtab-using library can
-detect the unhandled-double-build case at assemble time:
+detect the unhandled-double-build case at link time (the operands are
+imported, so evaluation defers to ld65 — `lderror` per SPEC v0.8.1):
 
 ```ca65
 .import LIB_X25519_SHARED_PRIMITIVES
 .import LIB_OTHER_SHARED_PRIMITIVES
-.assert (LIB_X25519_SHARED_PRIMITIVES & \
-         LIB_OTHER_SHARED_PRIMITIVES) = 0, error, \
-        "both libs claim a §8 primitive; define SHARED_SQTAB_INIT in one"
+.assert (LIB_X25519_SHARED_PRIMITIVES & LIB_OTHER_SHARED_PRIMITIVES) = 0, lderror, "both libs claim a §8 primitive; define SHARED_SQTAB_INIT in one"
 ```
 
 With the conditional mask this assert *passes* once exactly one lib
@@ -505,10 +519,7 @@ every consumed primitive has an owner somewhere in the link:
 
 ```ca65
 .import LIB_X25519_SHARED_CONSUMES, LIB_OTHER_SHARED_CONSUMES
-.assert ((LIB_X25519_SHARED_CONSUMES | LIB_OTHER_SHARED_CONSUMES) \
-         & ~(LIB_X25519_SHARED_PRIMITIVES | \
-             LIB_OTHER_SHARED_PRIMITIVES)) = 0, error, \
-        "consumed shared primitive with no owner in the link"
+.assert ((LIB_X25519_SHARED_CONSUMES | LIB_OTHER_SHARED_CONSUMES) & ~(LIB_X25519_SHARED_PRIMITIVES | LIB_OTHER_SHARED_PRIMITIVES)) = 0, lderror, "consumed shared primitive with no owner in the link"
 ```
 
 (Bitwise `&`/`|`/`~`, not the boolean `.and`/`.or` — on multi-bit
