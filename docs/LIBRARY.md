@@ -96,7 +96,7 @@ know each one's failure mode; measured on ld65 V2.18):
 | Segment / region | Required attribute | If wrong |
 |---|---|---|
 | `LIB_X25519_DATA` | `align = 256` | **Hard link error** (`lderror` asserts in `src/data.s` / `src/reu_config.s`: "must be page-aligned (CT invariant)"). Cannot ship misaligned. |
-| `LIB_X25519_DATA` | file-emitting `type` (`rw`), in a file-backed area | `type = bss` links with only a **warning** ("segment with type 'bss' contains initialized data") and silently drops ~3.7 KB of tables, constants, and buffers from the PRG — the binary shrinks and every field op reads garbage. |
+| `LIB_X25519_DATA` | file-emitting `type` (`rw`), in a file-backed area | `type = bss` links with only a **warning** ("segment with type 'bss' contains initialized data") and silently drops ~3.7 KB of tables, constants, and buffers from the PRG — every field op reads garbage, **and every file-emitting segment declared after it (`LIB_X25519_INIT_CODE` included) loads ~3.7 KB below its linked address** (the SPEC v0.8.3 mid-area displacement case; same shape as R5). The warning itself is shape-conditional — it keys on non-zero byte values, which this library's segment happens to contain; do not generalize it to other libraries. |
 | `LIB_X25519_INIT_CODE` | last file-emitting segment, declared **before** any bss-type segment | Links **clean with zero diagnostics**; the init code loads `__BSS_SIZE__` bytes below its linked address and `jsr sqtab_init` executes consumer data (design-doc R5). No machine check exists — ordering discipline only. |
 | `SQTAB` MEMORY region | base equal to `LIB_SHARED_SQTAB_BASE` (default `$7800`), 1 KB reserved | **Fully silent.** No source emits into the SQTAB segment; `sqtab_lo`/`sqtab_hi` are equates off `LIB_SHARED_SQTAB_BASE`, and `sqtab_init` writes 1 KB at the *equate* address no matter what the cfg reserves. Moving/dropping the region, or growing MAIN past `$7800`, without the matching `-D LIB_SHARED_SQTAB_BASE=` override = clean link + 1 KB overwrite of live data at init. Keep the MEMORY block and the `-D` value in lockstep. |
 
@@ -599,23 +599,43 @@ LIB_SHARED_REU_MUL_BANKS_USED = \
 ```
 
 Override the base bank via `ca65 -D LIB_SHARED_REU_MUL_BANK=$N`
-(applied to every library translation unit). `_OFFSET` is pinned to
-`$0000` per a v0.x.0 SPEC constraint; loosen only on a justified non-
-zero need from a future adopter. `_BANKS_USED` is a derived equate
-naming both claimed banks (`base` and `base + 1`) as a single mask;
-consumers compose it into their REU-region `.assert` budget.
+(applied to every library translation unit). As of the contract-#82
+fix this override **genuinely relocates the table**: it drives
+`X25519_REU_BANK` (the shared mul table sits at the REU window base),
+and setting the two knobs to different values is an assemble-time
+error. Before that fix the equate was decorative — published but
+never read by any code path. `_OFFSET` is pinned to `$0000` per a
+v0.x.0 SPEC constraint; loosen only on a justified non-zero need from
+a future adopter. `_BANKS_USED` is a derived equate naming both
+claimed banks (`base` and `base + 1`) as a single mask; consumers
+compose it into their REU-region `.assert` budget.
 
-In addition to the placement equates, `src/reu_config.s` publishes the
-ZP scratch + page-aligned staging-buffer surface:
+**Export shape (contract #82).** The unprefixed `LIB_SHARED_REU_MUL_*`
+names are consumer-*input* knobs — assemble-time equates each adopter
+carries locally, never link symbols. Exporting them collides with any
+co-linked §8.2 adopter (`Duplicate external identifier`, measured
+against c64-nist-curves; the §8.1 `LIB_SHARED_SQTAB_BASE` precedent is
+exported by no adopter). What the archive *exports* is the
+library-prefixed output — "what this build baked in":
 
 ```ca65
-LIB_SHARED_REU_MUL_ZP_INIT_A / _B    ; alias reu_init_a / _b
-LIB_SHARED_REU_MUL_STAGE_LO / _HI    ; alias mul_dma_lo / mul_dma_hi
-                                     ; (page-aligned, _HI = _LO + $0100)
+LIB_X25519_SHARED_REU_MUL_BANK / _OFFSET / _BANKS_USED
+LIB_X25519_SHARED_REU_MUL_ZP_INIT_A / _B    ; alias reu_init_a / _b
+LIB_X25519_SHARED_REU_MUL_STAGE_LO / _HI    ; alias mul_dma_lo / _hi
+                                            ; (page-aligned, _HI = _LO + $0100)
 ```
 
-with the page-alignment and adjacency asserts the §8.2 fetch primitive's
-4×-unrolled `abs,y` loop depends on.
+so a consumer composing two §8.2 adopters can cross-check placements:
+
+```ca65
+.import LIB_X25519_SHARED_REU_MUL_BANK, LIB_NISTCURVES_SHARED_REU_MUL_BANK
+.assert LIB_X25519_SHARED_REU_MUL_BANK = LIB_NISTCURVES_SHARED_REU_MUL_BANK, lderror, "shared mul table placement disagreement"
+```
+
+(counterpart prefixed forms pending in the sibling; until then the
+`od65` out-of-band pattern applies to its side). The page-alignment
+and adjacency asserts the §8.2 fetch primitive's 4×-unrolled `abs,y`
+loop depends on remain in `src/reu_config.s`, enforced at link time.
 
 ### Canonical init entry
 

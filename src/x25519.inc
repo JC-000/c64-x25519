@@ -381,11 +381,19 @@
 ; ca65 -D X25519_REU_BANK=$N when rebuilding the library from source.
 .import X25519_REU_BANK, X25519_REU_OFFSET
 
-; §8.2 shared reu_mul placement equates + derived symbolic bank names
-; (see LIBRARY.md §4.8). Consumers compose/collision-check against
-; these instead of hardcoding bank offsets.
-.import LIB_SHARED_REU_MUL_BANK, LIB_SHARED_REU_MUL_OFFSET
-.import LIB_SHARED_REU_MUL_BANKS_USED
+; §8.2 shared reu_mul placement equates, LIBRARY-PREFIXED (contract
+; #82; see LIBRARY.md §4.8). These are library OUTPUT — what this
+; build baked in. Consumers compose/collision-check against these
+; instead of hardcoding bank offsets:
+;   .assert LIB_X25519_SHARED_REU_MUL_BANK = LIB_<other>_SHARED_REU_MUL_BANK, lderror, "shared mul table placement disagreement"
+; The unprefixed LIB_SHARED_REU_MUL_* names are consumer-INPUT knobs
+; (assemble-time equates, set via `ca65 -D` across every TU when
+; rebuilding; NOT link symbols — exporting them collides between §8.2
+; adopters). Overriding LIB_SHARED_REU_MUL_BANK now genuinely
+; relocates the table: it drives X25519_REU_BANK (the two must agree,
+; assemble-time-asserted in reu_config.s).
+.import LIB_X25519_SHARED_REU_MUL_BANK, LIB_X25519_SHARED_REU_MUL_OFFSET
+.import LIB_X25519_SHARED_REU_MUL_BANKS_USED
 .import X25519_REU_BANK_DOUBLED, X25519_REU_BANK_CARRY
 .endif ; X25519_ONCHIP_MUL = 0 (issue #72 — no REU surface in onchip archive)
 

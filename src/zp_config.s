@@ -15,10 +15,10 @@
 ; A host program can override any slot's address by pre-defining the symbol
 ; before `.include`-ing zp_config.s. The two recommended ways:
 ;
-;   1. Pass `--asm-define fe25519_src1=$40` on the ca65 command line. This
+;   1. Pass `-D fe25519_src1=$40` on the ca65 command line. This
 ;      defines the symbol globally for the translation unit, and the
 ;      .ifndef guard below then skips the default. ALL library translation
-;      units must be assembled with the same --asm-define values, since
+;      units must be assembled with the same -D values, since
 ;      each .o bakes in the equate value at assemble time.
 ;
 ;   2. Inside a wrapper .s file:
@@ -28,7 +28,7 @@
 ;
 ; The library's own standalone PRG (`make`) and library archive (`make
 ; lib`) assemble with the defaults. Consumer projects rebuild the library
-; from source with --asm-define to pin slots to their preferred layout.
+; from source with -D to pin slots to their preferred layout.
 ;
 ; Notes on what is NOT included here
 ; ----------------------------------

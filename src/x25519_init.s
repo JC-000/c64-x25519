@@ -312,7 +312,7 @@ reu_mul_tables_init = reu_mul_init
 ; `.global` so reu_config.s's LIB_SHARED_REU_MUL_ZP_INIT_A / _B equates
 ; (declared as link-time aliases under their respective .ifndef guards)
 ; resolve to the same storage. Default consumers see the legacy
-; CODE-segment scratch; an override-via-`--asm-define` consumer that
+; CODE-segment scratch; an override-via-`ca65 -D` consumer that
 ; defines the equates earlier wins via the .ifndef.
 .global reu_init_a, reu_init_b
 reu_init_a:     .byte 0
