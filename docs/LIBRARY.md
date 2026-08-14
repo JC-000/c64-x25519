@@ -89,6 +89,17 @@ Your own code and data can use whatever segment names you like
 `cfg/x25519-example.cfg`, which declares all three with the correct
 ordering (file-emitting segments before bss-type ones).
 
+**Cfg attributes the library depends on** (contract #63 class: the
+consumer authors `SEGMENTS{}`, the library silently depends on it —
+know each one's failure mode; measured on ld65 V2.18):
+
+| Segment / region | Required attribute | If wrong |
+|---|---|---|
+| `LIB_X25519_DATA` | `align = 256` | **Hard link error** (`lderror` asserts in `src/data.s` / `src/reu_config.s`: "must be page-aligned (CT invariant)"). Cannot ship misaligned. |
+| `LIB_X25519_DATA` | file-emitting `type` (`rw`), in a file-backed area | `type = bss` links with only a **warning** ("segment with type 'bss' contains initialized data") and silently drops ~3.7 KB of tables, constants, and buffers from the PRG — the binary shrinks and every field op reads garbage. |
+| `LIB_X25519_INIT_CODE` | last file-emitting segment, declared **before** any bss-type segment | Links **clean with zero diagnostics**; the init code loads `__BSS_SIZE__` bytes below its linked address and `jsr sqtab_init` executes consumer data (design-doc R5). No machine check exists — ordering discipline only. |
+| `SQTAB` MEMORY region | base equal to `LIB_SHARED_SQTAB_BASE` (default `$7800`), 1 KB reserved | **Fully silent.** No source emits into the SQTAB segment; `sqtab_lo`/`sqtab_hi` are equates off `LIB_SHARED_SQTAB_BASE`, and `sqtab_init` writes 1 KB at the *equate* address no matter what the cfg reserves. Moving/dropping the region, or growing MAIN past `$7800`, without the matching `-D LIB_SHARED_SQTAB_BASE=` override = clean link + 1 KB overwrite of live data at init. Keep the MEMORY block and the `-D` value in lockstep. |
+
 In your source, `.import` the symbols you need:
 
 ```ca65
@@ -985,7 +996,6 @@ $0900+          library code (mul_8x8, fe25519, x25519, ...)
                  last in MAIN — reclaimable after init, see §4.10)
 $1800-$1Axx     page-aligned field buffers (fe_tmp*, x25_*)
 $1B00-$1DFF     mul_dma_lo/hi/carry (REU DMA staging)
-$1E00-$1FFF     sqtab2_lo/hi
 $2000-$27FF     lookup tables (mul38, sqr, a24_*)
 $2800+          strings / input buffer (test harness)
 $7800-$7BFF     sqtab_lo / sqtab_hi  (built by sqtab_init)
