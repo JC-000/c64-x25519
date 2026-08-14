@@ -60,16 +60,13 @@
 .ifndef ZP_CONFIG_S_INCLUDED
 ZP_CONFIG_S_INCLUDED = 1
 
-; --- General-purpose pointers / temps ---
-.ifndef zp_ptr1
-  zp_ptr1         = $fb           ; 2-byte pointer
-.endif
-.ifndef zp_tmp1
-  zp_tmp1         = $02           ; temp byte
-.endif
-.ifndef zp_tmp2
-  zp_tmp2         = $03           ; temp byte
-.endif
+; (zp_ptr1/zp_tmp1/zp_tmp2 moved to src/main.s — contract #83. They
+;  were test-harness scratch that leaked into the archive's export
+;  surface: no library TU ever referenced them, x25519.inc already
+;  declared them "NOT part of the library's claimed ZP surface", and
+;  the bare generic names collided at link with c64-nist-curves'
+;  live slots of the same names. Deleted rather than prefixed — a
+;  symbol with no consumers needs no deprecation window.)
 
 ; --- fe25519 field arithmetic working variables ---
 .ifndef fe25519_src1
@@ -135,9 +132,6 @@ ZP_CONFIG_S_INCLUDED = 1
 
 ; --- Exports (suppressed when transitively .include'd via constants.s) ---
 .ifndef ZP_CONFIG_NO_EXPORTS
-
-; General-purpose pointers/temps
-.exportzp zp_ptr1, zp_tmp1, zp_tmp2
 
 ; fe25519 field arithmetic working ZP
 .exportzp fe25519_src1, fe25519_src2, fe25519_dst
