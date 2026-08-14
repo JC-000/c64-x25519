@@ -64,13 +64,16 @@ carrying the v0.8.0 `test-slow` pass, bench rows (262,318,045 /
 303,852,663 / 449,589,657 cycles), hardware A/B results, and CT
 catalogue L1–L30 forward unchanged.
 
-## Tarball (DRAFT — filled by the post-tag SHA-fill PR)
+## Tarball
 
 ```
 File:     c64-x25519-v0.10.0.tar.gz
-Size:     DRAFT
-SHA256:   DRAFT
+Size:     120,686 bytes
+SHA256:   7c470b9920599d4fccc47d25f27f8cb6097698e71e8a5b58e89a77586e65a398
 ```
+
+Byte-identical across two independent `make dist` runs; every shipped
+source verified to assemble standalone from the extracted tarball.
 
 Built via `make dist VERSION=v0.10.0` (reproducible; `git archive` +
 `gzip -n`).
