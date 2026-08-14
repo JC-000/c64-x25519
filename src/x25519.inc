@@ -27,9 +27,14 @@
 ; ----------------------------------------------------------------------------
 ;
 ;   LIB_X25519_VERSION_MAJOR   semver major (currently 0)
-;   LIB_X25519_VERSION_MINOR   semver minor (currently 9)
+;   LIB_X25519_VERSION_MINOR   semver minor (currently 10)
 ;   LIB_X25519_VERSION_PATCH   semver patch (currently 0)
-;   LIB_X25519_ABI_VERSION     coarse ABI compat level (currently 1)
+;   LIB_X25519_ABI_VERSION     exported-surface generation counter
+;                              (currently 2; contract v0.7.5 — bumped
+;                              on any breaking export change, does NOT
+;                              track MAJOR; 1 -> 2 acknowledges the
+;                              v0.9.0 LIB_SHARED_PRIMITIVES_* export
+;                              removal)
 ;
 ; Per c64-lib-contract §1 (v0.7.0), consumers may assemble-time guard
 ; against an unsupported library version:

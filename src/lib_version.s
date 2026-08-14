@@ -25,11 +25,16 @@
 ;   MINOR             - additive API changes (new exports, no removals
 ;                       or renames of existing exports)
 ;   PATCH             - bugfix or perf improvement with no API change
-;   LIB_ABI_VERSION   - ABI compatibility level. Bumped only when the
-;                       public symbol set or calling convention
-;                       changes. Coarser than MINOR; consumers that
-;                       don't care about which patch level can pin to
-;                       ABI alone.
+;   LIB_ABI_VERSION   - monotonic generation counter for the exported
+;                       surface (contract §1/§7, v0.7.5 semantics):
+;                       starts at 1, incremented on any breaking
+;                       export change, independent of MAJOR. This is
+;                       the load-bearing consumer breakage gate while
+;                       the library is pre-1.0, because §7 lets
+;                       breaking changes ride MINOR bumps there.
+;                       History: 1 -> 2 at v0.10.0, acknowledging the
+;                       v0.9.0 removal of the LIB_SHARED_PRIMITIVES_*
+;                       exports (see RELEASE_NOTES_v0.10.0.md erratum).
 ;
 ; The library is currently in the v0.x pre-stable series. MINOR bumps
 ; may add public symbols but will not remove or rename existing
@@ -41,9 +46,9 @@
 ; =============================================================================
 
 LIB_X25519_VERSION_MAJOR = 0
-LIB_X25519_VERSION_MINOR = 9
+LIB_X25519_VERSION_MINOR = 10
 LIB_X25519_VERSION_PATCH = 0
-LIB_X25519_ABI_VERSION   = 1
+LIB_X25519_ABI_VERSION   = 2
 
 ; Exported as absolute (16-bit) symbols, not zeropage. ca65 would otherwise
 ; infer zeropage size because the values fit in a byte, which then mismatches
