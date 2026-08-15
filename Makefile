@@ -61,7 +61,7 @@ CA65_OBJS = $(BUILD_DIR)/main.o $(LIB_OBJS)
 LIBX25519 = $(LIB_DIR)/libx25519.a
 
 .PHONY: all clean test test-slow test-ref test-vice lib lib-verify \
-        lib-verify-shared lib-app-owned dist \
+        lib-verify-shared lib-app-owned lib-verify-guards dist \
         bench-record perf-diff lib-x25519-1764 lib-x25519-onchip
 
 all: $(PRG)
@@ -422,6 +422,47 @@ lib-verify-shared:
 	        X25519_PROFILE=shared-all lib-verify
 	rm -rf build-shared
 	@echo "OK: all four SHARED_* deferral profiles link and verify"
+
+# --- §6.6/§6.7 guard negative legs (contract SPEC v0.10.0) -------------------
+#
+# `make lib-verify-guards` proves the two placement guards FAIL when
+# they should — every other verify leg asserts success, so a silently
+# inert guard (the pre-v0.10.0 state) would pass the whole matrix.
+#   leg A: §6.7 region-agreement — PRG build with a diverged
+#          LIB_SHARED_SQTAB_BASE must die on the named lderror.
+#   leg B: §6.6 consumer-mirror — stub link against a fixture cfg
+#          whose MAIN cannot hold the declared footprint must die on
+#          the named lderror. Fixture derived from the example cfg by
+#          sed (no second cfg to drift).
+lib-verify-guards:
+	@echo "=== lib-verify-guards: SPEC v0.10.0 §6.6/§6.7 negative legs ==="
+	rm -rf build-guards; mkdir -p build-guards
+	@echo "--- leg A: diverged SQTAB base must fail the PRG link"
+	@out=$$($(MAKE) BUILD_DIR=build-guards CONTRACT_DEFINES="$(CONTRACT_DEFINES) -D LIB_SHARED_SQTAB_BASE=0x2A00" all 2>&1); \
+	echo "$$out" | grep -q "region base disagrees" \
+	  && echo "OK: leg A fails with the named §6.7 error" \
+	  || (echo "FAIL: diverged SQTAB base did not trip the §6.7 guard:" && echo "$$out" | tail -5 && exit 1)
+	rm -rf build-guards; mkdir -p build-guards
+	@echo "--- leg A2: overrun (base below image end) must fail — the v0.10.2"
+	@echo "    constraint-3 acceptance test, in the placing configuration"
+	@out=$$($(MAKE) BUILD_DIR=build-guards CONTRACT_DEFINES="$(CONTRACT_DEFINES) -D LIB_SHARED_SQTAB_BASE=0x2000" all 2>&1); \
+	echo "$$out" | grep -q "image overruns the sqtab window" \
+	  && echo "OK: leg A2 fails with the named overrun error" \
+	  || (echo "FAIL: overrun base did not trip the §6.7 guard:" && echo "$$out" | tail -5 && exit 1)
+	rm -rf build-guards; mkdir -p build-guards
+	@echo "--- leg B: undersized MAIN must fail the stub link"
+	sed 's/size = \$$7800 - %S, define = yes;/size = $$2400 - %S, define = yes;/' \
+	    cfg/x25519-example.cfg > build-guards/undersized.cfg
+	$(MAKE) BUILD_DIR=build-guards LIB_DIR=build-guards/lib lib >/dev/null
+	$(CA65) -I $(SRC_DIR) -o build-guards/stub.o $(LIB_VERIFY_STUB)
+	$(CA65) -I $(SRC_DIR) -o build-guards/provider.o $(LIB_VERIFY_PROVIDER)
+	@out=$$($(LD65) -C build-guards/undersized.cfg -o build-guards/neg.prg \
+	    build-guards/stub.o build-guards/provider.o build-guards/lib/libx25519.a 2>&1); \
+	echo "$$out" | grep -q "exceeds the MAIN budget" \
+	  && echo "OK: leg B fails with the named §6.6 error" \
+	  || (echo "FAIL: undersized MAIN did not trip the §6.6 mirror:" && echo "$$out" | tail -5 && exit 1)
+	rm -rf build-guards
+	@echo "OK: both guard negatives fire with named errors"
 
 # --- §6.3 app-owned variant (contract SPEC v0.9.0) ---------------------------
 #
