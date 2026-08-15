@@ -54,7 +54,12 @@ start:
 ; the relocation entries for each address, which is what ld65 needs
 ; to see to resolve the archive members.
 public_refs:
-        .addr sqtab_init, mul_tables_init
+        .addr mul_tables_init
+.ifndef SHARED_SQTAB_INIT
+        ; x25519-own historical name — absent from a §8.1 deferral
+        ; build (import-never-stub); canonical reference above stays.
+        .addr sqtab_init
+.endif
 .if ::X25519_ONCHIP_MUL = 0
 .ifndef SHARED_REU_MUL_INIT
         ; x25519-private init name — absent from a §8.2 deferral build
@@ -96,10 +101,10 @@ public_version_refs:
 ; ZP slot exports from src/zp_config.s. .importzp + .byte references
 ; force ld65 to pull zp_config.o out of the archive.
 .importzp fe25519_src1, fe25519_src2, fe25519_dst
-.importzp fe_carry, poly_carry
+.importzp fe_carry, mul_carry
 public_zp_refs:
         .byte fe25519_src1, fe25519_src2, fe25519_dst
-        .byte fe_carry, poly_carry
+        .byte fe_carry, mul_carry
 
 ; REU layout equates from src/reu_config.s. .word reference forces ld65
 ; to pull reu_config.o out of the archive.

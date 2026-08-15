@@ -80,7 +80,7 @@ When you add or change anything CT-relevant, **extend the leak catalogue in `doc
 - Long `;` header block per file (purpose, invariants, design notes), then `.setcpu "6502"`, `.include "constants.s"`, `.export`/`.import`, `.segment "CODE"`.
 - Every public routine wrapped in `.proc name … .endproc` with banner comment for inputs / outputs / clobbers (A / X / Y / ZP / wide).
 - Local labels inside `.proc` use `@label` form for per-proc namespacing.
-- Naming prefixes: `x25519_*` (public ECDH), `fe25519_*` (field), `mul_*` (multiply), `reu_*` (REU), `sqtab_*` / `mul38_*` / `sqr_*` (tables), `bench_*`, `vic_*`. ZP scratch: `fe_*`, `x25_*`, `poly_*`, `lmul0/1`, `mul_dma_*`. Public buffers: `x25_scalar`, `x25_u`, `x25_result`, `x25_basepoint`.
+- Naming prefixes: `x25519_*` (public ECDH), `fe25519_*` (field), `mul_*` (multiply), `reu_*` (REU), `sqtab_*` / `mul38_*` / `sqr_*` (tables), `bench_*`, `vic_*`. ZP scratch: `fe_*`, `x25_*`, `mul_*`, `lmul0/1`, `mul_dma_*` (the old `poly_*` ZP prefix is chacha-registered per SPEC v0.9.0 §2 and no longer used here). Public buffers: `x25_scalar`, `x25_u`, `x25_result`, `x25_basepoint`.
 - Little-endian throughout. Prefer `DEX`/`DEY` for carry-dependent loops (CPX/CPY clobber carry).
 
 ### Python (`tools/*.py`)

@@ -126,8 +126,16 @@ ZP_CONFIG_S_INCLUDED = 1
 .endif
 
 ; --- mul_8x8 / fe25519 reuse ---
-.ifndef poly_carry
-  poly_carry      = $1c           ; carry byte
+; (renamed from poly_carry, SPEC v0.9.0 §2 ZP prefix registry: poly_
+; is registered to c64-ChaCha20-Poly1305, and the old name collided
+; with chacha's live Poly1305-accumulator slot of the same name while
+; meaning something entirely different here — a mul_8x8 carry byte.
+; Hard rename, no dual-export window: contract #88 measured that
+; dual-naming keeps the collision alive for the whole window, and the
+; ABI generation was already advancing this cycle for the #92/#93
+; export removals, so the rename rides the same bump.)
+.ifndef mul_carry
+  mul_carry      = $1c           ; carry byte
 .endif
 
 ; --- Exports (suppressed when transitively .include'd via constants.s) ---
@@ -147,7 +155,7 @@ ZP_CONFIG_S_INCLUDED = 1
 .exportzp fe_cmp_mask, fe_subp_rhs, fe_add_carry_mask
 
 ; mul_8x8 carry
-.exportzp poly_carry
+.exportzp mul_carry
 
 .endif ; ZP_CONFIG_NO_EXPORTS
 

@@ -3,11 +3,25 @@ CA65 = ca65
 LD65 = ld65
 CC65_CFG = cfg/x25519.cfg
 
-# Extra ca65 flags. Threaded through every .o build rule so callers can
-# rebuild with experimental constants without editing source — e.g.:
-#   CA65FLAGS="-D SQR_DMA_K=0" make clean all
-# Used by the v0.6 REU A/B experiment (docs/REU_USAGE_ANALYSIS.md).
+# §6.2 defines-forwarding (contract SPEC v0.9.0). CONTRACT_DEFINES
+# carries consumer `-D` overrides into every TU:
+#   make lib CONTRACT_DEFINES="-D LIB_SHARED_SQTAB_BASE=0xC000"
+# CONTRACT_ZP_DEFINES routes per the §6.2 two-variable contract, with
+# the scope adapted to x25519's include-model ZP delivery: it reaches
+# EVERY LIBRARY TU (each .include-s zp_config.s, so scoping it to
+# zp_config.o alone would silently diverge slot addresses between
+# TUs), but NOT consumer-model TUs that .importzp the slots — a -D of
+# a slot in an .importzp TU is a hard "already defined" error
+# (measured on our own verify stub). Consumer .importzp sites get the
+# overridden address at link time from the library objects.
+# CA65FLAGS remains as a deprecated alias through the §6.5
+# rename window. Variant targets APPEND their profile defines (last
+# wins on conflicts) instead of clobbering consumer values — the
+# pre-v0.9.0 recursive $(MAKE) hard-assignment silently dropped them.
+CONTRACT_DEFINES ?=
+CONTRACT_ZP_DEFINES ?=
 CA65FLAGS ?=
+ALL_DEFINES = $(CA65FLAGS) $(CONTRACT_DEFINES) $(CONTRACT_ZP_DEFINES)
 
 SRC_DIR = src
 BUILD_DIR = build
@@ -47,7 +61,7 @@ CA65_OBJS = $(BUILD_DIR)/main.o $(LIB_OBJS)
 LIBX25519 = $(LIB_DIR)/libx25519.a
 
 .PHONY: all clean test test-slow test-ref test-vice lib lib-verify \
-        lib-verify-shared dist \
+        lib-verify-shared lib-app-owned dist \
         bench-record perf-diff lib-x25519-1764 lib-x25519-onchip
 
 all: $(PRG)
@@ -105,7 +119,7 @@ test-ref:
 # constants.s and are also their own translation units for the public
 # .exportzp / .export emission).
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.s $(SRC_DIR)/constants.s $(SRC_DIR)/zp_config.s $(SRC_DIR)/reu_config.s $(SRC_DIR)/precalc_table.inc | $(BUILD_DIR)
-	$(CA65) $(CA65FLAGS) -o $@ $<
+	$(CA65) $(ALL_DEFINES) -o $@ $<
 
 $(PRG): $(CA65_OBJS) $(CC65_CFG) | $(BUILD_DIR)
 	$(LD65) -C $(CC65_CFG) -o $(PRG) -Ln $(LABELS).raw $(CA65_OBJS)
@@ -142,6 +156,10 @@ lib: $(LIBX25519) \
      $(LIB_DIR)/x25519.inc \
      $(LIB_DIR)/cfg/x25519-example.cfg \
      $(addprefix $(LIB_DIR)/, $(notdir $(LIB_OBJS)))
+	@cp $(LIBX25519) $(LIB_DIR)/x25519.a
+	@echo "(§6.1 canonical basename: $(LIB_DIR)/x25519.a — libx25519.a is the"
+	@echo " deprecated dialect, shipped alongside through the §6.5 window,"
+	@echo " dropped at the next MAJOR)"
 
 $(LIBX25519): $(LIB_OBJS) | $(LIB_DIR)
 	rm -f $@
@@ -180,7 +198,6 @@ X25519_PROFILE ?= default
 
 LIB_VERIFY_SYMS_COMMON = x25519_clamp x25519_scalarmult x25519_base \
 	fe25519_add fe25519_sub fe25519_mul fe25519_sqr \
-	sqtab_init \
 	x25_scalar x25_u x25_result \
 	vic_blank vic_unblank bench_start bench_stop \
 	bench_cycles_start bench_cycles_stop bench_cycles \
@@ -189,7 +206,7 @@ LIB_VERIFY_SYMS_COMMON = x25519_clamp x25519_scalarmult x25519_base \
 	LIB_X25519_VERSION_MAJOR LIB_X25519_VERSION_MINOR \
 	LIB_X25519_VERSION_PATCH LIB_X25519_ABI_VERSION \
 	fe25519_src1 fe25519_src2 fe25519_dst \
-	fe_carry poly_carry \
+	fe_carry mul_carry \
 	LIB_X25519_ZP_USAGE_BYTES LIB_X25519_REU_BANKS_USED \
 	LIB_X25519_RESIDENT_BYTES LIB_X25519_COLD_BYTES \
 	LIB_X25519_SHARED_PRIMITIVES \
@@ -220,6 +237,12 @@ LIB_VERIFY_SYMS_ABSENT_ALWAYS = \
 	LIB_SHARED_REU_MUL_STAGE_LO LIB_SHARED_REU_MUL_STAGE_HI \
 	LIB_SHARED_REU_MUL_ZP_INIT_A LIB_SHARED_REU_MUL_ZP_INIT_B \
 	zp_ptr1 zp_tmp1 zp_tmp2
+
+# §8.1 init surface. mul_tables_init is canonical (in COMMON — resolves
+# in every profile: owner body or provider stand-in); sqtab_init is the
+# x25519-own historical name, absent from §8.1 deferral builds since
+# the v0.9.0 import-never-stub migration.
+LIB_VERIFY_SYMS_SQTAB_OWN = sqtab_init
 
 # §8.3 body surface. ct_mul_8x8 is the canonical name (resolves to the
 # provider stand-in under SHARED_CT_MUL_8X8); mul_8x8 is the x25519-own
@@ -258,7 +281,7 @@ LIB_VERIFY_SYMS_REU = $(LIB_VERIFY_SYMS_REU_OWN) $(LIB_VERIFY_SYMS_REU_CANON) \
 # deferral profile (deferral moves ownership, not consumption) and
 # drops the §8.2 bit only under the onchip profile gate.
 ifeq ($(X25519_PROFILE),onchip)
-LIB_VERIFY_SYMS_EXPECT = $(LIB_VERIFY_SYMS_COMMON) \
+LIB_VERIFY_SYMS_EXPECT = $(LIB_VERIFY_SYMS_SQTAB_OWN) $(LIB_VERIFY_SYMS_COMMON) \
 	$(LIB_VERIFY_SYMS_CT_CANON) $(LIB_VERIFY_SYMS_CT_OWN)
 LIB_VERIFY_SYMS_ABSENT = $(LIB_VERIFY_SYMS_REU) $(LIB_VERIFY_SYMS_DOUBLED)
 LIB_VERIFY_MASK_EXPECT = 000005
@@ -267,7 +290,7 @@ LIB_VERIFY_BANKS_EXPECT = 000000
 LIB_VERIFY_RESIDENT_EXPECT = 00200F
 LIB_VERIFY_COLD_EXPECT = 0000A0
 else ifeq ($(X25519_PROFILE),1764)
-LIB_VERIFY_SYMS_EXPECT = $(LIB_VERIFY_SYMS_COMMON) \
+LIB_VERIFY_SYMS_EXPECT = $(LIB_VERIFY_SYMS_SQTAB_OWN) $(LIB_VERIFY_SYMS_COMMON) \
 	$(LIB_VERIFY_SYMS_CT_CANON) $(LIB_VERIFY_SYMS_CT_OWN) \
 	$(LIB_VERIFY_SYMS_REU)
 LIB_VERIFY_SYMS_ABSENT = $(LIB_VERIFY_SYMS_DOUBLED)
@@ -280,14 +303,14 @@ else ifeq ($(X25519_PROFILE),shared-sqtab)
 LIB_VERIFY_SYMS_EXPECT = $(LIB_VERIFY_SYMS_COMMON) \
 	$(LIB_VERIFY_SYMS_CT_CANON) $(LIB_VERIFY_SYMS_CT_OWN) \
 	$(LIB_VERIFY_SYMS_REU)
-LIB_VERIFY_SYMS_ABSENT =
+LIB_VERIFY_SYMS_ABSENT = $(LIB_VERIFY_SYMS_SQTAB_OWN)
 LIB_VERIFY_MASK_EXPECT = 000006
 LIB_VERIFY_CONSUMES_EXPECT = 000007
 LIB_VERIFY_BANKS_EXPECT = 00003B
 LIB_VERIFY_RESIDENT_EXPECT = 0020BF
-LIB_VERIFY_COLD_EXPECT = 00033A
+LIB_VERIFY_COLD_EXPECT = 00029A
 else ifeq ($(X25519_PROFILE),shared-reu)
-LIB_VERIFY_SYMS_EXPECT = $(LIB_VERIFY_SYMS_COMMON) \
+LIB_VERIFY_SYMS_EXPECT = $(LIB_VERIFY_SYMS_SQTAB_OWN) $(LIB_VERIFY_SYMS_COMMON) \
 	$(LIB_VERIFY_SYMS_CT_CANON) $(LIB_VERIFY_SYMS_CT_OWN) \
 	$(LIB_VERIFY_SYMS_REU_CANON) $(LIB_VERIFY_SYMS_REU_SURFACE)
 LIB_VERIFY_SYMS_ABSENT = $(LIB_VERIFY_SYMS_REU_OWN)
@@ -295,28 +318,29 @@ LIB_VERIFY_MASK_EXPECT = 000005
 LIB_VERIFY_CONSUMES_EXPECT = 000007
 LIB_VERIFY_BANKS_EXPECT = 00003B
 LIB_VERIFY_RESIDENT_EXPECT = 0020BF
-LIB_VERIFY_COLD_EXPECT = 00033A
+LIB_VERIFY_COLD_EXPECT = 0001CE
 else ifeq ($(X25519_PROFILE),shared-ct)
-LIB_VERIFY_SYMS_EXPECT = $(LIB_VERIFY_SYMS_COMMON) \
+LIB_VERIFY_SYMS_EXPECT = $(LIB_VERIFY_SYMS_SQTAB_OWN) $(LIB_VERIFY_SYMS_COMMON) \
 	$(LIB_VERIFY_SYMS_CT_CANON) $(LIB_VERIFY_SYMS_REU)
 LIB_VERIFY_SYMS_ABSENT = $(LIB_VERIFY_SYMS_CT_OWN)
 LIB_VERIFY_MASK_EXPECT = 000003
 LIB_VERIFY_CONSUMES_EXPECT = 000007
 LIB_VERIFY_BANKS_EXPECT = 00003B
-LIB_VERIFY_RESIDENT_EXPECT = 0020BF
+LIB_VERIFY_RESIDENT_EXPECT = 002080
 LIB_VERIFY_COLD_EXPECT = 00033A
 else ifeq ($(X25519_PROFILE),shared-all)
 LIB_VERIFY_SYMS_EXPECT = $(LIB_VERIFY_SYMS_COMMON) \
 	$(LIB_VERIFY_SYMS_CT_CANON) \
 	$(LIB_VERIFY_SYMS_REU_CANON) $(LIB_VERIFY_SYMS_REU_SURFACE)
-LIB_VERIFY_SYMS_ABSENT = $(LIB_VERIFY_SYMS_CT_OWN) $(LIB_VERIFY_SYMS_REU_OWN)
+LIB_VERIFY_SYMS_ABSENT = $(LIB_VERIFY_SYMS_CT_OWN) $(LIB_VERIFY_SYMS_REU_OWN) \
+	$(LIB_VERIFY_SYMS_SQTAB_OWN)
 LIB_VERIFY_MASK_EXPECT = 000000
 LIB_VERIFY_CONSUMES_EXPECT = 000007
 LIB_VERIFY_BANKS_EXPECT = 00003B
-LIB_VERIFY_RESIDENT_EXPECT = 0020BF
-LIB_VERIFY_COLD_EXPECT = 00033A
+LIB_VERIFY_RESIDENT_EXPECT = 002080
+LIB_VERIFY_COLD_EXPECT = 00012E
 else
-LIB_VERIFY_SYMS_EXPECT = $(LIB_VERIFY_SYMS_COMMON) \
+LIB_VERIFY_SYMS_EXPECT = $(LIB_VERIFY_SYMS_SQTAB_OWN) $(LIB_VERIFY_SYMS_COMMON) \
 	$(LIB_VERIFY_SYMS_CT_CANON) $(LIB_VERIFY_SYMS_CT_OWN) \
 	$(LIB_VERIFY_SYMS_REU) $(LIB_VERIFY_SYMS_DOUBLED)
 LIB_VERIFY_SYMS_ABSENT =
@@ -378,22 +402,50 @@ lib-verify-shared:
 	@echo "=== lib-verify-shared: SPEC §8.x deferral-build linkage matrix ==="
 	rm -rf build-shared
 	$(MAKE) BUILD_DIR=build-shared LIB_DIR=build-shared/lib \
-	        CA65FLAGS="-D SHARED_SQTAB_INIT=1" \
+	        CA65FLAGS="$(CA65FLAGS)" CONTRACT_ZP_DEFINES="$(CONTRACT_ZP_DEFINES)" \
+	        CONTRACT_DEFINES="$(CONTRACT_DEFINES) -D SHARED_SQTAB_INIT=1" \
 	        X25519_PROFILE=shared-sqtab lib-verify
 	rm -rf build-shared
 	$(MAKE) BUILD_DIR=build-shared LIB_DIR=build-shared/lib \
-	        CA65FLAGS="-D SHARED_REU_MUL_INIT=1" \
+	        CA65FLAGS="$(CA65FLAGS)" CONTRACT_ZP_DEFINES="$(CONTRACT_ZP_DEFINES)" \
+	        CONTRACT_DEFINES="$(CONTRACT_DEFINES) -D SHARED_REU_MUL_INIT=1" \
 	        X25519_PROFILE=shared-reu lib-verify
 	rm -rf build-shared
 	$(MAKE) BUILD_DIR=build-shared LIB_DIR=build-shared/lib \
-	        CA65FLAGS="-D SHARED_CT_MUL_8X8=1" \
+	        CA65FLAGS="$(CA65FLAGS)" CONTRACT_ZP_DEFINES="$(CONTRACT_ZP_DEFINES)" \
+	        CONTRACT_DEFINES="$(CONTRACT_DEFINES) -D SHARED_CT_MUL_8X8=1" \
 	        X25519_PROFILE=shared-ct lib-verify
 	rm -rf build-shared
 	$(MAKE) BUILD_DIR=build-shared LIB_DIR=build-shared/lib \
-	        CA65FLAGS="-D SHARED_SQTAB_INIT=1 -D SHARED_REU_MUL_INIT=1 -D SHARED_CT_MUL_8X8=1" \
+	        CA65FLAGS="$(CA65FLAGS)" CONTRACT_ZP_DEFINES="$(CONTRACT_ZP_DEFINES)" \
+	        CONTRACT_DEFINES="$(CONTRACT_DEFINES) -D SHARED_SQTAB_INIT=1 -D SHARED_REU_MUL_INIT=1 -D SHARED_CT_MUL_8X8=1" \
 	        X25519_PROFILE=shared-all lib-verify
 	rm -rf build-shared
 	@echo "OK: all four SHARED_* deferral profiles link and verify"
+
+# --- §6.3 app-owned variant (contract SPEC v0.9.0) ---------------------------
+#
+# `make lib-app-owned` produces the configuration where the CONSUMER
+# APPLICATION owns every §8.x shared primitive (SPEC §8.0 APP_OWNED):
+# all three deferral switches defined, so the archive imports the
+# canonical mul_tables_init / reu_mul_tables_init / ct_mul_8x8
+# surface from the app's own modules. Encapsulates the switch
+# knowledge per §6.3 so a consumer does not have to reconstruct the
+# define set from the SPEC. Masks: OWNED $0000 / CONSUMES $0007;
+# manifests carry the measured deferral footprints (§6.4).
+lib-app-owned:
+	@echo "=== Building lib-app-owned (SPEC §6.3: all §8.x primitives app-owned) ==="
+	rm -rf build-app-owned
+	$(MAKE) BUILD_DIR=build-app-owned LIB_DIR=build-app-owned/lib \
+	        CA65FLAGS="$(CA65FLAGS)" CONTRACT_ZP_DEFINES="$(CONTRACT_ZP_DEFINES)" \
+	        CONTRACT_DEFINES="$(CONTRACT_DEFINES) -D SHARED_SQTAB_INIT=1 -D SHARED_REU_MUL_INIT=1 -D SHARED_CT_MUL_8X8=1" \
+	        X25519_PROFILE=shared-all lib-verify
+	@mkdir -p build/lib
+	@cp build-app-owned/lib/libx25519.a build/lib/x25519-app-owned.a
+	@echo "SPEC §6.1/§6.3 archive: build/lib/x25519-app-owned.a"
+	@echo "(app must provide: mul_tables_init, reu_mul_tables_init +"
+	@echo " REU table population, and the §8.3 ct_mul_8x8 body surface;"
+	@echo " boot order and obligations in docs/LIBRARY.md §4.6)"
 
 # --- v0.6: 1764-targeted build variant (Group B) -----------------------------
 #
@@ -437,11 +489,13 @@ lib-x25519-onchip:
 	@echo "=== Building lib-x25519-onchip (issue #72: X25519_ONCHIP_MUL=1, no REU) ==="
 	rm -rf build-onchip
 	$(MAKE) BUILD_DIR=build-onchip LIB_DIR=build-onchip/lib \
-	        CA65FLAGS="-D X25519_ONCHIP_MUL=1" \
+	        CA65FLAGS="$(CA65FLAGS)" CONTRACT_ZP_DEFINES="$(CONTRACT_ZP_DEFINES)" \
+	        CONTRACT_DEFINES="$(CONTRACT_DEFINES) -D X25519_ONCHIP_MUL=1" \
 	        X25519_PROFILE=onchip \
 	        lib lib-verify
 	@mkdir -p build/lib
 	@cp build-onchip/lib/libx25519.a build/lib/libx25519-onchip.a
+	@cp build-onchip/lib/libx25519.a build/lib/x25519-onchip.a
 	@echo "SPEC §6 archive: build/lib/libx25519-onchip.a"
 	@echo "(header: the canonical build/lib/x25519.inc serves both profiles —"
 	@echo " consumers of this archive assemble with -D X25519_ONCHIP_MUL=1)"
@@ -456,11 +510,13 @@ lib-x25519-1764:
 	@echo "=== Building lib-x25519-1764 (Group B: SQR_DMA_K=0, banks 0,1 only) ==="
 	rm -rf build-1764
 	$(MAKE) BUILD_DIR=build-1764 LIB_DIR=build-1764/lib \
-	        CA65FLAGS="-D SQR_DMA_K=0" \
+	        CA65FLAGS="$(CA65FLAGS)" CONTRACT_ZP_DEFINES="$(CONTRACT_ZP_DEFINES)" \
+	        CONTRACT_DEFINES="$(CONTRACT_DEFINES) -D SQR_DMA_K=0" \
 	        X25519_PROFILE=1764 \
 	        lib lib-verify
 	@mkdir -p build/lib
 	@cp build-1764/lib/libx25519.a build/lib/libx25519-1764.a
+	@cp build-1764/lib/libx25519.a build/lib/x25519-1764.a
 	@echo "SPEC §6 archive: build/lib/libx25519-1764.a"
 	@echo
 	@echo "Manifest equates for the 1764 variant:"
@@ -514,8 +570,8 @@ dist:
 	@tools/build_release.sh $(VERSION)
 
 $(LIB_VERIFY_PRG): $(LIB_VERIFY_STUB) $(LIB_VERIFY_PROVIDER) $(LIBX25519) cfg/x25519-example.cfg | $(LIB_VERIFY_DIR)
-	$(CA65) $(CA65FLAGS) -I $(SRC_DIR) -o $(LIB_VERIFY_DIR)/stub.o $(LIB_VERIFY_STUB)
-	$(CA65) $(CA65FLAGS) -I $(SRC_DIR) -o $(LIB_VERIFY_DIR)/shared_provider.o $(LIB_VERIFY_PROVIDER)
+	$(CA65) $(CA65FLAGS) $(CONTRACT_DEFINES) -I $(SRC_DIR) -o $(LIB_VERIFY_DIR)/stub.o $(LIB_VERIFY_STUB)
+	$(CA65) $(CA65FLAGS) $(CONTRACT_DEFINES) -I $(SRC_DIR) -o $(LIB_VERIFY_DIR)/shared_provider.o $(LIB_VERIFY_PROVIDER)
 	$(LD65) -C cfg/x25519-example.cfg -o $@ \
 	    -Ln $(LIB_VERIFY_DIR)/stub.labels \
 	    $(LIB_VERIFY_DIR)/stub.o $(LIB_VERIFY_DIR)/shared_provider.o $(LIBX25519)

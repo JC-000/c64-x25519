@@ -241,7 +241,7 @@ Wrapped equates (all inside `src/zp_config.s`, also `.exportzp`-ed):
   (`$25`), `mul_ripple_start` (`$2F`)
 - x25519 working: `x25_prev_bit`, `x25_byte_idx`, `x25_bit_mask`,
   `fe_sqr_pairs`
-- mul_8x8 working (reused by fe25519): `poly_carry`
+- mul_8x8 working (reused by fe25519): `mul_carry`
 - Wide product buffer: `fe_wide` (32-byte ZP region at `$40..$7F`,
   declared in `src/constants.s` with a hard-asserted link check —
   NOT host-overridable; CT/SMC invariant)
@@ -1017,7 +1017,7 @@ your own field buffers, use `.align 32` followed by `.res 32, 0`.
 ```
 $0001           proc_port (BASIC ROM banked out)
 $0014-$0016     fe_cmp_mask / fe_subp_rhs / fe_add_carry_mask (Phase 7 CT scratch)
-$001C           poly_carry (mul_8x8 / fe25519 reuse)
+$001C           mul_carry (mul_8x8 / fe25519 reuse)
 $001E-$002A     fe25519_src1/src2/dst, fe_carry, fe_loop, fe_mul_i/j, x25_prev_bit, x25_byte_idx, x25_bit_mask
 $0024-$0025     mul_pending / mul_bound (Phase 7, in freed fe_misc range)
 $002C-$002F     x25 scratch + fe_sqr_pairs + mul_ripple_start
