@@ -39,7 +39,9 @@ CONSTANTS_S_INCLUDED = 1
 ; REU_CONFIG_NO_EXPORTS suppresses the .export emission here so only
 ; reu_config.o (assembled standalone) emits the public symbols and ld65
 ; doesn't error on "Duplicate external identifier".
+.ifndef REU_CONFIG_NO_EXPORTS
 REU_CONFIG_NO_EXPORTS = 1
+.endif
 .include "reu_config.s"
 
 ; --- Kernal routines ---
@@ -125,7 +127,14 @@ cassette_buf    = $0334         ; cassette buffer (safe scratch area)
 ;     library translation unit must see the same value), OR
 ;   - pre-define the symbol in a wrapper .s file before .include'ing
 ;     zp_config.s directly.
+.ifndef ZP_CONFIG_NO_EXPORTS
+; .ifndef-guarded (issue #99): a consumer suppressing the .exportzp
+; block build-wide (-D ZP_CONFIG_NO_EXPORTS=1, e.g. wireguard's
+; supplies-own-slots model) must be able to set this on the command
+; line; unguarded, every TU including constants.s died on "Symbol
+; already defined". Same guard on REU_CONFIG_NO_EXPORTS above.
 ZP_CONFIG_NO_EXPORTS = 1
+.endif
 .include "zp_config.s"
 
 ; fe_wide product buffer pinned to zero page ($40..$7F)

@@ -473,7 +473,7 @@ make lib-x25519-onchip    # no REU at all — multiplication rows generated on t
 
 See `docs/LIBRARY.md` §4.11 for the integration details and manifest deltas, `docs/design/issue_72_onchip_mul.md` for the design, and `docs/CT_ANALYSIS.md` L30a-d for the constant-time audit of the generator.
 
-Upstream maintainers can also reproduce the release tarball locally via `make lib` (which builds `build/lib/libx25519.a` and individual `.o` files for in-tree verification) — this is not what downstream projects consume.
+Upstream maintainers can also reproduce the release tarball locally via `make lib` (which builds `build/lib/x25519.a` — canonical §6.1 basename, with `libx25519.a` alongside as the deprecated dialect — and individual `.o` files for in-tree verification) — this is not what downstream projects consume.
 
 ## Testing and audit posture
 
