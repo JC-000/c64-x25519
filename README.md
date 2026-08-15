@@ -6,6 +6,16 @@ An optimized implementation of X25519 / Curve25519 scalar multiplication written
 
 ## Status
 
+**v0.11.0 (DRAFT until tagged)** — the phase-3 fleet-wave release:
+contract SPEC v0.9.0–v0.9.2 §6-chapter migration (defines-forwarding,
+import-never-stub, fetch deferral, truthful per-config manifests,
+`lib-app-owned`, canonical `x25519[-variant].a` basenames) plus the
+contract #82/#83 composed-link fixes. **`LIB_X25519_ABI_VERSION`
+2 → 3** (bare `LIB_SHARED_REU_MUL_*` + ZP-trio export removals,
+`poly_carry` → `mul_carry`). Zero runtime change — PRG byte-identical
+to v0.8.0. See
+[`docs/RELEASE_NOTES_v0.11.0.md`](docs/RELEASE_NOTES_v0.11.0.md).
+
 **v0.10.1 released 2026-08-14** — [GitHub release](https://github.com/JC-000/c64-x25519/releases/tag/v0.10.1) — contract alignment sweep (PR #89):
 the consumer version-guard snippets now actually assemble (the old
 `.if` forms were rejected by ca65 on imported symbols — SPEC v0.8.1
