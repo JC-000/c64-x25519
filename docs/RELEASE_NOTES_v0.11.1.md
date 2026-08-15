@@ -78,10 +78,13 @@ PRG byte-identical to v0.8.0
 bench rows, hardware A/B results, and CT catalogue L1–L30 carry
 forward unchanged.
 
-## Tarball (DRAFT — filled by the post-tag SHA-fill PR)
+## Tarball
 
 ```
 File:     c64-x25519-v0.11.1.tar.gz
-Size:     DRAFT
-SHA256:   DRAFT
+Size:     126,581 bytes
+SHA256:   db196781fb73d21f5167c9ac2c25d8d3ff167153866f366d9027f6988bd1e58a
 ```
+
+Byte-identical across two independent `make dist` runs; every shipped
+source verified to assemble standalone from the extracted tarball.

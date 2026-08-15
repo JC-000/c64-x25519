@@ -6,7 +6,7 @@ An optimized implementation of X25519 / Curve25519 scalar multiplication written
 
 ## Status
 
-**v0.11.1 (DRAFT until tagged)** — §6.6/§6.7 placement guards: the
+**v0.11.1 released 2026-08-15** — [GitHub release](https://github.com/JC-000/c64-x25519/releases/tag/v0.11.1) — §6.6/§6.7 placement guards: the
 long-documented silent SQTAB divergence hazard is now a named link
 error in every failure direction (with negative verify legs proving
 the guards fire), the consumer footprint-assert pattern ships in its
