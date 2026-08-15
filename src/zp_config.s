@@ -126,6 +126,14 @@ ZP_CONFIG_S_INCLUDED = 1
 .endif
 
 ; --- mul_8x8 / fe25519 reuse ---
+; Loud-trip for the renamed override spelling (§6.5 silent-failure
+; rule): a consumer still passing -D poly_carry=<addr> after the
+; v0.11.0 rename would otherwise be silently ignored — mul_carry
+; stays at its default and the relocation is lost with no diagnostic
+; (measured). Fail by name instead.
+.ifdef poly_carry
+.error "poly_carry was renamed to mul_carry at v0.11.0 (SPEC v0.9.0 §2 ZP prefix registry) — override mul_carry instead"
+.endif
 ; (renamed from poly_carry, SPEC v0.9.0 §2 ZP prefix registry: poly_
 ; is registered to c64-ChaCha20-Poly1305, and the old name collided
 ; with chacha's live Poly1305-accumulator slot of the same name while

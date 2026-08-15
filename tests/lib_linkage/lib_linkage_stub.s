@@ -136,6 +136,14 @@ public_reu_refs:
 ; the lib-verify LIB_VERIFY_SYMS_ABSENT_ALWAYS check.
 .import LIB_X25519_SHARED_PRIMITIVES
 .import LIB_X25519_SHARED_CONSUMES
+; §6.6 consumer-mirror footprint assert (SPEC v0.10.0): the declared
+; pair must fit the consumer's own MAIN budget. lderror (imported
+; operands), pair, <=, single-line — the normative form. Doubles as
+; the living example the shipped cfg cannot carry (ld65 cfg syntax
+; has no assert).
+.import __MAIN_SIZE__
+.assert (LIB_X25519_RESIDENT_BYTES + LIB_X25519_COLD_BYTES) <= __MAIN_SIZE__, lderror, "x25519 declared footprint exceeds the MAIN budget"
+
 public_manifest_refs:
         .word LIB_X25519_ZP_USAGE_BYTES, LIB_X25519_REU_BANKS_USED
         .word LIB_X25519_RESIDENT_BYTES, LIB_X25519_COLD_BYTES

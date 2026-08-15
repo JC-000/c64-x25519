@@ -23,6 +23,25 @@ zp_ptr1 = $fb           ; 2-byte pointer
 zp_tmp1 = $02           ; temp byte
 zp_tmp2 = $03           ; temp byte
 
+; --- §6.7 declared non-segment reservation guard (SPEC v0.10.0) ------------
+; The sqtab window is address space ld65 cannot see: nothing emits into
+; the SQTAB segment, sqtab_lo/hi are equates off LIB_SHARED_SQTAB_BASE.
+; This TU ships in no archive (§6.7 constraint 1: an archived
+; __MAIN_LAST__ import would force every consumer to name an area
+; MAIN), and the imports are deliberately NOT weak (constraint 2: a
+; missing operand degrades lderror to a silent warning; non-weak, the
+; unresolved external still kills the link). The two __SQTAB_*
+; asserts are the region-agreement superset beyond the SPEC minimum:
+; the minimum closes image-overrun only, and a cfg whose region
+; disagrees with the equate still linked clean (measured at base
+; 0x2A00) — these close the second half of the old "fully silent"
+; case documented in LIBRARY.md.
+.import __MAIN_LAST__
+.assert __MAIN_LAST__ <= LIB_SHARED_SQTAB_BASE, lderror, "image overruns the sqtab window (LIB_SHARED_SQTAB_BASE)"
+.import __SQTAB_START__, __SQTAB_SIZE__
+.assert __SQTAB_START__ = LIB_SHARED_SQTAB_BASE, lderror, "cfg SQTAB region base disagrees with LIB_SHARED_SQTAB_BASE"
+.assert __SQTAB_SIZE__ >= 1024, lderror, "cfg SQTAB region reserves less than 1024 bytes"
+
 ; --- Imports from mul_8x8.s ---
 .import sqtab_init
 

@@ -98,7 +98,7 @@ know each one's failure mode; measured on ld65 V2.18):
 | `LIB_X25519_DATA` | `align = 256` | **Hard link error** (`lderror` asserts in `src/data.s` / `src/reu_config.s`: "must be page-aligned (CT invariant)"). Cannot ship misaligned. |
 | `LIB_X25519_DATA` | file-emitting `type` (`rw`), in a file-backed area | `type = bss` links with only a **warning** ("segment with type 'bss' contains initialized data") and silently drops ~3.7 KB of tables, constants, and buffers from the PRG — every field op reads garbage, **and every file-emitting segment declared after it (`LIB_X25519_INIT_CODE` included) loads ~3.7 KB below its linked address** (the SPEC v0.8.3 mid-area displacement case; same shape as R5). The warning itself is shape-conditional — it keys on non-zero byte values, which this library's segment happens to contain; do not generalize it to other libraries. |
 | `LIB_X25519_INIT_CODE` | last file-emitting segment, declared **before** any bss-type segment | Links **clean with zero diagnostics**; the init code loads `__BSS_SIZE__` bytes below its linked address and `jsr sqtab_init` executes consumer data (design-doc R5). No machine check exists — ordering discipline only. |
-| `SQTAB` MEMORY region | base equal to `LIB_SHARED_SQTAB_BASE` (default `$7800`), 1 KB reserved | **Fully silent.** No source emits into the SQTAB segment; `sqtab_lo`/`sqtab_hi` are equates off `LIB_SHARED_SQTAB_BASE`, and `sqtab_init` writes 1 KB at the *equate* address no matter what the cfg reserves. Moving/dropping the region, or growing MAIN past `$7800`, without the matching `-D LIB_SHARED_SQTAB_BASE=` override = clean link + 1 KB overwrite of live data at init. Keep the MEMORY block and the `-D` value in lockstep. |
+| `SQTAB` MEMORY region | base equal to `LIB_SHARED_SQTAB_BASE` (default `$7800`), 1 KB reserved | **Named link error since v0.12.0-prep** (was fully silent): the §6.7 guard TU (`src/main.s`, never archived) asserts `__MAIN_LAST__ <= LIB_SHARED_SQTAB_BASE` (image overrun) *and* `__SQTAB_START__ = LIB_SHARED_SQTAB_BASE` / `__SQTAB_SIZE__ >= 1024` (region-agreement superset beyond the SPEC minimum, which closes image-overrun only — a diverged region linked clean at base `0x2A00`, measured). Both fire as `lderror` with named messages. Consumers who write their own cfg mirror the same three asserts against their map (§6.7); in the shipped cfg, growing MAIN past `$7800` was already a hard area-overflow error — the silent case was consumer-cfg-only. |
 
 In your source, `.import` the symbols you need:
 
@@ -364,10 +364,18 @@ c64-nist-curves):
 **Consumer-side fit check** (against a ld65-published region size):
 
 ```ca65
-.import LIB_X25519_RESIDENT_BYTES
+.import LIB_X25519_RESIDENT_BYTES, LIB_X25519_COLD_BYTES
 .import __CRYPTO_HOT_SIZE__
-.assert LIB_X25519_RESIDENT_BYTES < __CRYPTO_HOT_SIZE__, \
-        error, "c64-x25519 does not fit in CRYPTO_HOT region"
+.assert (LIB_X25519_RESIDENT_BYTES + LIB_X25519_COLD_BYTES) <= __CRYPTO_HOT_SIZE__, lderror, "c64-x25519 does not fit in CRYPTO_HOT region"
+```
+
+(SPEC v0.10.0 §6.6 form: `lderror` — the operands are imported;
+RESIDENT and COLD asserted as a pair; `<=`; single-line. The region
+symbol requires `define = yes` on the memory area — the shipped cfgs
+now set it on MAIN.)
+
+```ca65
+; (superseded pre-v0.10.0 form kept for diff context — do not copy)
 ```
 
 ## 4.5 Overriding the REU bank base
