@@ -443,6 +443,13 @@ lib-verify-guards:
 	  && echo "OK: leg A fails with the named §6.7 error" \
 	  || (echo "FAIL: diverged SQTAB base did not trip the §6.7 guard:" && echo "$$out" | tail -5 && exit 1)
 	rm -rf build-guards; mkdir -p build-guards
+	@echo "--- leg A2: overrun (base below image end) must fail — the v0.10.2"
+	@echo "    constraint-3 acceptance test, in the placing configuration"
+	@out=$$($(MAKE) BUILD_DIR=build-guards CONTRACT_DEFINES="$(CONTRACT_DEFINES) -D LIB_SHARED_SQTAB_BASE=0x2000" all 2>&1); \
+	echo "$$out" | grep -q "image overruns the sqtab window" \
+	  && echo "OK: leg A2 fails with the named overrun error" \
+	  || (echo "FAIL: overrun base did not trip the §6.7 guard:" && echo "$$out" | tail -5 && exit 1)
+	rm -rf build-guards; mkdir -p build-guards
 	@echo "--- leg B: undersized MAIN must fail the stub link"
 	sed 's/size = \$$7800 - %S, define = yes;/size = $$2400 - %S, define = yes;/' \
 	    cfg/x25519-example.cfg > build-guards/undersized.cfg
