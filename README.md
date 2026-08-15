@@ -6,6 +6,20 @@ An optimized implementation of X25519 / Curve25519 scalar multiplication written
 
 ## Status
 
+**v0.11.2 (DRAFT until tagged)** — a documentation-accuracy release. The
+`vic_blank` speedup was documented as "~20-25%" in eight places since
+v0.1.0; the real figure on the 25-row text screen this library runs is
+**~6%** (NTSC; ~5.5% PAL), confirmed by three independent measurements
+and by the badline arithmetic (#103). The bench that should have caught
+the drift now can: it moved off the jiffy clock — too coarse to resolve
+a 6% effect, and the likely source of the inflated number — onto the
+cycle-exact CIA1 counter, with its previously-printed-only result now a
+`make test-slow` assertion. Also contract v0.10.4–v0.10.6 alignment,
+including a §6.3 guard making `X25519_PROFILE` select its axis or fail
+loudly (#106). Zero runtime change — the PRG is byte-identical to
+v0.11.0 and v0.11.1; ABI stays 3. See
+[`docs/RELEASE_NOTES_v0.11.2.md`](docs/RELEASE_NOTES_v0.11.2.md).
+
 **v0.11.1 released 2026-08-15** — [GitHub release](https://github.com/JC-000/c64-x25519/releases/tag/v0.11.1) — §6.6/§6.7 placement guards: the
 long-documented silent SQTAB divergence hazard is now a named link
 error in every failure direction (with negative verify legs proving
