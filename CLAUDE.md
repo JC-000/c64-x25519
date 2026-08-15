@@ -6,16 +6,27 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 X25519 (RFC 7748) for the Commodore 64 in ca65 6502 assembly, targeting a stock C64 + 1750 REU. Differentially validated against `pyca/cryptography` driven through VICE. Designed to be **vendored as source** into downstream C64 projects, not linked as a system library.
 
-Current release: **v0.3.0** (full CT certification, L1–L24 closed). Public `fe25519_*` / `x25519_*` API is semver-locked.
+Current release: **v0.11.0** (full CT certification, catalogue L1–L30 closed; `LIB_X25519_ABI_VERSION = 3`). Public `fe25519_*` / `x25519_*` API is semver-locked. Contract-aligned through c64-lib-contract SPEC v0.10.3 (§6 build-and-consume chapter, §6.6/§6.7 guards, §2 ZP prefix registry).
 
 ## Build / test commands
 
 ```
 make                 # build build/x25519.prg (standalone test harness)
 make clean
-make lib             # build build/lib/libx25519.a + .o + x25519.inc + cfg
-make lib-verify      # smoke-test libx25519.a via tests/lib_linkage stub
+make lib             # build build/lib/x25519.a (canonical §6.1 basename; libx25519.a
+                     #   ships alongside as the deprecated dialect) + .o + inc + cfg
+make lib-verify      # smoke-test the archive via tests/lib_linkage stub
 make lib-verify-shared  # linkage matrix for the four SHARED_* deferral builds (R6)
+make lib-verify-guards  # §6.6/§6.7 NEGATIVE legs — guards must fail with named errors
+make lib-app-owned   # §6.3 all-primitives-app-owned archive (x25519-app-owned.a)
+make lib-x25519-1764 # 256 KB-REU variant (SQR_DMA_K=0)
+make lib-x25519-onchip  # no-REU variant (X25519_ONCHIP_MUL=1)
+
+# Consumer overrides flow through §6.2 defines-forwarding:
+#   make lib CONTRACT_DEFINES="-D LIB_SHARED_SQTAB_BASE=0xC000"
+#   make lib CONTRACT_ZP_DEFINES="-D fe25519_src1=0x32"   # library TUs only
+# (CA65FLAGS remains as a deprecated alias; hex values use 0x — an
+#  unquoted $-hex is eaten by the shell and silently defines 0.)
 
 make test            # python3 tools/ref_x25519.py (no VICE, fastest)
 make test-vice       # subset: mul38, fe25519, fe_mul/sqr stress, ct_square_cycles, reduce_wide_carry
@@ -33,30 +44,35 @@ Single test run: `python3 tools/<name>.py [--slow]`. Benches live in `tools/benc
 
 ## Architecture (big picture)
 
-The library is 6 ca65 `.o` modules (no `main.o`, which is the BASIC stub / test harness — downstream supplies its own entry point). Module layout in `src/`:
+The library is 10 ca65 `.o` modules (no `main.o`, which is the BASIC stub / test harness / §6.7 guard TU — downstream supplies its own entry point and mirrors the guard). Module layout in `src/`:
 
 ```
 x25519.s       Montgomery ladder, x25519_clamp / _scalarmult / _base
-fe25519.s     Field arithmetic mod p = 2^255 - 19
-mul_8x8.s     8x8→16 multiply via quarter-square table (CT)
-x25519_init.s sqtab_init, reu_mul_init, REU helpers
-data.s        Page-aligned static buffers (CT-critical alignment)
-util.s        vic_blank/unblank, bench_start/stop (jiffy clock)
-constants.s   .include'd by every .s; never assembled alone
-x25519.inc    Public header (imports list + full API docs) — canonical API surface
+fe25519.s      Field arithmetic mod p = 2^255 - 19
+mul_8x8.s      8x8→16 multiply via quarter-square table (CT); §8.1/§8.3 owner-or-defer gates
+x25519_init.s  sqtab_init, reu_mul_init, REU fetch helpers; §8.2 deferral gates
+data.s         Page-aligned static buffers (CT-critical alignment)
+util.s         vic_blank/unblank, bench_start/stop (jiffy clock)
+lib_version.s  Contract §1 version equates ONLY (TU-isolated; bare aliases gated)
+lib_manifest.s Contract §5 aggregates, §8.0 masks, §8.4 precalc enumeration
+zp_config.s    Contract §2 ZP slot inventory (.ifndef-guarded, .exportzp'd)
+reu_config.s   Contract §3/§8.2 REU bank + placement equates and asserts
+constants.s    .include'd by every .s; never assembled alone
+precalc_table.inc  Byte-verbatim copy of the contract's §8.4 macro — never hand-edit
+x25519.inc     Public header (imports list + full API docs) — canonical API surface
 ```
 
 Dep sketch: `x25519.s → fe25519.s → mul_8x8.s` and `x25519.s → x25519_init.s (REU)` and `→ data.s (buffers)`. `util.s` is standalone.
 
 ### Hardware contract
 
-- **REU:** 1750 or equivalent, ≥512 KB (library uses 6 banks = 384 KB for mul tables). Library uses REU autoload; leaves `$DF00–$DF0A` ready-for-next-call. Callers that also touch the REU must save/restore.
+- **REU:** 1750 or equivalent, ≥512 KB default (claims 5 banks = mask `$3B`: mul tables + doubled/carry; bank 2 in the window is NOT claimed). The 1764 variant claims banks 0–1 only (`$03`, 256 KB); the onchip variant claims none. Library uses REU autoload; leaves `$DF00–$DF0A` ready-for-next-call. Callers that also touch the REU must save/restore.
 - **Zero page:** library owns `$14–$7F` while running and does NOT preserve it across calls. (`$FB-$FE` is test-harness-only scratch, local to `main.s` since contract #83 — not part of the library claim.) Hosts can override the ZP layout via `.ifndef` guards in `src/constants.s` (see `docs/LIBRARY.md` §4.2) to compose with sibling crypto libs.
 - **No RNG.** Caller generates / stores / zeros keys.
 
 ### Constant-time discipline (NON-NEGOTIABLE)
 
-The threat model is network-observable timing against `fe25519_*` and the outer ladder. (`mul_8x8` is boot-only — sole caller `reu_mul_init`'s public table enumeration, no secret inputs — so it has no network-observable exposure; it retains constant-time discipline as the canonical c64-lib-contract §8.3 shared-primitive shape, byte-identical to the chacha owner.) All 24 catalogued leak sites L1–L24 are closed. When touching the hot path:
+The threat model is network-observable timing against `fe25519_*` and the outer ladder. (`mul_8x8` is boot-only — sole caller `reu_mul_init`'s public table enumeration, no secret inputs — so it has no network-observable exposure; it retains constant-time discipline as the canonical c64-lib-contract §8.3 shared-primitive shape, byte-identical to the chacha owner.) All 30 catalogued leak sites L1–L30 are closed. When touching the hot path:
 
 - **No secret-dependent branches.** Every branch must depend only on **public** loop indices.
 - **No `(zp),y` indirect loads on secret operands.** Use direct indexed loads from page-aligned buffers.
@@ -92,7 +108,7 @@ When you add or change anything CT-relevant, **extend the leak catalogue in `doc
 ## Reference docs in repo
 
 - `docs/LIBRARY.md` — integration guide, memory map, public API
-- `docs/CT_ANALYSIS.md` — leak catalogue L1–L24, threat model, Phase 6 correctness/CT argument. **Authoritative for any CT discussion.**
+- `docs/CT_ANALYSIS.md` — leak catalogue L1–L30, threat model, Phase 6 correctness/CT argument. **Authoritative for any CT discussion.**
 - `docs/RELEASE_NOTES_v*.md` — per-release perf + CT posture story
 
 ## Workflow notes
