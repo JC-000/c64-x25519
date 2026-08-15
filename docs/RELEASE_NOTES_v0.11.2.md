@@ -8,6 +8,28 @@ A documentation-accuracy release. No code path changed; what changed is that
 the numbers we publish are now true, and a bench that could not have detected
 the error now guards against it.
 
+## §6.6 footprint pairs — zero delta in every profile × variant
+
+Contract §6.6 obligation 2 requires the footprint deltas stated per
+(profile × variant) even when they are zero. All seven are unchanged from
+v0.11.0 / v0.11.1:
+
+| profile × variant | `RESIDENT` | `COLD` | delta |
+|---|---:|---:|---:|
+| default | `$0020BF` | `$00033A` | 0 / 0 |
+| `lib-x25519-onchip` | `$00200F` | `$0000A0` | 0 / 0 |
+| `lib-x25519-1764` | `$002037` | `$000288` | 0 / 0 |
+| `shared-sqtab` | `$0020BF` | `$00029A` | 0 / 0 |
+| `shared-reu` | `$0020AB` | `$0001CE` | 0 / 0 |
+| `shared-ct` | `$002080` | `$00033A` | 0 / 0 |
+| `shared-all` (app-owned) | `$00206C` | `$00012E` | 0 / 0 |
+
+Verified two ways rather than asserted: `git diff v0.11.1..HEAD -- Makefile`
+shows no change to any `LIB_VERIFY_RESIDENT_EXPECT` / `LIB_VERIFY_COLD_EXPECT`
+value, and all seven profiles' `lib-verify` footprint asserts pass green at
+the release commit. The byte-identical PRG is consistent with this — nothing
+in this release emits a single byte of code or data.
+
 ## The headline: `vic_blank` is worth ~6%, not ~20-25%
 
 Since v0.1.0 this library documented `vic_blank` as a "~20-25% CPU speedup", in
