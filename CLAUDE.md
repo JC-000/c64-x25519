@@ -6,9 +6,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 X25519 (RFC 7748) for the Commodore 64 in ca65 6502 assembly, targeting a stock C64 + 1750 REU. Differentially validated against `pyca/cryptography` driven through VICE. Designed to be **vendored as source** into downstream C64 projects, not linked as a system library.
 
-Current release: **v0.11.1** (full CT certification, catalogue L1–L30 closed; `LIB_X25519_ABI_VERSION = 3`). Public `fe25519_*` / `x25519_*` API is semver-locked. Contract-aligned through c64-lib-contract SPEC v0.10.4 (§6 build-and-consume chapter, §6.6/§6.7 guards, §2 ZP prefix registry).
+Current release: **v0.11.1** (full CT certification, catalogue L1–L30 closed; `LIB_X25519_ABI_VERSION = 3`). Public `fe25519_*` / `x25519_*` API is semver-locked. Contract-aligned through c64-lib-contract SPEC v0.10.5 (§6 build-and-consume chapter, §6.6/§6.7 guards, §2 ZP prefix registry).
 
-v0.10.4 required no change here: it scopes §6.3's no-further-matrix posture to *define-reachable* combinations and rules that a documented **member-set** axis must take its own §6.1 target. Every x25519 profile (`lib`, `lib-app-owned`, `lib-x25519-1764`, `lib-x25519-onchip`, all four `SHARED_*` deferral legs) is built by re-invoking `make lib` over the single fixed `LIB_OBJS` list with different `CONTRACT_DEFINES`, so all of them ship the same ten members — verified by comparing `ar65 t` output across profiles. No axis here is member-set-shaped.
+v0.10.4 required no change here: it scopes §6.3's no-further-matrix posture to *define-reachable* combinations and rules that a documented **member-set** axis must take its own §6.1 target. Every x25519 profile (`lib`, `lib-app-owned`, `lib-x25519-1764`, `lib-x25519-onchip`, all four `SHARED_*` deferral legs) is built by re-invoking `make lib` over the single fixed `LIB_OBJS` list with different `CONTRACT_DEFINES`, so all of them ship the same ten members. No axis here is member-set-shaped.
+
+v0.10.5 **did** require a change: its §6.3 looks-reachable clause (a knob naming an axis MUST select it or fail loudly) caught `X25519_PROFILE` as a live shape-3 "silent no-op" — `make lib X25519_PROFILE=onchip` exited 0 and shipped a default archive, and a typo'd value fell through the `ifeq` chain's closing `else` into `default`. Both are now hard `$(error)`s at parse time (Makefile, just below `X25519_PROFILE ?= default`): unknown values are rejected, and a known value must be accompanied by the `-D` that actually selects it. The named profile targets pass both together, so they satisfy it by construction.
+
+**Verifying a profile axis:** compare **linked output or `od65 --dump-segsize` dumps**, never archive or object bytes. `ca65` stamps `OPT_DATETIME` plus source paths into every object unconditionally, so raw byte comparison is non-deterministic across rebuilds yet byte-*identical* within the same second — it can report both false differences and false sameness. `od65` is structural: e.g. `x25519_init.o` carries 666 bytes of `LIB_X25519_INIT_CODE` in the default profile and 0 in onchip.
 
 ## Build / test commands
 

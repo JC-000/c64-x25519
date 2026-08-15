@@ -196,6 +196,45 @@ LIB_VERIFY_PROVIDER = tests/lib_linkage/shared_provider_stub.s
 # x25519-own names absent. Default `make lib-verify` is unchanged.
 X25519_PROFILE ?= default
 
+# --- §6.3 looks-reachable guard (contract v0.10.5, issue #117) --------------
+# X25519_PROFILE *names* an axis, so per §6.3's three-shape ladder it MUST
+# select that axis or fail loudly — silent exit-0 disagreement is
+# non-conformant whether or not a target exists for the combination.
+#
+# It does not select anything on its own: it picks lib-verify EXPECTATIONS,
+# while the axis itself rides CONTRACT_DEFINES. Before this guard x25519 was
+# shape 3 (silent no-op), measured at v0.11.1: `make lib X25519_PROFILE=onchip`
+# exited 0 and shipped an archive identical to the default build rather than
+# the onchip one. A typo'd value was absorbed just as quietly — the ifeq
+# chain's closing `else` is the default branch, so X25519_PROFILE=onchipp
+# silently built default.
+#
+# Both holes are closed here: an unknown value is rejected, and a known value
+# must be accompanied by the -D that actually selects it. The named profile
+# targets (lib-x25519-onchip, lib-x25519-1764, lib-verify-shared,
+# lib-app-owned) all pass the matching -D alongside X25519_PROFILE, so they
+# satisfy this by construction. The reverse direction — defines without the
+# matching profile — already fails loudly in lib-verify via the mask/CONSUMES
+# asserts (e.g. onchip's $000005 vs default's $000007).
+X25519_PROFILE_VALID := default onchip 1764 \
+	shared-sqtab shared-reu shared-ct shared-all
+
+ifeq ($(filter $(X25519_PROFILE),$(X25519_PROFILE_VALID)),)
+$(error X25519_PROFILE='$(X25519_PROFILE)' is not a known profile. Valid values: $(X25519_PROFILE_VALID))
+endif
+
+X25519_PROFILE_NEEDS_onchip       := X25519_ONCHIP_MUL=1
+X25519_PROFILE_NEEDS_1764         := SQR_DMA_K=0
+X25519_PROFILE_NEEDS_shared-sqtab := SHARED_SQTAB_INIT=1
+X25519_PROFILE_NEEDS_shared-reu   := SHARED_REU_MUL_INIT=1 SHARED_REU_MUL_FETCH=1
+X25519_PROFILE_NEEDS_shared-ct    := SHARED_CT_MUL_8X8=1
+X25519_PROFILE_NEEDS_shared-all   := SHARED_SQTAB_INIT=1 SHARED_REU_MUL_INIT=1 \
+	SHARED_REU_MUL_FETCH=1 SHARED_CT_MUL_8X8=1
+
+$(foreach d,$(X25519_PROFILE_NEEDS_$(X25519_PROFILE)),\
+  $(if $(findstring $(d),$(CONTRACT_DEFINES)),,\
+    $(error X25519_PROFILE=$(X25519_PROFILE) does not select that axis: '-D $(d)' is missing from CONTRACT_DEFINES. Use the named target (e.g. `make lib-x25519-onchip`) or pass CONTRACT_DEFINES="-D $(d)". Contract v0.10.5 §6.3: a knob naming an axis MUST select it or fail loudly.)))
+
 LIB_VERIFY_SYMS_COMMON = x25519_clamp x25519_scalarmult x25519_base \
 	fe25519_add fe25519_sub fe25519_mul fe25519_sqr \
 	x25_scalar x25_u x25_result \
