@@ -203,7 +203,9 @@ _BASE_COLD     = 648
 ; stub migration): sqtab_init body + sq_* temps = 160 B COLD, uniform
 ; across profiles; reu_mul_init = 364 B COLD at SQR_DMA_K > 0 (doubled
 ; -table generation included) or 186 B at SQR_DMA_K = 0; the deferred
-; §8.3 ct_mul_8x8 body + scratch = 63 B RESIDENT.
+; §8.3 ct_mul_8x8 body + scratch = 63 B RESIDENT; the §8.2 fetch pair
+; (SPEC v0.9.1-C: INIT and FETCH move together) additionally drops the
+; resident reu_fetch_mul_row body = 20 B RESIDENT.
 .ifdef SHARED_SQTAB_INIT
 _D_COLD_SQ = 160
 .else
@@ -215,8 +217,10 @@ _D_COLD_REU = 364
 .else
 _D_COLD_REU = 186
 .endif
+_D_RES_REU = 20
 .else
 _D_COLD_REU = 0
+_D_RES_REU = 0
 .endif
 .ifdef SHARED_CT_MUL_8X8
 _D_RES_CT = 63
@@ -224,7 +228,7 @@ _D_RES_CT = 63
 _D_RES_CT = 0
 .endif
 
-LIB_X25519_RESIDENT_BYTES = _BASE_RESIDENT - _D_RES_CT
+LIB_X25519_RESIDENT_BYTES = _BASE_RESIDENT - _D_RES_CT - _D_RES_REU
 LIB_X25519_COLD_BYTES     = _BASE_COLD - _D_COLD_SQ - _D_COLD_REU
 
 ; c64-lib-contract §5 / §8.x shared-primitives bit constants. Bit

@@ -50,6 +50,17 @@ reu_mul_tables_init:
         rts
 .endif
 
+.ifdef SHARED_REU_MUL_FETCH
+; §8.2 fetch half (SPEC v0.9.1): canonical per-row fetch + the
+; promoted SMC bank-patch label (contract #15). Stand-in only.
+.export reu_fetch_mul_row
+.export reu_fetch_mul_row_bank_patch
+.segment "CODE"
+reu_fetch_mul_row:
+        rts
+reu_fetch_mul_row_bank_patch := reu_fetch_mul_row
+.endif
+
 .ifdef SHARED_CT_MUL_8X8
 ; §8.3: the canonical CT multiply body surface. x25519's retained
 ; modules import all of this cross-TU (src/x25519_init.s's

@@ -11,7 +11,16 @@
 ; Onchip profile (issue #72): no REU on the hot path — the row-fetch
 ; helper and its SMC bank-patch export drop out entirely (same
 ; .export-demands-a-definition rule as the SQR_DMA_K gate below).
+.ifndef SHARED_REU_MUL_FETCH
 .export reu_fetch_mul_row
+.else
+; §8.2 fetch deferral (SPEC v0.9.1): the canonical per-row fetch and
+; its promoted SMC bank-patch label come from the provider. v0.9.1-C
+; rules INIT and FETCH move together (coupling assert in
+; reu_config.s); import-never-stub per §8.1's rule.
+.import reu_fetch_mul_row
+.import reu_fetch_mul_row_bank_patch
+.endif
 .endif
 .if ::SQR_DMA_K
 ; reu_fetch_doubled_row only exists in the SQR_DMA_K > 0 (default)
@@ -353,6 +362,7 @@ reu_init_b:     .byte 0
 .segment "LIB_X25519_CODE"
 
 .if ::X25519_ONCHIP_MUL = 0
+.ifndef SHARED_REU_MUL_FETCH
 .proc reu_fetch_mul_row
         lda mul_cached_a
         asl                    ; A = multiplier * 2, carry = bit 7
@@ -373,6 +383,7 @@ bank_lda:
 ; rebuilding the library. No-op for in-tree / canonical callers.
 reu_fetch_mul_row_bank_patch := reu_fetch_mul_row::bank_lda + 1
 .export reu_fetch_mul_row_bank_patch
+.endif ; SHARED_REU_MUL_FETCH not defined (owner build carries the body)
 .endif ; X25519_ONCHIP_MUL = 0 (issue #72 — reu_fetch_mul_row + patch export)
 
 ; =============================================================================
