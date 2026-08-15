@@ -6,7 +6,7 @@ An optimized implementation of X25519 / Curve25519 scalar multiplication written
 
 ## Status
 
-**v0.11.0 (DRAFT until tagged)** — the phase-3 fleet-wave release:
+**v0.11.0 released 2026-08-15** — [GitHub release](https://github.com/JC-000/c64-x25519/releases/tag/v0.11.0) — the phase-3 fleet-wave release:
 contract SPEC v0.9.0–v0.9.2 §6-chapter migration (defines-forwarding,
 import-never-stub, fetch deferral, truthful per-config manifests,
 `lib-app-owned`, canonical `x25519[-variant].a` basenames) plus the
