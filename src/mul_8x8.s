@@ -34,7 +34,24 @@
 .setcpu "6502"
 .include "constants.s"
 
+.ifndef SHARED_SQTAB_INIT
+; §8.1 owner build: this TU carries the canonical table-build body and
+; exports both names (sqtab_init = historical, mul_tables_init =
+; contract-canonical alias).
 .export sqtab_init, mul_tables_init
+.else
+; §8.1 deferring build (SPEC v0.9.0 import-never-stub rule): a
+; deferring build MUST import the provider's canonical entry and MUST
+; NOT export a stub — two exported canonical inits in one composed
+; link is a defect (we were the clause's measured example: the old
+; `rts` stub kept sqtab_init/mul_tables_init exported here, giving
+; every composed link two mul_tables_init bodies). The historical
+; sqtab_init name resolves as a link-time alias of the imported
+; canonical entry so in-repo callers (main.s) keep working; it is NOT
+; exported in this configuration.
+.import mul_tables_init
+sqtab_init := mul_tables_init
+.endif
 .ifndef SHARED_CT_MUL_8X8
 .export mul_8x8, ct_mul_8x8, poly_prod_lo, poly_prod_hi
 ; SMC operand-bake sites — patched by the caller (reu_mul_init) once per
@@ -82,16 +99,10 @@
 ; incorrect. The contract §8.1 expectation is that the host calls
 ; the canonical init exactly once.
 ; =============================================================================
+.ifndef SHARED_SQTAB_INIT
 mul_tables_init = sqtab_init    ; canonical contract-§8.1 alias
 
 .proc sqtab_init
-.ifdef SHARED_SQTAB_INIT
-        ; Consumer signaled that another translation unit provides the
-        ; canonical `mul_tables_init`. Skip our table build to avoid
-        ; clobbering the shared region with a second copy of the same
-        ; values (correctness-preserving but wasteful).
-        rts
-.else
         lda #0
         sta sq_acc              ; accumulator = 0
         sta sq_acc+1
@@ -161,7 +172,6 @@ mul_tables_init = sqtab_init    ; canonical contract-§8.1 alias
         beq @done
         jmp @loop
 @done:  rts
-.endif  ; SHARED_SQTAB_INIT
 .endproc
 
 ; Temporaries for sqtab_init
@@ -169,6 +179,8 @@ sq_acc: .res 3, 0              ; 24-bit accumulator for i^2
 sq_sh:  .res 3, 0              ; 24-bit shifted result (i^2 / 4)
 sq_ad:  .res 2, 0              ; 16-bit addition term (2i+1)
 sq_i:   .res 2, 0              ; 16-bit index counter (0..511)
+.endif  ; SHARED_SQTAB_INIT (owner-build body + temps; deferring builds
+        ; import the provider's canonical mul_tables_init instead)
 
 ; Back to resident LIB_X25519_CODE (issue #68 cold-split boundary). ct_mul_8x8 is
 ; boot-only in x25519 (sole caller reu_mul_init) but stays RESIDENT

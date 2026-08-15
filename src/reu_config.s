@@ -110,6 +110,21 @@ X25519_REU_BANK_CARRY   = X25519_REU_BANK + 3
 ; The actual init body lives in src/x25519_init.s under .ifndef
 ; SHARED_REU_MUL_INIT (migration gate). The canonical entry point is
 ; `reu_mul_tables_init` (alias of `reu_mul_init`).
+;
+; SPEC v0.9.1-C: SHARED_REU_MUL_INIT and SHARED_REU_MUL_FETCH MUST
+; move together — partial deferral creates a §8.0 ownership state
+; with no table row (an owner of the fetch that is not an owner of
+; the primitive, or vice versa).
+.ifdef SHARED_REU_MUL_INIT
+.ifndef SHARED_REU_MUL_FETCH
+.error "SHARED_REU_MUL_INIT requires SHARED_REU_MUL_FETCH (SPEC v0.9.1 §8.2: the two deferral switches move together)"
+.endif
+.endif
+.ifdef SHARED_REU_MUL_FETCH
+.ifndef SHARED_REU_MUL_INIT
+.error "SHARED_REU_MUL_FETCH requires SHARED_REU_MUL_INIT (SPEC v0.9.1 §8.2: the two deferral switches move together)"
+.endif
+.endif
 .ifndef LIB_SHARED_REU_MUL_BANK
   LIB_SHARED_REU_MUL_BANK = X25519_REU_BANK
 .endif

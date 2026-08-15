@@ -28,7 +28,7 @@
 ;   every `.exportzp`-ed slot in src/zp_config.s plus the (unexported)
 ;   fe_wide region in constants.s:
 ;     $14-$16 fe_cmp_mask/fe_subp_rhs/fe_add_carry_mask  = 3 B
-;     $1C     poly_carry                                  = 1 B
+;     $1C     mul_carry                                  = 1 B
 ;     $1E-$2A fe25519_src1..x25_prev_bit (contiguous)     = 13 B
 ;     $2C-$2F x25_byte_idx..mul_ripple_start              = 4 B
 ;     $40-$7F fe_wide (CT/SMC-pinned)                     = 64 B
@@ -182,17 +182,54 @@ LIB_X25519_ZP_USAGE_BYTES = 85
 ; — reu_mul_init/reu_probe are gated out). Measured via od65 at
 ; v0.8.0 (`make lib-x25519-onchip` prints the per-object dump).
 LIB_X25519_REU_BANKS_USED = 0
-LIB_X25519_RESIDENT_BYTES = 8207
-LIB_X25519_COLD_BYTES     = 160
+_BASE_RESIDENT = 8207
+_BASE_COLD     = 160
 .elseif SQR_DMA_K
 LIB_X25519_REU_BANKS_USED = $3B << X25519_REU_BANK
-LIB_X25519_RESIDENT_BYTES = 8383
-LIB_X25519_COLD_BYTES     = 826
+_BASE_RESIDENT = 8383
+_BASE_COLD     = 826
 .else
 LIB_X25519_REU_BANKS_USED = $03 << X25519_REU_BANK
-LIB_X25519_RESIDENT_BYTES = 8247
-LIB_X25519_COLD_BYTES     = 648
+_BASE_RESIDENT = 8247
+_BASE_COLD     = 648
 .endif
+
+; §6.4 half-2 (SPEC v0.9.0): the SHARED_* deferral switches gate real
+; code out of the archive, so the footprint equates must react to them
+; — the pre-migration constants over-claimed COLD by up to +164% in
+; deferral builds (the measured shape §6.4 was written against, and
+; the per-profile lib-verify value locks certified the fiction).
+; Deltas are od65-measured per combo (2026-08-15, post import-never-
+; stub migration): sqtab_init body + sq_* temps = 160 B COLD, uniform
+; across profiles; reu_mul_init = 364 B COLD at SQR_DMA_K > 0 (doubled
+; -table generation included) or 186 B at SQR_DMA_K = 0; the deferred
+; §8.3 ct_mul_8x8 body + scratch = 63 B RESIDENT; the §8.2 fetch pair
+; (SPEC v0.9.1-C: INIT and FETCH move together) additionally drops the
+; resident reu_fetch_mul_row body = 20 B RESIDENT.
+.ifdef SHARED_SQTAB_INIT
+_D_COLD_SQ = 160
+.else
+_D_COLD_SQ = 0
+.endif
+.if .defined(SHARED_REU_MUL_INIT) .and (::X25519_ONCHIP_MUL = 0)
+.if ::SQR_DMA_K
+_D_COLD_REU = 364
+.else
+_D_COLD_REU = 186
+.endif
+_D_RES_REU = 20
+.else
+_D_COLD_REU = 0
+_D_RES_REU = 0
+.endif
+.ifdef SHARED_CT_MUL_8X8
+_D_RES_CT = 63
+.else
+_D_RES_CT = 0
+.endif
+
+LIB_X25519_RESIDENT_BYTES = _BASE_RESIDENT - _D_RES_CT - _D_RES_REU
+LIB_X25519_COLD_BYTES     = _BASE_COLD - _D_COLD_SQ - _D_COLD_REU
 
 ; c64-lib-contract §5 / §8.x shared-primitives bit constants. Bit
 ; allocation is append-only — bits are never reused even if a primitive

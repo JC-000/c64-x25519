@@ -1375,7 +1375,7 @@ mul38_hi:  .byte 0
         rol poly_prod_hi
         lda #0
         adc #0                 ; A = carry from ROL (0 or 1)
-        sta poly_carry         ; save 17th bit
+        sta mul_carry         ; save 17th bit
 
         ; Single addition of doubled product to fe_wide[i+j]
         ldx fe_mul_j
@@ -1402,7 +1402,7 @@ mul38_hi:  .byte 0
         ; dropped here — end-of-inner recomputes from fe_mul_i/fe_mul_j.
         ; Invariants 1–5 preserved; invariant 8 unchanged (no new branches).
         lda #0
-        adc poly_carry         ; A = combined_A (uses C from prior adc_hi)
+        adc mul_carry         ; A = combined_A (uses C from prior adc_hi)
         clc
         adc sqr_pending        ; A ≤ 3, C = 0 (sum ≤ 3 < 256)
         inx                    ; X = j+1 → fe_wide+1,X points to [i+j+2]
@@ -1462,7 +1462,7 @@ mul38_hi:  .byte 0
         rol poly_prod_hi
         lda #0
         adc #0
-        sta poly_carry
+        sta mul_carry
 
         ldx fe_mul_j
 
@@ -1490,7 +1490,7 @@ mul38_hi:  .byte 0
         ; forces sqr_pending = 0 (inv 5); end-of-inner recomputes ripple_start
         ; from fe_mul_i/fe_mul_j, yielding the phantom sentinel value 64.
         lda #0
-        adc poly_carry         ; A = combined_B (uses C from prior adc_hi)
+        adc mul_carry         ; A = combined_B (uses C from prior adc_hi)
         clc
         adc sqr_pending        ; A ≤ 3, C = 0
         inx                    ; X = j+2 → fe_wide+1,X points to [i+j+3]
@@ -1575,7 +1575,7 @@ mul38_hi:  .byte 0
         ; zero into fe_wide and produces no carry; body is a functional no-op.
         ldy mul_src2_buf,x     ; Y = a[j]
         lda mul_dma_carry,y
-        sta poly_carry
+        sta mul_carry
         clc
 @sqr_dma_ld1:
         lda fe_wide,x          ; patched: fe_wide+i, X = j
@@ -1588,7 +1588,7 @@ mul38_hi:  .byte 0
 @sqr_dma_st2:
         sta fe_wide+1,x
         lda #0
-        adc poly_carry         ; A = combined_A (accum + 17th-bit)
+        adc mul_carry         ; A = combined_A (accum + 17th-bit)
         ; --- Phase 3 (v0.3.0) chain step: DMA body A ---
         ; Phase 6 semantics preserved. X enters = j (from body A accum, still
         ; alive since DMA's CT body doesn't clobber X after the `sta fe_wide+1,x`).
@@ -1613,7 +1613,7 @@ mul38_hi:  .byte 0
         ; Phase 5b CT: no zero-skip on a[j] (see Body A comment above).
         ldy mul_src2_buf,x     ; Y = a[j]
         lda mul_dma_carry,y
-        sta poly_carry
+        sta mul_carry
         clc
 @sqr_dma_ld1_b:
         lda fe_wide,x
@@ -1626,7 +1626,7 @@ mul38_hi:  .byte 0
 @sqr_dma_st2_b:
         sta fe_wide+1,x
         lda #0
-        adc poly_carry         ; A = combined_B
+        adc mul_carry         ; A = combined_B
         ; --- Phase 3 (v0.3.0) chain step: DMA body B ---
         ; Phase 6 semantics preserved. X enters = j' = j+1 (body B's j).
         ; Threaded cursor: inx → X = j+2 so SMC @sqr_dma_b_chain_*{ld,st}

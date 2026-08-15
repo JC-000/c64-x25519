@@ -227,7 +227,7 @@
 ;   $14      fe_cmp_mask          (Phase 7: fe_cmp_p_ct $00/$FF mask)
 ;   $15      fe_subp_rhs          (Phase 7: per-iter (p_byte AND mask) scratch)
 ;   $16      fe_add_carry_mask    (Phase 7: fe25519_add carry-out mask)
-;   $1C      poly_carry           (mul_8x8 / fe25519 reuse)
+;   $1C      mul_carry           (mul_8x8 / fe25519 reuse)
 ;   $1E-$1F  fe25519_src1         (caller-set pointer to operand 1)
 ;   $20-$21  fe25519_src2         (caller-set pointer to operand 2)
 ;   $22-$23  fe25519_dst          (caller-set pointer to destination)
@@ -334,7 +334,15 @@
   X25519_ONCHIP_MUL = 0
 .endif
 
-.import sqtab_init, mul_tables_init
+.import mul_tables_init              ; §8.1 canonical entry — always
+                                     ; resolves (owner build: x25519's
+                                     ; body; deferral: the provider's)
+.ifndef SHARED_SQTAB_INIT
+.import sqtab_init                   ; historical x25519-own alias;
+                                     ; absent from a §8.1 deferral
+                                     ; build (import-never-stub, SPEC
+                                     ; v0.9.0) — use mul_tables_init
+.endif
 .if ::X25519_ONCHIP_MUL = 0
 .ifndef SHARED_REU_MUL_INIT
 .import reu_mul_init                 ; x25519-private init name; gated out of

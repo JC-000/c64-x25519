@@ -15,15 +15,28 @@
 ; below materializes exactly when its deferral switch is defined. In a
 ; default / 1764 / onchip build this TU contributes nothing at all.
 ;
-; SHARED_SQTAB_INIT needs no stand-in: the §8.1 shape keeps x25519's
-; sqtab_init / mul_tables_init exports and turns the body into a no-op
-; (src/mul_8x8.s), so nothing dangles.
+; SHARED_SQTAB_INIT needs a mul_tables_init stand-in since the SPEC
+; v0.9.0 import-never-stub migration: a deferring build imports the
+; provider's canonical entry instead of exporting a no-op stub
+; (src/mul_8x8.s; the old stub shape put two exported canonical inits
+; in every composed link and was the clause's measured example).
 ;
 ; This is linkage smoke-test scaffolding only — the stand-ins are NOT
 ; functional bodies and must never ship in an archive.
 ; =============================================================================
 
 .setcpu "6502"
+
+.ifdef SHARED_SQTAB_INIT
+; §8.1: the canonical table-build entry the provider owns. x25519's
+; own sqtab_init / mul_tables_init exports are gated out
+; (src/mul_8x8.s); its retained TUs alias sqtab_init := the imported
+; canonical entry.
+.export mul_tables_init
+.segment "CODE"
+mul_tables_init:
+        rts
+.endif
 
 .ifdef SHARED_REU_MUL_INIT
 ; §8.2: the canonical init entry the provider owns. x25519's own
@@ -35,6 +48,17 @@
 .segment "CODE"
 reu_mul_tables_init:
         rts
+.endif
+
+.ifdef SHARED_REU_MUL_FETCH
+; §8.2 fetch half (SPEC v0.9.1): canonical per-row fetch + the
+; promoted SMC bank-patch label (contract #15). Stand-in only.
+.export reu_fetch_mul_row
+.export reu_fetch_mul_row_bank_patch
+.segment "CODE"
+reu_fetch_mul_row:
+        rts
+reu_fetch_mul_row_bank_patch := reu_fetch_mul_row
 .endif
 
 .ifdef SHARED_CT_MUL_8X8
