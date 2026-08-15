@@ -37,9 +37,13 @@
 ;                       the load-bearing consumer breakage gate while
 ;                       the library is pre-1.0, because §7 lets
 ;                       breaking changes ride MINOR bumps there.
-;                       History: 1 -> 2 at v0.10.0, acknowledging the
-;                       v0.9.0 removal of the LIB_SHARED_PRIMITIVES_*
-;                       exports (see RELEASE_NOTES_v0.10.0.md erratum).
+;                       History: 1 -> 2 at v0.10.0 (v0.9.0
+;                       LIB_SHARED_PRIMITIVES_* export removal,
+;                       erratum in RELEASE_NOTES_v0.10.0.md);
+;                       2 -> 3 at v0.11.0 (phase-3 wave: bare
+;                       LIB_SHARED_REU_MUL_* and zp_ptr1/zp_tmp1/
+;                       zp_tmp2 export removals, poly_carry ->
+;                       mul_carry registry rename).
 ;
 ; The library is currently in the v0.x pre-stable series. MINOR bumps
 ; may add public symbols but will not remove or rename existing
@@ -51,9 +55,9 @@
 ; =============================================================================
 
 LIB_X25519_VERSION_MAJOR = 0
-LIB_X25519_VERSION_MINOR = 10
-LIB_X25519_VERSION_PATCH = 1
-LIB_X25519_ABI_VERSION   = 2
+LIB_X25519_VERSION_MINOR = 11
+LIB_X25519_VERSION_PATCH = 0
+LIB_X25519_ABI_VERSION   = 3
 
 ; Exported as absolute (16-bit) symbols, not zeropage. ca65 would otherwise
 ; infer zeropage size because the values fit in a byte, which then mismatches

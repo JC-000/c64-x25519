@@ -27,14 +27,15 @@
 ; ----------------------------------------------------------------------------
 ;
 ;   LIB_X25519_VERSION_MAJOR   semver major (currently 0)
-;   LIB_X25519_VERSION_MINOR   semver minor (currently 10)
-;   LIB_X25519_VERSION_PATCH   semver patch (currently 1)
+;   LIB_X25519_VERSION_MINOR   semver minor (currently 11)
+;   LIB_X25519_VERSION_PATCH   semver patch (currently 0)
 ;   LIB_X25519_ABI_VERSION     exported-surface generation counter
-;                              (currently 2; contract v0.7.5 — bumped
+;                              (currently 3; contract v0.7.5 — bumped
 ;                              on any breaking export change, does NOT
-;                              track MAJOR; 1 -> 2 acknowledges the
-;                              v0.9.0 LIB_SHARED_PRIMITIVES_* export
-;                              removal)
+;                              track MAJOR; 3 covers the phase-3-wave
+;                              export removals + poly_carry ->
+;                              mul_carry rename, see
+;                              RELEASE_NOTES_v0.11.0.md)
 ;
 ; Per c64-lib-contract §1 (v0.8.1), consumers guard against an
 ; unsupported library version with .assert/lderror — NOT .if/.error,
@@ -43,7 +44,7 @@
 ; link rather than assemble time; still before anything runs:
 ;
 ;     .import LIB_X25519_VERSION_MAJOR, LIB_X25519_VERSION_MINOR
-;     .assert (LIB_X25519_VERSION_MAJOR > 0) .or (LIB_X25519_VERSION_MINOR >= 10), lderror, "this consumer needs c64-x25519 v0.10 or later"
+;     .assert (LIB_X25519_VERSION_MAJOR > 0) .or (LIB_X25519_VERSION_MINOR >= 11), lderror, "this consumer needs c64-x25519 v0.11 or later"
 ;
 ;     (one line — ca65 rejects backslash continuation unless you
 ;     enable `.linecont +`)
@@ -52,7 +53,7 @@
 ; (see LIB_X25519_ABI_VERSION above):
 ;
 ;     .import LIB_X25519_ABI_VERSION
-;     .assert LIB_X25519_ABI_VERSION = 2, lderror, "c64-x25519 exported-surface generation changed; re-check the integration"
+;     .assert LIB_X25519_ABI_VERSION = 3, lderror, "c64-x25519 exported-surface generation changed; re-check the integration"
 ;
 ; The unprefixed LIB_VERSION_* / LIB_ABI_VERSION forms still exist but
 ; are deprecated (identical across every contract library, so they
