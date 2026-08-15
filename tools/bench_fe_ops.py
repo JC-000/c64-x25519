@@ -220,9 +220,20 @@ def _build_batch_thunk(labels, target, n, blank=True):
     With blank=True (the default), the thunk wraps the timed region in
     jsr vic_blank / jsr vic_unblank so that the measurement matches the
     "VIC-II blanked" baseline used by bench_x25519.py and quoted in the
-    README. Without blanking, every measured op pays the ~20-25% badline
-    penalty and the per-op numbers don't compose with the scalarmult
-    number for cross-checking.
+    README. Without blanking, every measured op pays the badline penalty
+    (~6.7% more cycles on the NTSC text screen the harness runs — one
+    badline per character row, ~40-43 cycles each, against 17030 cycles
+    per frame) and the per-op numbers don't compose with the scalarmult
+    number for cross-checking. Use --no-blank to measure that delta
+    directly: against a default run it comes out at 1.065-1.068x (mean
+    1.0665) across all seven ops batch-benched below, which is the
+    predicted text-screen band. Issue #103 measured 1.067-1.069x
+    independently from the consumer side.
+
+    Note the single-call spread above is NOT wrapped in vic_blank -- only
+    this batch thunk is -- so those numbers run display-active and should
+    track the --no-blank batch figures, which is a free cross-check on the
+    A/B (measured 101,082.7 vs 101,054.8 cy/call for fe25519_mul).
 
     Layout at BATCH_SUB_ADDR (blank=True):
       jsr vic_blank

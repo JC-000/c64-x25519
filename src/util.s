@@ -12,7 +12,7 @@
 ;   bench_cycles_start   Start CIA1 TA+TB 32-bit cycle counter (sei-safe)
 ;   bench_cycles_stop    Stop counter, snapshot into bench_cycles (4 bytes)
 ;   bench_cycles         4-byte cycle count (LE 32-bit) from bench_cycles_stop
-;   vic_blank            Disable VIC-II display (~25% CPU speedup)
+;   vic_blank            Disable VIC-II display (~6% CPU speedup, text screen)
 ;   vic_unblank          Re-enable VIC-II display
 ;
 ; See src/x25519.inc for full calling conventions.
@@ -226,7 +226,23 @@ bench_cycles_saved_p:   .byte 0     ; caller's P across start/stop. Single-shot.
 ; VIC-II screen blanking for maximum CPU throughput
 ; =============================================================================
 
-; vic_blank - Disable VIC-II display (DEN=0) for ~20-25% CPU speedup
+; vic_blank - Disable VIC-II display (DEN=0) to recover badline-stolen cycles.
+;
+; Size of the win, from the badline arithmetic: a standard 25-row text screen
+; costs one badline per character row, ~40-43 cycles stolen each. Against a
+; frame of 65*262 = 17030 cycles (NTSC) that is 5.9-6.3% of all cycles, i.e.
+; a 1.062-1.067x speedup; on PAL (63*312 = 19656) it is 5.1-5.5%, 1.054-1.058x.
+; Measured in-repo at 1.065-1.068x (mean 1.0665) across all seven batch-benched
+; fe25519_* ops — `tools/bench_fe_ops.py --no-blank` vs default, same build,
+; CIA1 cycle-exact, VICE NTSC. Independently 1.067-1.069x from the consumer
+; side in issue #103. Both sit inside the predicted band above.
+;
+; The figure scales with what the VIC actually fetches, so it is a property of
+; the CALLER's screen, not of this library: sprites and bitmap modes push it
+; well above 6% (reaching 20-25% takes roughly 3-4x more stolen cycles than a
+; text screen has to give), while this library's own harness and benchmarks run
+; a plain text screen with no sprites. Quote ~6% unless you have measured your
+; own display configuration.
 .proc vic_blank
         lda vic_ctrl1
         and #$ef               ; clear bit 4 (DEN - Display Enable)

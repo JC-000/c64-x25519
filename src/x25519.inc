@@ -113,8 +113,10 @@
 ;       Timing:  ~9,520 jiffies per call on stock C64 with VIC-II
 ;                blanked (jsr vic_blank) on the basepoint input.
 ;                ~158.7 s NTSC / ~190.4 s PAL. VIC-II unblanked
-;                adds ~25%. Dense u-coordinates (non-basepoint ECDH)
-;                run ~10% slower. See docs/LIBRARY.md.
+;                adds ~6.7% on a plain 25-row text screen (NTSC;
+;                ~5.8% PAL) -- sprites/bitmap modes cost more, see
+;                docs/LIBRARY.md. Dense u-coordinates (non-basepoint
+;                ECDH) run ~10% slower.
 ;
 ;   x25519_base
 ;       Convenience: x25_result = x25_scalar * basepoint(9). Copies the
@@ -187,7 +189,9 @@
 ; OPTIONAL HELPERS
 ; ----------------------------------------------------------------------------
 ;
-;   vic_blank             Disable VIC-II display (DEN=0). ~25% CPU speedup.
+;   vic_blank             Disable VIC-II display (DEN=0). ~6% CPU speedup
+;                         on a text screen; scales with what the VIC
+;                         fetches (sprites/bitmap raise it).
 ;   vic_unblank           Re-enable VIC-II display.
 ;   bench_start           Reset jiffy clock for timing. Requires IRQs to
 ;                         remain enabled across the benched region (the
@@ -316,7 +320,7 @@
 ;
 ;   For best (and most consistent) timing, callers should:
 ;     sei                ; mask IRQ for the duration of the op
-;     jsr vic_blank      ; ~25% speedup
+;     jsr vic_blank      ; ~6% speedup on a text screen
 ;     jsr x25519_scalarmult
 ;     jsr vic_unblank
 ;     cli

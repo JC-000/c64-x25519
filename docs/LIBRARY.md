@@ -121,7 +121,7 @@ To compute a public key:
 ```ca65
         ; Fill x25_scalar (32 bytes) with your secret key.
         ; x25519_base will clamp it in place.
-        jsr vic_blank            ; optional, ~25% speedup
+        jsr vic_blank            ; optional, ~6% speedup on a text screen
         jsr x25519_base          ; x25_result = scalar * basepoint
         jsr vic_unblank
         ; x25_result now holds the 32-byte public key (little-endian).
@@ -1132,8 +1132,18 @@ and is consumed by `tools/perf_diff.py` for diff tables. Run
 
 ### Methodology
 
-- VIC-II blanked (`jsr vic_blank` before the timed region); a display-
-  active run costs ~20-25 % more cycles due to VIC-II DMA badlines.
+- VIC-II blanked (`jsr vic_blank` before the timed region); on the plain
+  25-row text screen the harness runs, a display-active run costs ~6.7 %
+  more cycles (NTSC) / ~5.8 % (PAL) due to VIC-II DMA badlines — one
+  badline per character row, ~40-43 cycles each, against 17030 (NTSC) or
+  19656 (PAL) cycles per frame. Equivalently, blanking recovers ~6.3 % /
+  ~5.5 % of total cycles. Reproduce with
+  `python3 tools/bench_fe_ops.py --no-blank` against a default run: that
+  A/B measures 1.065-1.068x (mean 1.0665) across all seven batch-benched
+  `fe25519_*` ops, CIA1 cycle-exact — and 1.067-1.069x was measured
+  independently from the consumer side in issue #103. The figure is a
+  property of the caller's display, not of this library: sprites and
+  bitmap modes raise it substantially.
 - `x25519_scalarmult` self-masks IRQs internally (PR #35 `php / sei …
   plp` wrap), so the kernal jiffy clock at `$A0-$A2` is frozen during
   the call. Use `bench_cycles_start` / `bench_cycles_stop` (CIA1 phi2
