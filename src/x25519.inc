@@ -379,7 +379,7 @@
 
 .if ::X25519_ONCHIP_MUL = 0
 ; REU layout equates (c64-lib-contract §3). Default 0; override via
-; ca65 -D X25519_REU_BANK=$N when rebuilding the library from source.
+; ca65 -D X25519_REU_BANK=0x<bank> when rebuilding the library from source.
 .import X25519_REU_BANK, X25519_REU_OFFSET
 
 ; §8.2 shared reu_mul placement equates, LIBRARY-PREFIXED (contract

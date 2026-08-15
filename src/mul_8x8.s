@@ -11,7 +11,7 @@
 ; The sqtab base address is published as the source-level equate
 ; LIB_SHARED_SQTAB_BASE (default $7800), `.ifndef`-guarded so a
 ; multi-lib consumer can override it via
-; `ca65 -D LIB_SHARED_SQTAB_BASE=$N`. Page-alignment +
+; `ca65 -D LIB_SHARED_SQTAB_BASE=0x<addr>`. Page-alignment +
 ; page-delta are hard `.assert`-checked at link time.
 ;
 ; Why source equate rather than linker-export: ct_mul_8x8 (and the
@@ -47,7 +47,7 @@
 ; shared-primitive adoption). Every translation unit that `.include`s
 ; constants.s sees the same values, so no `.import` or `.export`
 ; needed across TUs — each module derives the addresses locally. A
-; multi-lib consumer passes `-D LIB_SHARED_SQTAB_BASE=$N` to every
+; multi-lib consumer passes `-D LIB_SHARED_SQTAB_BASE=0x<addr>` to every
 ; ca65 invocation; every lib agrees on the canonical base.
 
 ; --- Cold segment (issue #68) ------------------------------------------------

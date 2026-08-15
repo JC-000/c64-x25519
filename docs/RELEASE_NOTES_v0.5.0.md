@@ -128,7 +128,7 @@ KERNAL / VIC / SID / CIA / REU hardware equates).
 **Host override** (relocate `fe25519_src1` to `$40`):
 
 ```sh
-ca65 -D fe25519_src1=$40 -o build/zp_config.o src/zp_config.s
+ca65 -D fe25519_src1='$40' -o build/zp_config.o src/zp_config.s
 # ...rebuild every library .o with the same -D, then re-archive.
 ```
 

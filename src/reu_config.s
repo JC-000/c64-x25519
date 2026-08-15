@@ -35,7 +35,7 @@
 ;
 ; X25519_REU_BANK = 0 → banks 0..5 used (= original v0.4.0 layout).
 ;
-; A consumer overrides via `ca65 -D X25519_REU_BANK=$03` (or by
+; A consumer overrides via `ca65 -D X25519_REU_BANK=0x03` (or by
 ; pre-defining the symbol in a wrapper .s) when rebuilding the library
 ; from source. Every library translation unit must be assembled with the
 ; same value because the bank constant is baked in at assemble time.
@@ -103,7 +103,7 @@ X25519_REU_BANK_CARRY   = X25519_REU_BANK + 3
 ;
 ; Default (LIB_SHARED_REU_MUL_BANK = X25519_REU_BANK) keeps x25519's
 ; pre-§8.2 layout (banks 0+1) bit-identical for standalone builds. A
-; consumer overrides via `ca65 -D LIB_SHARED_REU_MUL_BANK=$N`
+; consumer overrides via `ca65 -D LIB_SHARED_REU_MUL_BANK=0x<bank>`
 ; (every translation unit must see the same value because the bank
 ; constant is baked in at assemble time).
 ;
