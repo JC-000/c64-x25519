@@ -6,6 +6,14 @@ An optimized implementation of X25519 / Curve25519 scalar multiplication written
 
 ## Status
 
+**v0.11.1 (DRAFT until tagged)** — §6.6/§6.7 placement guards: the
+long-documented silent SQTAB divergence hazard is now a named link
+error in every failure direction (with negative verify legs proving
+the guards fire), the consumer footprint-assert pattern ships in its
+normative form, and the `*_CONFIG_NO_EXPORTS` suppression knobs are
+consumer-reachable (#99). Zero runtime change; ABI stays 3. See
+[`docs/RELEASE_NOTES_v0.11.1.md`](docs/RELEASE_NOTES_v0.11.1.md).
+
 **v0.11.0 released 2026-08-15** — [GitHub release](https://github.com/JC-000/c64-x25519/releases/tag/v0.11.0) — the phase-3 fleet-wave release:
 contract SPEC v0.9.0–v0.9.2 §6-chapter migration (defines-forwarding,
 import-never-stub, fetch deferral, truthful per-config manifests,
