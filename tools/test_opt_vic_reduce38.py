@@ -31,6 +31,12 @@ VERBOSE = False
 # p = 2^255 - 19
 P = (1 << 255) - 19
 
+# NTSC C64 derived constants (matches tools/bench_x25519.py and
+# tools/bench_fe_ops.py). Used only to print a human-readable jiffy
+# equivalent next to the cycle-exact CIA1 numbers.
+NTSC_CYCLES_PER_SEC = 1_022_727
+NTSC_CYCLES_PER_JIF = NTSC_CYCLES_PER_SEC / 60   # ~17,045.45
+
 
 # ============================================================================
 # Python reference
@@ -520,7 +526,16 @@ def test_reduce_final(transport, labels):
 # ============================================================================
 
 def bench_fe_mul(transport, labels, a, b, blank=False):
-    """Time a single fe25519_mul call. If blank=True, blank screen first."""
+    """Time a single fe25519_mul call in CYCLES. If blank=True, blank first.
+
+    Uses the CIA1 phi2 counter (bench_cycles_start/stop), not the jiffy
+    clock. This matters: fe25519_mul is ~6 jiffies, so one jiffy tick is
+    ~17% of the measurement and the old jiffy-based version of this bench
+    could not resolve the VIC-blanking effect at all -- 6 vs 7 ticks reads
+    as 14%, 6 vs 8 as 25%. That quantization is the most likely origin of
+    the "~20-25% speedup" figure this repo documented until issue #103;
+    the real number on a text screen is ~6%. Cycles resolve it exactly.
+    """
     write_fe(transport, labels["fe25519_tmp1"], a)
     write_fe(transport, labels["fe25519_tmp2"], b)
     set_fe_ptrs(transport, labels,
@@ -531,16 +546,15 @@ def bench_fe_mul(transport, labels, a, b, blank=False):
     if blank:
         jsr(transport, labels["vic_blank"])
 
-    jsr(transport, labels["bench_start"])
+    jsr(transport, labels["bench_cycles_start"])
     jsr(transport, labels["fe25519_mul"], timeout=120.0)
-    jsr(transport, labels["bench_stop"])
+    jsr(transport, labels["bench_cycles_stop"])
 
     if blank:
         jsr(transport, labels["vic_unblank"])
 
-    ticks_data = read_bytes(transport, labels["bench_ticks"], 3)
-    ticks = (ticks_data[0] << 16) | (ticks_data[1] << 8) | ticks_data[2]
-    return ticks
+    cyc = read_bytes(transport, labels["bench_cycles"], 4)
+    return cyc[0] | (cyc[1] << 8) | (cyc[2] << 16) | (cyc[3] << 24)
 
 
 # ============================================================================
@@ -594,31 +608,47 @@ def run_benchmark(transport, labels):
 
     # Without blanking (screen on)
     print(f"\n--- fe25519_mul WITHOUT VIC blanking ({iterations} iterations) ---")
-    normal_ticks = []
+    normal_cy = []
     for i, (a, b) in enumerate(test_pairs):
-        ticks = bench_fe_mul(transport, labels, a, b, blank=False)
-        normal_ticks.append(ticks)
-        ms = ticks * 1000 / 60
-        print(f"  #{i}: {ticks} jiffies ({ms:.0f} ms)")
-    avg_normal = sum(normal_ticks) / len(normal_ticks)
+        cy = bench_fe_mul(transport, labels, a, b, blank=False)
+        normal_cy.append(cy)
+        print(f"  #{i}: {cy:,} cycles ({cy / NTSC_CYCLES_PER_JIF:.3f} jif)")
+    avg_normal = sum(normal_cy) / len(normal_cy)
 
     # With blanking (screen off)
     print(f"\n--- fe25519_mul WITH VIC blanking ({iterations} iterations) ---")
-    blank_ticks = []
+    blank_cy = []
     for i, (a, b) in enumerate(test_pairs):
-        ticks = bench_fe_mul(transport, labels, a, b, blank=True)
-        blank_ticks.append(ticks)
-        ms = ticks * 1000 / 60
-        print(f"  #{i}: {ticks} jiffies ({ms:.0f} ms)")
-    avg_blank = sum(blank_ticks) / len(blank_ticks)
+        cy = bench_fe_mul(transport, labels, a, b, blank=True)
+        blank_cy.append(cy)
+        print(f"  #{i}: {cy:,} cycles ({cy / NTSC_CYCLES_PER_JIF:.3f} jif)")
+    avg_blank = sum(blank_cy) / len(blank_cy)
 
     # Report
     print(f"\n--- Comparison ---")
-    print(f"  Screen ON:  {avg_normal:.1f} jiffies avg ({avg_normal * 1000 / 60:.0f} ms)")
-    print(f"  Screen OFF: {avg_blank:.1f} jiffies avg ({avg_blank * 1000 / 60:.0f} ms)")
-    if avg_normal > 0:
-        speedup = (avg_normal - avg_blank) / avg_normal * 100
-        print(f"  Speedup:    {speedup:.1f}%")
+    print(f"  Screen ON:  {avg_normal:,.1f} cycles avg")
+    print(f"  Screen OFF: {avg_blank:,.1f} cycles avg")
+    assert avg_normal > 0, "screen-on bench returned 0 cycles"
+    speedup = (avg_normal - avg_blank) / avg_normal * 100
+    print(f"  Speedup:    {speedup:.2f}%  (ratio {avg_normal / avg_blank:.4f}x)")
+
+    # Guard, not a bench (cf. tools/test_ct_square_cycles.py). Blanking a
+    # 25-row text screen suppresses one badline per character row at ~40-43
+    # cycles each; against a 65*262 = 17030-cycle NTSC frame that is
+    # 5.87-6.31% of all cycles. Measured 6.1-6.4% here and in
+    # tools/bench_fe_ops.py --no-blank, and 6.3% independently from the
+    # consumer side in issue #103. The band below is deliberately wide
+    # enough to absorb VICE/host jitter but far too narrow to re-admit the
+    # ~20-25% figure that stood undetected while this number was printed
+    # and never asserted. If this fires, re-derive from the badline
+    # arithmetic before editing the bound -- do not widen it to fit.
+    assert 3.0 <= speedup <= 12.0, (
+        f"VIC-blanking speedup {speedup:.2f}% outside the 3-12% band "
+        f"predicted for a 25-row text screen (expect ~6%). "
+        f"screen-on {avg_normal:,.1f} cy, screen-off {avg_blank:,.1f} cy. "
+        f"See docs/LIBRARY.md Methodology and issue #103."
+    )
+    print(f"  PASS speedup within predicted 3-12% text-screen band")
 
 
 def main():
@@ -664,6 +694,7 @@ def main():
         "cassette_buf", "input_buffer",
         "vic_blank", "vic_unblank",
         "bench_start", "bench_stop", "bench_ticks",
+        "bench_cycles_start", "bench_cycles_stop", "bench_cycles",
         "mul_by_38",
     ]
     for name in required:

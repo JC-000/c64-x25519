@@ -53,6 +53,9 @@ See `src/x25519.inc` for the authoritative header. Summary:
 **Utilities (from `src/util.s`):**
 - `bench_start`, `bench_stop`, `bench_ticks` — jiffy timing
 - `vic_blank`, `vic_unblank` — VIC-II display control (~25% perf win during crypto)
+  - **Erratum (issue #103):** the ~25 % figure was never correct. Blanking a
+    plain 25-row text screen recovers ~6 % of cycles on NTSC (~5.5 % on PAL);
+    20-25 % needs sprites or a bitmap mode. Text retained as shipped.
 
 **Not public API (debug / internal / may change without notice):**
 - `x25519_ladder_step` — debug-only ladder single-step entry for differential testing harnesses

@@ -369,7 +369,11 @@ ladder/cswap audit).
 | `fe25519_mul_a24` | 0.475-0.480 jiffies/call (v0.4.0, CT spread 0.005) |
 
 All measurements on stock C64 with VIC-II blanked (`jsr vic_blank`),
-median of 3 runs. v0.3.0 combines two independent bodies of work on
+median of 3 runs. Blanking is worth ~6 % on the plain 25-row text
+screen the harness runs (~5.5 % on PAL); it is not the ~20-25 % this
+repo previously documented (issue #103) — see
+[`docs/LIBRARY.md`](docs/LIBRARY.md) §Methodology for the badline
+arithmetic. v0.3.0 combines two independent bodies of work on
 the v0.2.0 baseline: the Phases 1–3 `fe25519_sqr` hot-path rewrite
 recovers **1,746 jif** from the v0.1.0→v0.2.0 regression without
 touching any CT invariant, and the L23 + L24 audit closures cost back
