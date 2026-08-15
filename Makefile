@@ -226,17 +226,49 @@ ifeq ($(filter $(X25519_PROFILE),$(X25519_PROFILE_VALID)),)
 $(error X25519_PROFILE='$(X25519_PROFILE)' is not a known profile. Valid values: $(X25519_PROFILE_VALID))
 endif
 
-X25519_PROFILE_NEEDS_onchip       := X25519_ONCHIP_MUL=1
-X25519_PROFILE_NEEDS_1764         := SQR_DMA_K=0
-X25519_PROFILE_NEEDS_shared-sqtab := SHARED_SQTAB_INIT=1
-X25519_PROFILE_NEEDS_shared-reu   := SHARED_REU_MUL_INIT=1 SHARED_REU_MUL_FETCH=1
-X25519_PROFILE_NEEDS_shared-ct    := SHARED_CT_MUL_8X8=1
-X25519_PROFILE_NEEDS_shared-all   := SHARED_SQTAB_INIT=1 SHARED_REU_MUL_INIT=1 \
-	SHARED_REU_MUL_FETCH=1 SHARED_CT_MUL_8X8=1
+# The switches split by GATE STYLE, and the guard must match each on its own
+# terms — demanding one spelling fleet-wide falsely rejects working builds.
+#
+#   _NEEDS_DEF_* — definedness-gated (.ifdef / .ifndef): src/mul_8x8.s:37,55,
+#     src/x25519_init.s:14,94, src/reu_config.s:118. The axis IS definedness,
+#     so EVERY spelling that defines the symbol selects it — bare
+#     `-D SHARED_SQTAB_INIT` as much as `=1`, and the bare form is what
+#     nist#117's example and the chacha docs use. Match the bare name, which
+#     also substring-matches the `=1` spelling our own targets pass.
+#
+#   _NEEDS_VAL_* — value-gated (.if ::NAME): src/lib_manifest.s:177,361,
+#     src/reu_config.s:177 for X25519_ONCHIP_MUL; src/x25519_init.s:25,194,456
+#     and src/fe25519.s:40,1211 for SQR_DMA_K. Here the exact value decides,
+#     and ca65's bare `-D NAME` defines the symbol **= 0** (measured: `.out`
+#     prints `FOO=0` under bare `-D FOO`). For X25519_ONCHIP_MUL that is
+#     load-bearing: bare `-D X25519_ONCHIP_MUL` names the profile while
+#     selecting the DEFAULT path — precisely the shape-3 no-op this guard
+#     exists to kill — so the `=1` demand is deliberate. Do not "simplify" it
+#     to a bare-name match.
+#
+#     SQR_DMA_K=0 is the deliberate-but-stricter case: bare `-D SQR_DMA_K`
+#     would also select the 1764 axis (ca65 makes it 0, which is what 1764
+#     wants), so rejecting it is stricter than conformance requires. We demand
+#     the explicit spelling anyway, so that a value-gated switch never rides on
+#     ca65's silent bare-means-zero rule and the `=0` stays visible in the
+#     build line. The error text says so rather than leaving it looking like
+#     an oversight.
+X25519_PROFILE_NEEDS_DEF_shared-sqtab := SHARED_SQTAB_INIT
+X25519_PROFILE_NEEDS_DEF_shared-reu   := SHARED_REU_MUL_INIT SHARED_REU_MUL_FETCH
+X25519_PROFILE_NEEDS_DEF_shared-ct    := SHARED_CT_MUL_8X8
+X25519_PROFILE_NEEDS_DEF_shared-all   := SHARED_SQTAB_INIT SHARED_REU_MUL_INIT \
+	SHARED_REU_MUL_FETCH SHARED_CT_MUL_8X8
 
-$(foreach d,$(X25519_PROFILE_NEEDS_$(X25519_PROFILE)),\
+X25519_PROFILE_NEEDS_VAL_onchip := X25519_ONCHIP_MUL=1
+X25519_PROFILE_NEEDS_VAL_1764   := SQR_DMA_K=0
+
+$(foreach d,$(X25519_PROFILE_NEEDS_DEF_$(X25519_PROFILE)),\
   $(if $(findstring $(d),$(CONTRACT_DEFINES)),,\
-    $(error X25519_PROFILE=$(X25519_PROFILE) does not select that axis: '-D $(d)' is missing from CONTRACT_DEFINES. Use the named target (e.g. `make lib-x25519-onchip`) or pass CONTRACT_DEFINES="-D $(d)". Contract v0.10.5 §6.3: a knob naming an axis MUST select it or fail loudly.)))
+    $(error X25519_PROFILE=$(X25519_PROFILE) does not select that axis: '$(d)' is not defined in CONTRACT_DEFINES. It is .ifdef-gated, so any spelling that defines it works -- `-D $(d)` or `-D $(d)=1`. Use the named target, or pass CONTRACT_DEFINES="-D $(d)". Contract v0.10.5 6.3: a knob naming an axis MUST select it or fail loudly.)))
+
+$(foreach d,$(X25519_PROFILE_NEEDS_VAL_$(X25519_PROFILE)),\
+  $(if $(findstring $(d),$(CONTRACT_DEFINES)),,\
+    $(error X25519_PROFILE=$(X25519_PROFILE) does not select that axis: '-D $(d)' is missing from CONTRACT_DEFINES. This switch is value-gated (.if ::NAME), and ca65's bare `-D NAME` defines it = 0, so the explicit value spelling is required -- for X25519_ONCHIP_MUL a bare -D would silently select the DEFAULT path. Use the named target, or pass CONTRACT_DEFINES="-D $(d)". Contract v0.10.5 6.3: a knob naming an axis MUST select it or fail loudly.)))
 
 LIB_VERIFY_SYMS_COMMON = x25519_clamp x25519_scalarmult x25519_base \
 	fe25519_add fe25519_sub fe25519_mul fe25519_sqr \

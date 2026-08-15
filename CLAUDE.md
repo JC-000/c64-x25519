@@ -12,6 +12,14 @@ v0.10.4 required no change here: it scopes §6.3's no-further-matrix posture to 
 
 v0.10.5 **did** require a change: its §6.3 looks-reachable clause (a knob naming an axis MUST select it or fail loudly) caught `X25519_PROFILE` as a live shape-3 "silent no-op" — `make lib X25519_PROFILE=onchip` exited 0 and shipped a default archive, and a typo'd value fell through the `ifeq` chain's closing `else` into `default`. Both are now hard `$(error)`s at parse time (Makefile, just below `X25519_PROFILE ?= default`): unknown values are rejected, and a known value must be accompanied by the `-D` that actually selects it. The named profile targets pass both together, so they satisfy it by construction.
 
+**The guard matches each switch on its own gate style — do not unify the spellings.** `ca65`'s bare `-D NAME` defines the symbol **= 0** (measured), so the two families need opposite treatment:
+
+| family | gate | guard demands | why |
+|---|---|---|---|
+| `SHARED_SQTAB_INIT`, `SHARED_REU_MUL_INIT`, `SHARED_REU_MUL_FETCH`, `SHARED_CT_MUL_8X8` | `.ifdef` / `.ifndef` (`mul_8x8.s:37,55`, `x25519_init.s:14,94`) | the **bare name** | definedness *is* the axis, so every spelling that defines it selects it. Demanding `=1` here falsely rejects `-D SHARED_SQTAB_INIT`, the form nist#117 and the chacha docs use. |
+| `X25519_ONCHIP_MUL` | `.if ::NAME` (`lib_manifest.s:177,361`) | `X25519_ONCHIP_MUL=1` | **load-bearing**: bare `-D X25519_ONCHIP_MUL` is 0, which names the profile while selecting the *default* path — the exact shape-3 no-op the guard exists to kill. |
+| `SQR_DMA_K` | `.if ::NAME` (`x25519_init.s:25`, `fe25519.s:40`) | `SQR_DMA_K=0` | deliberately stricter than conformance needs — bare would also select 1764 (ca65 makes it 0) — so that a value-gated switch never rides on the silent bare-means-zero rule and the `=0` stays visible in the build line. |
+
 **Verifying a profile axis:** compare **linked output or `od65 --dump-segsize` dumps**, never archive or object bytes. `ca65` stamps `OPT_DATETIME` plus source paths into every object unconditionally, so raw byte comparison is non-deterministic across rebuilds yet byte-*identical* within the same second — it can report both false differences and false sameness. `od65` is structural: e.g. `x25519_init.o` carries 666 bytes of `LIB_X25519_INIT_CODE` in the default profile and 0 in onchip.
 
 ## Build / test commands
