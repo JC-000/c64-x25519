@@ -58,10 +58,12 @@ pointing at `mul_carry`.
 All od65-measured exact; custom deferral combinations derive by the
 per-switch deltas encoded in `src/lib_manifest.s` (sqtab −160 COLD,
 reu pair −364/−186 COLD by `SQR_DMA_K` and −20 RESIDENT, ct −63
-RESIDENT). Declared values currently sit at measured equality; the
-§6.6 round-up-vs-exact question is pending a SPEC ruling
-(c64-lib-contract#76 item 3) — if round-up wins, the values and the
-verify locks move together in a later release.
+RESIDENT). Declared values sit at measured equality — conformant per
+§6.6's ≥-measured rule (ruled on the #98 review and confirmed on
+nist#110; the 256-byte boundary is fleet convention, not a second
+MUST). The trade is zero growth absorption: resident growth surfaces
+as an equate move, which this repo's lock culture treats as the
+point — a footprint change should be a visible, reviewed diff.
 
 ## Docs
 
