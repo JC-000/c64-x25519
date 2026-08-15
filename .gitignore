@@ -1,6 +1,12 @@
 build/
+# One per profile target's BUILD_DIR; keep in sync with the Makefile's
+# `rm -rf` list (lib-x25519-1764, lib-x25519-onchip, lib-app-owned,
+# lib-verify-guards, lib-verify-shared).
 build-1764/
 build-onchip/
+build-app-owned/
+build-guards/
+build-shared/
 __pycache__/
 *.pyc
 .DS_Store

@@ -137,6 +137,9 @@ $(LIB_DIR):
 clean:
 	rm -f $(BUILD_DIR)/*.o $(PRG) $(LABELS) $(LABELS).raw
 	rm -rf $(LIB_DIR)
+	# Profile targets build into their own BUILD_DIR and clean it on entry,
+	# but nothing swept them afterwards, so they lingered as untracked trees.
+	rm -rf build-1764 build-onchip build-app-owned build-guards build-shared
 
 # --- Relocatable library archive ---------------------------------------------
 #
