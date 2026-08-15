@@ -80,10 +80,13 @@ byte-identical to v0.8.0
 bench rows, hardware A/B results, and CT catalogue L1–L30 carry
 forward unchanged.
 
-## Tarball (DRAFT — filled by the post-tag SHA-fill PR)
+## Tarball
 
 ```
 File:     c64-x25519-v0.11.0.tar.gz
-Size:     DRAFT
-SHA256:   DRAFT
+Size:     125,692 bytes
+SHA256:   f0e8d67adce686dfa5496b90ba7389b1934b10f6623cbb92d9d34295174d7261
 ```
+
+Byte-identical across two independent `make dist` runs; every shipped
+source verified to assemble standalone from the extracted tarball.
