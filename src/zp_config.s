@@ -15,7 +15,7 @@
 ; A host program can override any slot's address by pre-defining the symbol
 ; before `.include`-ing zp_config.s. The two recommended ways:
 ;
-;   1. Pass `-D fe25519_src1=$40` on the ca65 command line. This
+;   1. Pass `-D fe25519_src1=0x40` on the ca65 command line. This
 ;      defines the symbol globally for the translation unit, and the
 ;      .ifndef guard below then skips the default. ALL library translation
 ;      units must be assembled with the same -D values, since

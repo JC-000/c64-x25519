@@ -60,7 +60,7 @@
 ;   legacy bank-2 zero stash was removed in v0.6 prep.
 ;
 ;   Mask is computed as `<base> << X25519_REU_BANK` so an
-;   `-D X25519_REU_BANK=$N` override of the bank base automatically
+;   `-D X25519_REU_BANK=0x<bank>` override of the bank base automatically
 ;   shifts the claim. (Bank 7 is touched transiently by reu_probe but
 ;   restored before return; not counted as a claim.)
 ;

@@ -212,7 +212,11 @@ wants to place the library's ZP scratch at different addresses can:
    `-D` values for every `.o` file; the slot value is baked in at
    assemble time. (`-D name[=value]` is ca65's actual symbol-define
    flag per SPEC v0.7.1 §2 — `--asm-define` is `cl65`'s spelling and
-   is rejected by a direct `ca65` invocation.)
+   is rejected by a direct `ca65` invocation. For hex values use
+   ca65's `0x` form — `-D fe25519_src1=0x40` — per SPEC v0.8.6: an
+   unquoted `$40` is eaten by the shell as a positional parameter and
+   silently defines the slot at `$00`; in make recipes `$$40` yields
+   0 and `$$$$40` yields the shell's PID, both with no diagnostic.)
 
 2. **Override via a wrapper `.s` file.** Pre-define the equate, then
    `.include "zp_config.s"` (or `.include "constants.s"`, which
@@ -434,7 +438,7 @@ sqtab_hi = LIB_SHARED_SQTAB_BASE + $0200
 .assert sqtab_hi = sqtab_lo + $0200, error, "SMC dispatch contract"
 ```
 
-Override base via `ca65 -D LIB_SHARED_SQTAB_BASE=$N`
+Override base via `ca65 -D LIB_SHARED_SQTAB_BASE=0x<addr>`
 (applied to every library translation unit). The asserts catch any
 override that breaks page-alignment or the +`$0200` lo→hi delta that
 `mul_8x8`'s SMC dispatch depends on.
@@ -598,7 +602,7 @@ LIB_SHARED_REU_MUL_BANKS_USED = \
 .assert LIB_SHARED_REU_MUL_BANK < $FE,    error, ...
 ```
 
-Override the base bank via `ca65 -D LIB_SHARED_REU_MUL_BANK=$N`
+Override the base bank via `ca65 -D LIB_SHARED_REU_MUL_BANK=0x<bank>`
 (applied to every library translation unit). As of the contract-#82
 fix this override **genuinely relocates the table**: it drives
 `X25519_REU_BANK` (the shared mul table sits at the REU window base),
