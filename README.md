@@ -6,7 +6,7 @@ An optimized implementation of X25519 / Curve25519 scalar multiplication written
 
 ## Status
 
-**v0.11.2 (DRAFT until tagged)** — a documentation-accuracy release. The
+**v0.11.2 released 2026-08-15** — [GitHub release](https://github.com/JC-000/c64-x25519/releases/tag/v0.11.2) — a documentation-accuracy release. The
 `vic_blank` speedup was documented as "~20-25%" in eight places since
 v0.1.0; the real figure on the 25-row text screen this library runs is
 **~6%** (NTSC; ~5.5% PAL), confirmed by three independent measurements

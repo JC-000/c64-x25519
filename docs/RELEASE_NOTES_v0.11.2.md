@@ -158,6 +158,26 @@ Nothing to do. No API, no ABI, no runtime change. If you quoted the ~20-25%
 figure in your own documentation or capacity planning, that is the one thing
 worth revisiting — the correction is a factor of three to four.
 
+## Tarball
+
+`c64-x25519-v0.11.2.tar.gz` — vendor-as-source bundle (`cfg docs LICENSE
+ORIGIN.txt.template src`; no Makefile by design).
+
+```
+Size:     129,363 bytes
+SHA256:   0f8bee6a81276a6fd16b16b81382b1fbb8685cfca714ba8abaf8ce8e02be1e10
+```
+
+Byte-identical across two independent post-tag `make dist` runs; all 11
+shipped `src/*.s` verified to assemble standalone from the extracted tarball.
+
+Note for anyone comparing against the figures quoted on PR #107 before the tag
+(`61b0d0ee…`, 128,961 bytes): those were produced from the release branch
+*before* the §6.6 amendment commit, and the values above supersede them. The
+only file differing between the two archives is
+`docs/RELEASE_NOTES_v0.11.2.md` (7,394 → 8,430 bytes); `src/`, `cfg/` and
+`LICENSE` are identical, so the shipped source is unaffected.
+
 ## Known follow-up
 
 No `make` target yet covers the onchip × deferral combination in CI; it was
