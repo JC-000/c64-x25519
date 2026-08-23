@@ -132,7 +132,27 @@ $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
 
 $(LIB_DIR):
-	mkdir -p $(LIB_DIR) $(LIB_DIR)/cfg
+	mkdir -p $(LIB_DIR)
+
+# `build/lib/cfg` gets its OWN order-only target rather than riding the
+# `$(LIB_DIR)` recipe above. Order-only prerequisites are satisfied by the
+# directory merely existing, and three profile targets (lib-app-owned,
+# lib-x25519-onchip, lib-x25519-1764) publish their archive with a bare
+# `mkdir -p build/lib` — creating $(LIB_DIR) WITHOUT the cfg subdirectory.
+# That permanently satisfied `| $(LIB_DIR)` for every later rule, so the
+# recipe that would have created cfg/ never ran again and the canonical
+# §6.1 target broke on a stale tree:
+#
+#     make lib-app-owned && make lib
+#     cp: build/lib/cfg/x25519-example.cfg: No such file or directory
+#
+# Present in every release through v0.11.2 (two of the three bare mkdirs
+# date to 0fbe985, the third to d304752); invisible to a from-clean
+# `make lib`, which is the only order this repo's local gates ever ran.
+# Naming the real directory as the prerequisite makes the copy rule
+# self-sufficient no matter who created $(LIB_DIR) first.
+$(LIB_DIR)/cfg:
+	mkdir -p $(LIB_DIR)/cfg
 
 clean:
 	rm -f $(BUILD_DIR)/*.o $(PRG) $(LABELS) $(LABELS).raw
@@ -174,7 +194,7 @@ $(LIB_DIR)/%.o: $(BUILD_DIR)/%.o | $(LIB_DIR)
 $(LIB_DIR)/x25519.inc: $(SRC_DIR)/x25519.inc | $(LIB_DIR)
 	cp $< $@
 
-$(LIB_DIR)/cfg/x25519-example.cfg: cfg/x25519-example.cfg | $(LIB_DIR)
+$(LIB_DIR)/cfg/x25519-example.cfg: cfg/x25519-example.cfg | $(LIB_DIR)/cfg
 	cp $< $@
 
 # --- Library linkage smoke test ----------------------------------------------
