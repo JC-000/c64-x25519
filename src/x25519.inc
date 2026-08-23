@@ -28,7 +28,7 @@
 ;
 ;   LIB_X25519_VERSION_MAJOR   semver major (currently 0)
 ;   LIB_X25519_VERSION_MINOR   semver minor (currently 11)
-;   LIB_X25519_VERSION_PATCH   semver patch (currently 2)
+;   LIB_X25519_VERSION_PATCH   semver patch (currently 3)
 ;   LIB_X25519_ABI_VERSION     exported-surface generation counter
 ;                              (currently 3; contract v0.7.5 — bumped
 ;                              on any breaking export change, does NOT
