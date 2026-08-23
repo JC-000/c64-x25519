@@ -27,6 +27,55 @@ SRC_DIR = src
 BUILD_DIR = build
 LIB_DIR = $(BUILD_DIR)/lib
 
+# --- §6.3 knob-staleness guard (SPEC v0.10.5 shape 3; contract#127) ----------
+# ALL_DEFINES reaches every TU's assemble flags, but make cannot see a knob
+# VALUE change: nothing lists the knobs as a prerequisite, so a re-invocation
+# with different defines reuses every stale object and exits 0 having shipped
+# an artifact other than the one requested. That is the v0.10.5 shape-3
+# "silent no-op", and it bites here even though X25519_PROFILE is already
+# guarded at parse time -- that guard is on the knob's NAME and does not
+# touch this shape (contract#127's point exactly).
+#
+# All three measured on a warm tree before this guard existed:
+#   CONTRACT_DEFINES="-D SHARED_CT_MUL_8X8=1"     -> owner archive shipped,
+#     all five §8.3 provider names still exported, 0 ca65 invocations
+#   CONTRACT_DEFINES="-D LIB_NO_BARE_EXPORTS=1"   -> suppression silently NOT
+#     applied, bare four still exported (the #43 duplicate-identifier failure
+#     the mitigation exists to prevent)
+#   CONTRACT_DEFINES="-D LIB_SHARED_SQTAB_BASE=0xC000" -> 0 ca65 invocations,
+#     stale address for the §8.1 window
+#
+# The stamp records the flattened knob string at parse time; when it changes,
+# every object and archive is invalidated -- the knobs reach every TU, so
+# every object genuinely IS stale -- and the requested configuration is built.
+# Unchanged knobs leave the tree alone, so same-knob incremental builds stay
+# incremental. Both properties are pinned by leg C of `make lib-verify-guards`;
+# a guard missing either is worse than none (an unconditional rebuild wearing
+# a stamp, or a check that only proves something rebuilt rather than that the
+# artifact flipped).
+#
+# Stamped from ALL_DEFINES rather than CONTRACT_DEFINES alone: the deprecated
+# CA65FLAGS alias reaches ca65 too, so a stamp ignoring it would be honest
+# about the modern spelling only. The stamp lives under $(BUILD_DIR), so the
+# profile targets -- which re-invoke make with their own BUILD_DIR -- each get
+# their own, and the sibling shape from c64-nist-curves (Makefile ~86-103,
+# pinned by tools/check_archives.py) is preserved.
+#
+# It mkdir's only $(BUILD_DIR), never $(LIB_DIR): `rm -f` tolerates missing
+# paths, and creating $(LIB_DIR) here would satisfy the `| $(LIB_DIR)`
+# order-only prerequisite without its cfg/ subdirectory -- re-triggering
+# the exact staleness-shaped breakage fixed on the sibling branch
+# (measured: `make lib CONTRACT_DEFINES=...` on a clean tree died with
+# `cp: build/lib/cfg/x25519-example.cfg: No such file or directory`).
+CONTRACT_STAMP := $(BUILD_DIR)/.contract-defines.stamp
+CURRENT_KNOBS  := $(strip $(ALL_DEFINES))
+STORED_KNOBS   := $(strip $(shell cat $(CONTRACT_STAMP) 2>/dev/null))
+ifneq ($(CURRENT_KNOBS),$(STORED_KNOBS))
+$(shell mkdir -p $(BUILD_DIR); \
+        rm -f $(BUILD_DIR)/*.o $(LIB_DIR)/*.o $(LIB_DIR)/*.a; \
+        printf '%s' "$(CURRENT_KNOBS)" > $(CONTRACT_STAMP))
+endif
+
 PRG = $(BUILD_DIR)/x25519.prg
 LABELS = $(BUILD_DIR)/labels.txt
 
@@ -155,7 +204,7 @@ $(LIB_DIR)/cfg:
 	mkdir -p $(LIB_DIR)/cfg
 
 clean:
-	rm -f $(BUILD_DIR)/*.o $(PRG) $(LABELS) $(LABELS).raw
+	rm -f $(BUILD_DIR)/*.o $(PRG) $(LABELS) $(LABELS).raw $(CONTRACT_STAMP)
 	rm -rf $(LIB_DIR)
 	# Profile targets build into their own BUILD_DIR and clean it on entry,
 	# but nothing swept them afterwards, so they lingered as untracked trees.
@@ -556,7 +605,35 @@ lib-verify-guards:
 	  && echo "OK: leg B fails with the named §6.6 error" \
 	  || (echo "FAIL: undersized MAIN did not trip the §6.6 mirror:" && echo "$$out" | tail -5 && exit 1)
 	rm -rf build-guards
-	@echo "OK: both guard negatives fire with named errors"
+	@echo "--- leg C: §6.3 knob staleness (contract#127) — a knob change MUST"
+	@echo "    flip the artifact, and an UNCHANGED knob MUST NOT rebuild"
+	rm -rf build-guards; mkdir -p build-guards
+	@# C1: warm tree, then ask for the deferring archive. Pre-guard this
+	@# shipped the OWNER archive with exit 0 and zero ca65 invocations.
+	@$(MAKE) BUILD_DIR=build-guards LIB_DIR=build-guards/lib lib >/dev/null
+	@own=$$(od65 --dump-exports build-guards/lib/mul_8x8.o 2>/dev/null | \
+	        grep -cE '"(ct_mul_8x8|poly_prod_lo|poly_prod_hi|smc_sum_a_imm|smc_diff_a_imm)"'); \
+	  test "$$own" = "5" \
+	  && echo "OK: leg C baseline is the owner archive (5/5 §8.3 names)" \
+	  || (echo "FAIL: leg C baseline is not the owner archive ($$own/5)" && exit 1)
+	@$(MAKE) BUILD_DIR=build-guards LIB_DIR=build-guards/lib \
+	         CONTRACT_DEFINES="$(CONTRACT_DEFINES) -D SHARED_CT_MUL_8X8=1" lib >/dev/null
+	@def=$$(od65 --dump-exports build-guards/lib/mul_8x8.o 2>/dev/null | \
+	        grep -cE '"(ct_mul_8x8|poly_prod_lo|poly_prod_hi|smc_sum_a_imm|smc_diff_a_imm)"'); \
+	  test "$$def" = "0" \
+	  && echo "OK: leg C1 — the knob change FLIPPED the artifact (0/5 §8.3 names)" \
+	  || (echo "FAIL: leg C1 — knob ignored, stale owner archive shipped ($$def/5 §8.3 names still exported)" && exit 1)
+	@# C2: the same knobs again must be a no-op — otherwise the guard is an
+	@# unconditional rebuild wearing a stamp and incremental builds are gone.
+	@before=$$(ls -l build-guards/mul_8x8.o | awk '{print $$6,$$7,$$8,$$5}'); \
+	 $(MAKE) BUILD_DIR=build-guards LIB_DIR=build-guards/lib \
+	         CONTRACT_DEFINES="$(CONTRACT_DEFINES) -D SHARED_CT_MUL_8X8=1" lib >/dev/null; \
+	 after=$$(ls -l build-guards/mul_8x8.o | awk '{print $$6,$$7,$$8,$$5}'); \
+	 test "$$before" = "$$after" \
+	  && echo "OK: leg C2 — unchanged knobs did NOT rebuild" \
+	  || (echo "FAIL: leg C2 — unchanged knobs rebuilt; guard is an unconditional rebuild" && exit 1)
+	rm -rf build-guards
+	@echo "OK: all guard negatives fire with named errors"
 
 # --- §6.3 app-owned variant (contract SPEC v0.9.0) ---------------------------
 #
