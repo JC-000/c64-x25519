@@ -6,6 +6,22 @@ An optimized implementation of X25519 / Curve25519 scalar multiplication written
 
 ## Status
 
+**v0.11.3 released 2026-08-23 (DRAFT until tagged)** — [GitHub release](https://github.com/JC-000/c64-x25519/releases/tag/v0.11.3) — a build-correctness
+release. Two defects were live in every release through v0.11.2, both in
+the canonical §6.1 build surface. `make lib` failed outright after any
+profile target had run (`cp: build/lib/cfg/x25519-example.cfg: No such
+file or directory`) — order-only prerequisite semantics, not a missing
+`mkdir` (#109). And §6.2 knob changes were silently ignored on a warm
+tree: `-D SHARED_CT_MUL_8X8=1` shipped the *owner* archive to a consumer
+asking for the deferring one, and `-D LIB_NO_BARE_EXPORTS=1` did not
+suppress at all — the exact contract#43 collision that flag exists to
+prevent, so passing it was not evidence it took effect (#110, contract#127).
+Both are the same shape: green in isolation, broken in composition, with
+nothing building the sequence. The onchip × deferral intersection is now
+covered too, link-only. Zero runtime change — the PRG is byte-identical
+to v0.11.0–v0.11.2; ABI stays 3. Contract-aligned through SPEC v0.11.1.
+See [`docs/RELEASE_NOTES_v0.11.3.md`](docs/RELEASE_NOTES_v0.11.3.md).
+
 **v0.11.2 released 2026-08-15** — [GitHub release](https://github.com/JC-000/c64-x25519/releases/tag/v0.11.2) — a documentation-accuracy release. The
 `vic_blank` speedup was documented as "~20-25%" in eight places since
 v0.1.0; the real figure on the 25-row text screen this library runs is
