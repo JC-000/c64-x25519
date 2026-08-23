@@ -258,6 +258,14 @@ LIB_VERIFY_PRG = $(LIB_VERIFY_DIR)/lib_linkage_stub.prg
 LIB_VERIFY_STUB = tests/lib_linkage/lib_linkage_stub.s
 LIB_VERIFY_PROVIDER = tests/lib_linkage/shared_provider_stub.s
 
+# The onchip x full-deferral define set (leg 5 of lib-verify-shared). Kept as
+# one variable so the archive and BOTH stubs are assembled from the identical
+# set -- assembling the stubs from a different set is the failure this leg
+# exists to catch, and it is silent until link.
+ONCHIP_DEFER_DEFINES = -D SHARED_SQTAB_INIT=1 -D SHARED_REU_MUL_INIT=1 \
+                       -D SHARED_REU_MUL_FETCH=1 -D SHARED_CT_MUL_8X8=1 \
+                       -D X25519_ONCHIP_MUL=1
+
 # Profile selector for lib-verify's symbol expectations. The onchip
 # profile (issue #72) ships no REU surface, so its expected-symbol set
 # both DROPS the reu_* / §8.2 names and ASSERTS their absence (a
@@ -564,7 +572,32 @@ lib-verify-shared:
 	        CONTRACT_DEFINES="$(CONTRACT_DEFINES) -D SHARED_SQTAB_INIT=1 -D SHARED_REU_MUL_INIT=1 -D SHARED_REU_MUL_FETCH=1 -D SHARED_CT_MUL_8X8=1" \
 	        X25519_PROFILE=shared-all lib-verify
 	rm -rf build-shared
-	@echo "OK: all four SHARED_* deferral profiles link and verify"
+	@echo "--- leg 5 (link-only): onchip x full deferral"
+	@echo "    The combination CI never built -- the nist#123 shape, where a"
+	@echo "    profile and a deferral switch are each green alone and the"
+	@echo "    intersection is not built by any target. Deliberately link-only:"
+	@echo "    it asserts the combination assembles and links, and invents NO"
+	@echo "    X25519_PROFILE expectation set, because the mask / CONSUMES /"
+	@echo "    footprint values for this intersection would be guesses and a"
+	@echo "    guessed lock is worse than no lock."
+	$(MAKE) BUILD_DIR=build-shared LIB_DIR=build-shared/lib \
+	        CA65FLAGS="$(CA65FLAGS)" CONTRACT_ZP_DEFINES="$(CONTRACT_ZP_DEFINES)" \
+	        CONTRACT_DEFINES="$(CONTRACT_DEFINES) $(ONCHIP_DEFER_DEFINES)" \
+	        lib >/dev/null
+	$(CA65) $(CA65FLAGS) $(CONTRACT_DEFINES) $(ONCHIP_DEFER_DEFINES) \
+	    -I $(SRC_DIR) -o build-shared/onchip_stub.o $(LIB_VERIFY_STUB)
+	$(CA65) $(CA65FLAGS) $(CONTRACT_DEFINES) $(ONCHIP_DEFER_DEFINES) \
+	    -I $(SRC_DIR) -o build-shared/onchip_provider.o $(LIB_VERIFY_PROVIDER)
+	$(LD65) -C cfg/x25519-example.cfg -o build-shared/onchip_defer.prg \
+	    build-shared/onchip_stub.o build-shared/onchip_provider.o \
+	    build-shared/lib/libx25519.a
+	@test -s build-shared/onchip_defer.prg \
+	  || (echo "FAIL: onchip x deferral produced no linked output" && exit 1)
+	@bytes=$$(wc -c < build-shared/onchip_defer.prg); \
+	 echo "OK: leg 5 -- onchip x full deferral links ($$bytes bytes)"
+	rm -rf build-shared
+	@echo "OK: all four SHARED_* deferral profiles link and verify,"
+	@echo "    plus the onchip x deferral intersection (link-only)"
 
 # --- §6.6/§6.7 guard negative legs (contract SPEC v0.10.0) -------------------
 #
