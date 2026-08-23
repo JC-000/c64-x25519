@@ -147,10 +147,12 @@ target, is where the defects were.
 - `lib-verify`, `lib-verify-shared` (five legs), `lib-verify-guards`
   (four legs, including the new knob-staleness leg C)
 - All three profile targets, `make`, `make test`
-- Guards negative-tested: with the stamp's invalidation disabled, leg C1
-  fails with `knob ignored, stale owner archive shipped (5/5)`; with the
-  onchip leg's stubs assembled from a mismatched define set, the link
-  fails on unresolved `LIB_X25519_SHARED_REU_MUL_*` externals
+- Guards negative-tested: with the stamp's invalidation disabled, the
+  artifact-flipped leg fails with `knob ignored, stale owner archive
+  shipped (5/5)`; with the onchip leg's stubs assembled from a
+  mismatched define set, the link fails on unresolved
+  `LIB_X25519_SHARED_REU_MUL_*` externals **(but see the erratum below
+  — only that one direction was actually tested)**
 - **Verified on the merged tree**, not on either branch — the two fixes
   were developed independently from master and both touched the
   Makefile, so their combination was itself a composition neither had
@@ -183,3 +185,43 @@ downloading it back and hashing it — not from the local build. All
 shipped `src/*.s` assemble standalone from the extracted tarball with
 zero diagnostics, and the extracted `src/lib_version.s` reads
 `LIB_X25519_VERSION_PATCH = 3`.
+
+---
+
+## Erratum (2026-08-23, post-release)
+
+**The knob-staleness pin shipped in this release was half-inert, and the
+verification claim above was narrower than it read.**
+[#113](https://github.com/JC-000/c64-x25519/issues/113) broke the stamp
+in both directions and measured the result:
+
+| stamp state | `make lib-verify-guards` |
+|---|---|
+| disabled (never fires) | exit 2 — correct |
+| fires unconditionally | **exit 0**, printing `OK: unchanged knobs did NOT rebuild` while all ten TUs rebuilt |
+
+The no-rebuild leg compared `ls -l` month/day/`HH:MM` plus size. That is
+minute-granular, against an object whose size does not change when
+identical source is recompiled, inside a leg running in seconds — so it
+was not intermittently blind, it **could never have failed**. The pin
+carried both of SPEC §6.3's required properties by name while one of
+them asserted nothing.
+
+Fixed in [#114](https://github.com/JC-000/c64-x25519/pull/114): the legs
+now count `ca65` invocations instead of comparing timestamps, and are
+renumbered to the clause's own ordering (C1 = unchanged knobs must not
+rebuild, C2 = artifact must flip) so failure output cross-references
+against the SPEC and against sibling repos. Both breaks now fail.
+
+**A claim made elsewhere was also false**, and is retracted here for the
+record: the PR #110 discussion, and my comment on
+[contract#127](https://github.com/JC-000/c64-lib-contract/issues/127),
+stated that an early unconditionally-firing draft was caught by the
+no-rebuild leg. It was not — that run aborted at an unrelated earlier
+leg and never reached the staleness legs. The cause was inferred from an
+aborted run and not checked.
+
+Nothing about the release's *shipped behaviour* changes: the
+`CONTRACT_STAMP` itself was correct, and all three knob vectors were and
+remain closed. What was defective is the check that was supposed to keep
+it correct.

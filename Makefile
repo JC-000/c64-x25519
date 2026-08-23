@@ -641,30 +641,45 @@ lib-verify-guards:
 	@echo "--- leg C: §6.3 knob staleness (contract#127) — a knob change MUST"
 	@echo "    flip the artifact, and an UNCHANGED knob MUST NOT rebuild"
 	rm -rf build-guards; mkdir -p build-guards
-	@# C1: warm tree, then ask for the deferring archive. Pre-guard this
-	@# shipped the OWNER archive with exit 0 and zero ca65 invocations.
+	@# Leg order follows SPEC v0.11.1 §6.3's own ordering of the two
+	@# properties, which is also c64-polyval's: C1 = unchanged knobs MUST
+	@# NOT rebuild, C2 = the pin MUST assert the artifact flipped. (Before
+	@# issue #113 this repo numbered them the other way round, so failure
+	@# output could not be cross-referenced against the clause or against
+	@# a sibling repo.)
 	@$(MAKE) BUILD_DIR=build-guards LIB_DIR=build-guards/lib lib >/dev/null
 	@own=$$(od65 --dump-exports build-guards/lib/mul_8x8.o 2>/dev/null | \
 	        grep -cE '"(ct_mul_8x8|poly_prod_lo|poly_prod_hi|smc_sum_a_imm|smc_diff_a_imm)"'); \
 	  test "$$own" = "5" \
 	  && echo "OK: leg C baseline is the owner archive (5/5 §8.3 names)" \
 	  || (echo "FAIL: leg C baseline is not the owner archive ($$own/5)" && exit 1)
+	@# C1: re-invoking with the SAME knobs must do no work at all.
+	@# Counts actual ca65 invocations rather than comparing mtimes: `ls -l`
+	@# is MINUTE-granular and the object size does not change when identical
+	@# source is recompiled, so the mtime form shipped in v0.11.3 could not
+	@# see a rebuild inside the same minute and reported this leg OK against
+	@# a stamp that wiped the tree on every invocation (issue #113).
+	@out=$$($(MAKE) BUILD_DIR=build-guards LIB_DIR=build-guards/lib lib 2>&1); \
+	 n=$$(printf '%s\n' "$$out" | grep -c 'ca65 ' || true); \
+	 test "$$n" = "0" \
+	  && echo "OK: leg C1 — unchanged knobs recompiled 0 TUs" \
+	  || (echo "FAIL: leg C1 — unchanged invocation recompiled $$n TUs, expected 0; the guard is an unconditional rebuild wearing a stamp and incremental builds are gone" && exit 1)
+	@# C2: a knob change must FLIP the artifact, not merely rebuild it.
 	@$(MAKE) BUILD_DIR=build-guards LIB_DIR=build-guards/lib \
 	         CONTRACT_DEFINES="$(CONTRACT_DEFINES) -D SHARED_CT_MUL_8X8=1" lib >/dev/null
 	@def=$$(od65 --dump-exports build-guards/lib/mul_8x8.o 2>/dev/null | \
 	        grep -cE '"(ct_mul_8x8|poly_prod_lo|poly_prod_hi|smc_sum_a_imm|smc_diff_a_imm)"'); \
 	  test "$$def" = "0" \
-	  && echo "OK: leg C1 — the knob change FLIPPED the artifact (0/5 §8.3 names)" \
-	  || (echo "FAIL: leg C1 — knob ignored, stale owner archive shipped ($$def/5 §8.3 names still exported)" && exit 1)
-	@# C2: the same knobs again must be a no-op — otherwise the guard is an
-	@# unconditional rebuild wearing a stamp and incremental builds are gone.
-	@before=$$(ls -l build-guards/mul_8x8.o | awk '{print $$6,$$7,$$8,$$5}'); \
-	 $(MAKE) BUILD_DIR=build-guards LIB_DIR=build-guards/lib \
-	         CONTRACT_DEFINES="$(CONTRACT_DEFINES) -D SHARED_CT_MUL_8X8=1" lib >/dev/null; \
-	 after=$$(ls -l build-guards/mul_8x8.o | awk '{print $$6,$$7,$$8,$$5}'); \
-	 test "$$before" = "$$after" \
-	  && echo "OK: leg C2 — unchanged knobs did NOT rebuild" \
-	  || (echo "FAIL: leg C2 — unchanged knobs rebuilt; guard is an unconditional rebuild" && exit 1)
+	  && echo "OK: leg C2 — the knob change FLIPPED the artifact (0/5 §8.3 names)" \
+	  || (echo "FAIL: leg C2 — knob ignored, stale owner archive shipped ($$def/5 §8.3 names still exported)" && exit 1)
+	@# C1b: the no-rebuild property must hold AFTER a knob change too, not
+	@# only from a freshly-stamped baseline.
+	@out=$$($(MAKE) BUILD_DIR=build-guards LIB_DIR=build-guards/lib \
+	         CONTRACT_DEFINES="$(CONTRACT_DEFINES) -D SHARED_CT_MUL_8X8=1" lib 2>&1); \
+	 n=$$(printf '%s\n' "$$out" | grep -c 'ca65 ' || true); \
+	 test "$$n" = "0" \
+	  && echo "OK: leg C1b — unchanged knobs recompiled 0 TUs after a knob change" \
+	  || (echo "FAIL: leg C1b — unchanged invocation recompiled $$n TUs after a knob change, expected 0" && exit 1)
 	rm -rf build-guards
 	@echo "OK: all guard negatives fire with named errors"
 
