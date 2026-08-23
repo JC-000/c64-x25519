@@ -164,3 +164,22 @@ Unchanged from v0.11.2 — no manifest value moved, since no runtime code
 changed. See
 [`docs/RELEASE_NOTES_v0.11.2.md`](RELEASE_NOTES_v0.11.2.md) §6.6 for the
 seven (profile × variant) pairs.
+
+## Tarball
+
+`c64-x25519-v0.11.3.tar.gz` — vendor-as-source bundle (`cfg docs LICENSE
+ORIGIN.txt.template src`; no Makefile or README by design, so running
+`make` inside it is expected to fail — the gate is per-file `ca65` over
+every `src/*.s`).
+
+```
+Size:     128,801 bytes
+SHA256:   994091982660197c1f55c32349c6aa706179a83a2ef6837098dab4eed570155f
+```
+
+Byte-identical across two independent **post-tag** `make dist` runs, and
+the figures above were re-derived from the published asset by
+downloading it back and hashing it — not from the local build. All
+shipped `src/*.s` assemble standalone from the extracted tarball with
+zero diagnostics, and the extracted `src/lib_version.s` reads
+`LIB_X25519_VERSION_PATCH = 3`.

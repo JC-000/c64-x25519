@@ -6,7 +6,7 @@ An optimized implementation of X25519 / Curve25519 scalar multiplication written
 
 ## Status
 
-**v0.11.3 released 2026-08-23 (DRAFT until tagged)** — [GitHub release](https://github.com/JC-000/c64-x25519/releases/tag/v0.11.3) — a build-correctness
+**v0.11.3 released 2026-08-23** — [GitHub release](https://github.com/JC-000/c64-x25519/releases/tag/v0.11.3) — a build-correctness
 release. Two defects were live in every release through v0.11.2, both in
 the canonical §6.1 build surface. `make lib` failed outright after any
 profile target had run (`cp: build/lib/cfg/x25519-example.cfg: No such
