@@ -14,7 +14,7 @@ post-execute settle. All twelve execute sites now carry the
 `REU_SETTLE` macro; the spin bound `X25519_REU_SETTLE_ITER` (default 8)
 is a §6.2 knob, and faults land in the new sticky `x25519_reu_fault`
 byte, which `reu_probe` folds into its C=0 return. Conformant at
-≤ 48 MHz on U64E fw 3.15; 64 MHz is unbracketed. Cost: +0.62 %
+≤ 48 MHz on U64E fw 3.15; 64 MHz is unbracketed. Cost: +0.53 %
 scalarmult (15,389 → 15,485 jif), +105 B resident. MINOR (new export +
 new knob); ABI stays 3. Contract-aligned through SPEC v0.14.0 (v0.12.x
 / v0.14.0 are §13.x networking, N/A here). See

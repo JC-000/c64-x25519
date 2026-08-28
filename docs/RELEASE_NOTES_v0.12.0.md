@@ -62,8 +62,10 @@ In `reu_probe` the settle sits between the execute and the `lda
 before it is read, not merely before the next register write.
 
 It is a macro, not a `jsr` target, because two sites are inside the
-per-row loops. Fast path (bit 6 set on the first read): `ldx / lda abs
-/ and / bne / and / beq` = **16 cycles**, 35 bytes per expansion. The
+per-row loops. Fast path (bit 6 set on the first read): `lda abs / and / bne /
+and / beq` = **14 cycles**, clobbering A only; the bounded spin counts
+in a memory byte (`x25519_reu_settle_cnt`) touched only on the slow
+path, so X and Y survive every expansion. The
 macro uses only unnamed `:` labels so that expanding it inside a
 `.proc` does not open a new cheap-local scope and orphan the
 surrounding `@labels` (it did, on the first attempt).
@@ -95,30 +97,15 @@ keyed on the command register at execute completion. The S3 invariant
 
 ## 3. Register-clobber analysis, per site
 
-The reference implementation clobbers X. Measured (read, not guessed)
-at every expansion point:
-
-- **`reu_mul_init` ×5** — the proc already clobbers A/X/Y; X is
-  reloaded (`ldx reu_init_b`, `ldx #0`) before every use after each
-  stash. Carry is re-derived by `asl` before each `adc`.
-- **`reu_fetch_mul_row`** — banner was "Clobbers: A"; now **A, X**.
-  Its two callers: `reu_fetch_doubled_row` (below) and consumers via
-  the §8.2 fetch surface. Y and C preserved (nothing in the macro
-  writes C).
-- **`reu_fetch_doubled_row` DMA #2** — banner was "Clobbers: A"; now
-  **A, X**. Sole caller `fe25519_sqr` does `jsr reu_fetch_doubled_row`
-  then patches trampolines with A only, `clc`s before its next `adc`,
-  and reaches its next X use through `ldx fe_mul_j`. Y is not live
-  across the call (next `ldy` is a fresh load).
-- **`reu_probe` ×4** — X and Y are unused in the proc; banner already
-  says A/X/Y.
-- **`fe25519_mul` inline fetch** — X is dead (`ldx #0` re-seeds j
-  below), Y is dead (last use `lda mul_src2_buf,y` before the fetch,
-  next use a fresh `ldy`), and the very next carry use is preceded by
-  `clc`.
-
-A consumer that JSRs `reu_fetch_mul_row` directly and kept something
-in X across the call must now save it.
+The reporter's reference implementation clobbers X (an `ldx`/`dex` spin
+counter). x25519's macro does **not**: it counts in memory, so every
+site — including the §8.2 provider-surface `reu_fetch_mul_row`, whose
+documented convention is "clobbers A" — keeps its pre-v0.12.0 register
+contract. C is never written by the macro (`lda`/`and`/`ora`/`dec`/
+branches), and the two hot callers (`fe25519_sqr` after
+`jsr reu_fetch_doubled_row`, `fe25519_mul`'s inline fetch) `clc` before
+their next carry use anyway. A consumer that JSRs `reu_fetch_mul_row`
+directly needs no migration beyond what §8.2 v0.13.0 itself demands.
 
 ## 4. CT posture
 
@@ -139,10 +126,10 @@ after the change):
 | | cycles | jif |
 |---|---:|---:|
 | before | 262,318,045 | 15,389.3 |
-| after | 263,946,406 | 15,484.9 |
-| delta | **+1,628,361 (+0.62 %)** | +95.6 |
+| after | 263,714,429 | 15,471.3 |
+| delta | **+1,396,384 (+0.53 %)** | +82.0 |
 
-Expected from construction: 16 cycles × (32 fetches per `fe25519_mul`
+Expected from construction: ~14 cycles × (32 fetches per `fe25519_mul`
 + 44 per `fe25519_sqr`) over the ladder's ~1,300 mul + ~1,300 sqr
 calls ≈ 1.6 M cycles. Correctness: PASS (RFC 7748 vector).
 

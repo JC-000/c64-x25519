@@ -286,12 +286,14 @@ sqtab_hi = LIB_SHARED_SQTAB_BASE + $0200
 ;   two 3-register-touch fetches leaves the latch exactly as the
 ;   previous execute's autoload left it.
 ;
-;   Registers: clobbers A and X; preserves Y and ALL flags-of-interest
-;   downstream — specifically C is never written (lda/and/ora/dex/bne
-;   /beq/jmp do not touch C), which reu_fetch_doubled_row's DMA #2 and
-;   fe25519_mul's inline fetch do not rely on anyway (both `clc`/`lda`
-;   before their next carry use). Every site's X was measured dead at
-;   the point of expansion (analysis in docs/CT_ANALYSIS.md L31).
+;   Registers: clobbers A ONLY; X and Y are preserved, so the §8.2
+;   provider-surface convention of reu_fetch_mul_row ("clobbers A")
+;   is unchanged. The bounded spin counts in a private memory byte
+;   (x25519_reu_settle_cnt, src/data.s) that is touched only on the
+;   slow path. C is never written (lda/and/ora/dec/bne/beq/jmp do not
+;   touch C); reu_fetch_doubled_row's DMA #2 and fe25519_mul's inline
+;   fetch do not rely on it anyway (both `clc`/`lda` before their next
+;   carry use).
 ;
 ;   CT: the spin count depends only on REU completion timing for a
 ;   fixed-length (256- or 512-byte) transfer — never on a secret
@@ -299,22 +301,28 @@ sqtab_hi = LIB_SHARED_SQTAB_BASE + $0200
 ;   as L31 in docs/CT_ANALYSIS.md.
 ;
 ;   Fast path (bit 6 set on the first read, the only path ever observed
-;   on hardware): ldx / lda abs / and / bne / and / beq = 16 cycles.
+;   on hardware): lda abs / and / bne / and / beq = 14 cycles, no
+;   counter traffic. Slow path performs X25519_REU_SETTLE_ITER status
+;   reads in total before recording a fault.
 .ifndef X25519_REU_SETTLE_ITER
   X25519_REU_SETTLE_ITER = 8
 .endif
-.assert X25519_REU_SETTLE_ITER >= 1 .and X25519_REU_SETTLE_ITER <= 255, error, "X25519_REU_SETTLE_ITER must be 1..255 (8-bit spin counter)"
+.assert X25519_REU_SETTLE_ITER >= 2 .and X25519_REU_SETTLE_ITER <= 255, error, "X25519_REU_SETTLE_ITER must be 2..255 (8-bit spin counter; first read is unconditional)"
 
 .macro REU_SETTLE
         ; Unnamed `:` labels only: a named (even `.local`) label inside
         ; the expansion would open a new cheap-local scope and orphan
         ; the enclosing proc's `@labels` across the site.
-        ldx #X25519_REU_SETTLE_ITER
-:       lda reu_status         ; single read: clears bits 5-7
+        lda reu_status         ; single read: clears bits 5-7
         and #$60               ; bit 6 END OF BLOCK, bit 5 VERIFY ERROR
+        bne :++                ; -> seen (fast path: 14 cycles total)
+        lda #X25519_REU_SETTLE_ITER-1
+        sta x25519_reu_settle_cnt   ; slow path only: memory counter, X/Y intact
+:       lda reu_status
+        and #$60
         bne :+                 ; -> seen
-        dex
-        bne :-                 ; -> spin
+        dec x25519_reu_settle_cnt
+        bne :-                 ; -> spin (ITER reads in total)
         lda #$01               ; bound expired: transfer not confirmed
         ora x25519_reu_fault
         sta x25519_reu_fault

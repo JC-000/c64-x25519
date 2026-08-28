@@ -194,9 +194,9 @@
 ;                       fe25519_mul. No external migration needed if you
 ;                       call fe25519_mul; otherwise inline the bank
 ;                       computation + reu_command write yourself — AND
-;                       the §8.2 v0.13.0 settle after it (v0.12.0: the
-;                       helper now clobbers X as well as A, the settle
-;                       spin counter).
+;                       the §8.2 v0.13.0 settle after it (v0.12.0; the
+;                       helper still clobbers A only — REU_SETTLE keeps
+;                       its spin counter in memory).
 ;
 ;   x25_basepoint       32-byte read-only buffer holding the Curve25519
 ;                       basepoint {9, 0, ..., 0}. Used only by

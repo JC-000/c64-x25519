@@ -1001,7 +1001,7 @@ read that finds bit 6 already set meets floor (b) at 48 MHz. On the
 reporter's hardware run (9/9 pass) bit 6 was set on the first read in
 all 19,416 calls; on VICE it always is. The macro is a macro rather
 than a `jsr` target because two sites sit inside the per-row loops of
-`fe25519_mul` / `fe25519_sqr`; the fast path is 16 cycles.
+`fe25519_mul` / `fe25519_sqr`; the fast path is 14 cycles and clobbers A only (X/Y preserved, so the §8.2 `reu_fetch_mul_row` "clobbers A" convention is unchanged).
 
 Reading `$DF00` does not disturb the REU autoload latch (§4.8, the
 `reu_fetch_doubled_row` banner): the status register's only read
@@ -1052,8 +1052,8 @@ audited (X is dead at every site); a consumer that JSRs
 `reu_fetch_mul_row` directly and kept something in X across the call
 must save it.
 
-Cost: +1,628,361 cycles per `x25519_scalarmult` (+0.62 %;
-262,318,045 → 263,946,406 cycles, 15,389.3 → 15,484.9 jif on this
+Cost: +1,396,384 cycles per `x25519_scalarmult` (+0.53 %;
+262,318,045 → 263,714,429 cycles, 15,389.3 → 15,471.3 jif on this
 tree's VICE bench), +105 B resident / +328 B cold in the default
 profile — see §4.4 and `docs/RELEASE_NOTES_v0.12.0.md`.
 
@@ -1140,10 +1140,10 @@ NTSC.
 
 ### Default build (`make`, `make lib`)
 
-(v0.12.0: the §8.2 v0.13.0 settle adds a measured +1,628,361 cycles /
-+95.6 jif per `x25519_scalarmult` on top of the row below — §4.12 —
+(v0.12.0: the §8.2 v0.13.0 settle adds a measured +1,396,384 cycles /
++82.0 jif per `x25519_scalarmult` on top of the row below — §4.12 —
 and ~+0.5 jif to `fe25519_mul` / ~+0.7 jif to `fe25519_sqr` per
-batch=200 by construction (16 cycles × 32 / × 44 fetches); the table
+batch=200 by construction (14 cycles × 32 / × 44 fetches); the table
 itself is not re-measured.)
 
 | Operation                       | Cycles      | Jiffies     | Wall-time NTSC | PAL    |

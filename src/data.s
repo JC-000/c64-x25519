@@ -16,6 +16,7 @@
 .export sqr_lo, sqr_hi
 .export a24_b0, a24_b1, a24_b2, a24_b3
 .export x25519_reu_fault
+.export x25519_reu_settle_cnt   ; REU_SETTLE slow-path spin counter (private)
 
 .segment "LIB_X25519_DATA"
 
@@ -129,6 +130,11 @@ mul_cached_a:
 ; profile (no REU is touched). Not alignment-sensitive: it is a single
 ; byte read/written by absolute address only.
 x25519_reu_fault:
+        .byte 0
+; REU_SETTLE bounded-spin counter. Written only when a status read did
+; not show END OF BLOCK (never observed on hardware); lives in memory so
+; the macro clobbers A only. Not part of the public API.
+x25519_reu_settle_cnt:
         .byte 0
 
 ; mul_src2_buf is 33 bytes, NOT 32. Byte 32 is a load-bearing zero

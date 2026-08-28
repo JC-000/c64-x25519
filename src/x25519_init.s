@@ -49,6 +49,7 @@
 ; --- Imports from data.s ---
 .import mul_dma_lo, mul_dma_hi, mul_dma_carry, mul_cached_a
 .import x25519_reu_fault       ; §8.2 v0.13.0 sticky settle-fault byte
+.import x25519_reu_settle_cnt  ; REU_SETTLE slow-path spin counter
 
 .segment "LIB_X25519_CODE"
 
@@ -352,8 +353,8 @@ reu_init_b:     .byte 0
 ;
 ; Input: A = multiplier value (0-255) in mul_cached_a
 ; Fetches 512 bytes: 256 lo bytes to mul_dma_lo, 256 hi bytes to mul_dma_hi
-; Clobbers: A, X (X is the REU_SETTLE spin counter — v0.12.0; before the
-;           §8.2 v0.13.0 settle this was A only). Y and C preserved.
+; Clobbers: A only (unchanged by the v0.12.0 §8.2 v0.13.0 settle: REU_SETTLE
+;           counts its bounded spin in memory). X, Y and C preserved.
 ;
 ; The `bank_lda` regular local label (not cheap-`@`-local because we
 ; address it from outside the proc via `proc::label` syntax, which
@@ -411,8 +412,7 @@ reu_fetch_mul_row_bank_patch := reu_fetch_mul_row::bank_lda + 1
 ; Input: A = multiplier value in mul_cached_a
 ; Fetches 512 bytes from banks 4-5 to mul_dma_lo/hi (doubled lo+hi),
 ; then 256 bytes from bank 3 to mul_dma_carry (17th-bit carry flags).
-; Clobbers: A, X (REU_SETTLE spin counter after each of the two DMAs;
-;           fe25519_sqr reloads X from fe_mul_j before its next use)
+; Clobbers: A (REU_SETTLE after each of the two DMAs clobbers A only)
 ; NOTE: Leaves REU registers in a non-default state; caller must restore
 ; if the regular mul-row FETCH config is needed afterward (see
 ; reu_clear_wide's autoload-restore tail, which is what fe25519_sqr
