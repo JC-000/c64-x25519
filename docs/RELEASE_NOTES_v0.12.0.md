@@ -19,10 +19,14 @@ One documented register contract tightened — `reu_fetch_mul_row` and
 why consumers that JSR the fetch helper directly should read this
 before taking the release.
 
-Contract-aligned through c64-lib-contract SPEC **v0.14.0** (tag
-`e76bcff`): v0.12.0 (`a6bb30a`), v0.12.1 (`42c84bd`) and v0.14.0 are
-§13.x networking and do not apply to x25519; v0.13.0 (`c771935`) §8.2
-is this change. v0.11.1 is now tagged too (`cc3f8a6`).
+Contract-aligned through c64-lib-contract SPEC **v0.14.1** (tag
+`62a9d78`): v0.12.0 (`a6bb30a`), v0.12.1 (`42c84bd`) and v0.14.0
+(`e76bcff`) are §13.x networking and do not apply to x25519; v0.13.0
+(`c771935`) §8.2 is this change; v0.14.1 (PATCH, written against this
+PR and nist#131) names both read-once capture forms — ours is the
+whole-byte `lda`, which keeps bit 5 — and adds a non-normative SHOULD
+for *structural* settles, which x25519 does not use (every execute
+site carries an explicit read). v0.11.1 is now tagged too (`cc3f8a6`).
 
 ---
 

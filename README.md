@@ -16,8 +16,9 @@ is a §6.2 knob, and faults land in the new sticky `x25519_reu_fault`
 byte, which `reu_probe` folds into its C=0 return. Conformant at
 ≤ 48 MHz on U64E fw 3.15; 64 MHz is unbracketed. Cost: +0.42 %
 scalarmult (15,389 → 15,454 jif), +93 B resident. MINOR (new export +
-new knob); ABI stays 3. Contract-aligned through SPEC v0.14.0 (v0.12.x
-/ v0.14.0 are §13.x networking, N/A here). See
+new knob); ABI stays 3. Contract-aligned through SPEC v0.14.1 (v0.12.x
+/ v0.14.0 are §13.x networking, N/A here; v0.14.1 is a §8.2 wording
+PATCH that keeps this implementation conformant). See
 [`docs/RELEASE_NOTES_v0.12.0.md`](docs/RELEASE_NOTES_v0.12.0.md) and
 `docs/LIBRARY.md` §4.12.
 
