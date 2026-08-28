@@ -1,0 +1,197 @@
+# c64-x25519 v0.12.0 — DRAFT
+
+A contract-conformance release. c64-lib-contract SPEC **v0.13.0 §8.2**
+(tag `c771935`; contract#144 / contract#146; tracked here as #115) made REU completion
+checking normative: after **every** REU execute and **before the next
+access to any REU register**, an implementation MUST (a) read `$DF00`
+and confirm bit 6 (END OF BLOCK) is set, spinning bounded if not, and
+(b) leave a post-execute settle meeting the bracketed floor. All twelve
+execute sites in this library now do both. Runtime code changed, so
+`build/x25519.prg` is **not** byte-identical to the v0.11.0–v0.11.3
+PRG (`905bb969…`); the VICE suite, the CT cycle gate and the bench were
+rerun.
+
+**Version 0/12/0. `LIB_X25519_ABI_VERSION` stays 3.** MINOR because the
+change is additive: one new export (`x25519_reu_fault`) and one new
+§6.2 knob (`X25519_REU_SETTLE_ITER`). No symbol was removed or renamed.
+One documented register contract tightened — `reu_fetch_mul_row` and
+`reu_fetch_doubled_row` now clobber A **and X** (see §3) — which is
+why consumers that JSR the fetch helper directly should read this
+before taking the release.
+
+Contract-aligned through c64-lib-contract SPEC **v0.14.0** (tag
+`e76bcff`): v0.12.0 (`a6bb30a`), v0.12.1 (`42c84bd`) and v0.14.0 are
+§13.x networking and do not apply to x25519; v0.13.0 (`c771935`) §8.2
+is this change. v0.11.1 is now tagged too (`cc3f8a6`).
+
+---
+
+## 1. What §8.2 v0.13.0 requires, and what we claim
+
+The clause has two halves. **(a)** is a completion check: read
+`reu_status` ($DF00), test bit 6, spin bounded. Reading $DF00 clears
+bits 5–7, so the read happens once per spin iteration into A and the
+tests run on that copy; bit 5 set is a VERIFY ERROR. **(b)** is a
+timing floor: the bracketed hardware measurement is **≥ 49 cycles at
+48 MHz on Ultimate 64 Elite firmware 3.15**, and one `lda reu_status`
+— an I/O-mapped read — is what costs ~49 cycles at that turbo on the
+U64E, which is why read-once meets the floor whenever bit 6 is already
+set on the first read. The 64 MHz turbo is **unbracketed** by the
+contract. **c64-x25519 claims conformance at ≤ 48 MHz only** and says
+nothing about 64 MHz.
+
+Reporter's hardware reference (U64E fw 3.15 @ 48 MHz, 9/9 pass): bit 6
+was already set on the first read in all 19,416 calls. Under VICE's REU
+it always is.
+
+## 2. The change
+
+`REU_SETTLE`, a macro in `src/constants.s` (which every TU includes),
+expanded immediately after each of the twelve `sta reu_command`:
+
+| site | file | count | path |
+|---|---|---:|---|
+| `reu_mul_init` stashes (lo, hi, doubled-lo, doubled-hi, carry) | `src/x25519_init.s` | 5 | boot (cold) |
+| `reu_fetch_mul_row` | `src/x25519_init.s` | 1 | **hot** — every `fe25519_sqr` DMA row via DMA #1 |
+| `reu_fetch_doubled_row` inline DMA #2 | `src/x25519_init.s` | 1 | **hot** — 22 per `fe25519_sqr` |
+| `reu_probe` (read-orig, stash sentinel, fetch back, restore) | `src/x25519_init.s` | 4 | boot (cold) |
+| `fe25519_mul` inlined row fetch | `src/fe25519.s` | 1 | **hot** — 32 per call |
+
+In `reu_probe` the settle sits between the execute and the `lda
+@scratch` that reads the transferred byte — the byte must have landed
+before it is read, not merely before the next register write.
+
+It is a macro, not a `jsr` target, because two sites are inside the
+per-row loops. Fast path (bit 6 set on the first read): `ldx / lda abs
+/ and / bne / and / beq` = **16 cycles**, 35 bytes per expansion. The
+macro uses only unnamed `:` labels so that expanding it inside a
+`.proc` does not open a new cheap-local scope and orphan the
+surrounding `@labels` (it did, on the first attempt).
+
+**Knob.** `X25519_REU_SETTLE_ITER` — the spin bound, default 8,
+`.ifndef`-guarded, `.assert`ed to 1..255. A §6.2 knob:
+`make lib CONTRACT_DEFINES="-D X25519_REU_SETTLE_ITER=16"`.
+`CONTRACT_STAMP` reads `ALL_DEFINES`, so §6.3 invalidation is automatic
+— measured, not assumed: warm `make lib` with unchanged knobs
+recompiled 0 TUs; changing the value recompiled 10; unchanged again 0;
+back to default 10. The listing under `=16` shows `A2 10` at all eleven
+`x25519_init.s` sites.
+
+**Fault channel.** The fetch primitive has no error return. The
+contract says an adopter SHOULD surface a bounded-spin failure the way
+it surfaces a missing REU at init. New sticky byte `x25519_reu_fault`
+(`src/data.s`, exported, documented in `src/x25519.inc`):
+`$01` ORed in on bound expiry, `$02` if bit 5 was seen; cleared at
+`reu_mul_init` and `reu_probe` entry, never otherwise. `reu_probe`
+returns C = 0 if the byte is non-zero after its four DMAs. The library
+never branches on the byte on the hot path.
+
+**Autoload latch.** Reading $DF00 does not disturb the latched address
+/ length / control registers — the status register's only read
+side-effect is clearing its own bits 5–7, and the autoload reload is
+keyed on the command register at execute completion. The S3 invariant
+(`reu_fetch_doubled_row` banner; CT_ANALYSIS S3) is untouched, and
+`tools/test_fe_sqr_stress.py` / the sqr-then-mul regressions are green.
+
+## 3. Register-clobber analysis, per site
+
+The reference implementation clobbers X. Measured (read, not guessed)
+at every expansion point:
+
+- **`reu_mul_init` ×5** — the proc already clobbers A/X/Y; X is
+  reloaded (`ldx reu_init_b`, `ldx #0`) before every use after each
+  stash. Carry is re-derived by `asl` before each `adc`.
+- **`reu_fetch_mul_row`** — banner was "Clobbers: A"; now **A, X**.
+  Its two callers: `reu_fetch_doubled_row` (below) and consumers via
+  the §8.2 fetch surface. Y and C preserved (nothing in the macro
+  writes C).
+- **`reu_fetch_doubled_row` DMA #2** — banner was "Clobbers: A"; now
+  **A, X**. Sole caller `fe25519_sqr` does `jsr reu_fetch_doubled_row`
+  then patches trampolines with A only, `clc`s before its next `adc`,
+  and reaches its next X use through `ldx fe_mul_j`. Y is not live
+  across the call (next `ldy` is a fresh load).
+- **`reu_probe` ×4** — X and Y are unused in the proc; banner already
+  says A/X/Y.
+- **`fe25519_mul` inline fetch** — X is dead (`ldx #0` re-seeds j
+  below), Y is dead (last use `lda mul_src2_buf,y` before the fetch,
+  next use a fresh `ldy`), and the very next carry use is preceded by
+  `clc`.
+
+A consumer that JSRs `reu_fetch_mul_row` directly and kept something
+in X across the call must now save it.
+
+## 4. CT posture
+
+Catalogued as **L31a-c** in `docs/CT_ANALYSIS.md`. The settle's
+branches are on `$DF00` bits 6/5 — hardware completion state for a
+transfer whose length (512 or 256 bytes), direction and target are
+fixed; only the REU page varies with the secret row index, and REU DMA
+cost is address-independent. Spin count is a function of (hardware,
+length), never of (scalar, point). `tools/test_ct_square_cycles.py`:
+0.000–0.010 jif spread across structurally distinct inputs, unchanged
+from v0.11.x. CT rule kept: no branch on secret data was added.
+
+## 5. Cost
+
+Bench (`tools/bench_x25519.py`, VICE, VIC blanked, same tree before /
+after the change):
+
+| | cycles | jif |
+|---|---:|---:|
+| before | 262,318,045 | 15,389.3 |
+| after | 263,946,406 | 15,484.9 |
+| delta | **+1,628,361 (+0.62 %)** | +95.6 |
+
+Expected from construction: 16 cycles × (32 fetches per `fe25519_mul`
++ 44 per `fe25519_sqr`) over the ladder's ~1,300 mul + ~1,300 sqr
+calls ≈ 1.6 M cycles. Correctness: PASS (RFC 7748 vector).
+
+## 6. §6.6 footprint pairs
+
+Re-measured with `od65 --dump-segsize` (the `make lib-x25519-*`
+dumps, plus assembling `x25519_init.s` under the deferral defines for
+the `_D_*` deltas):
+
+| profile | RESIDENT | COLD | note |
+|---|---:|---:|---|
+| default | 8383 → **8488** | 826 → **1154** | 3 resident + 9 cold sites; `x25519_reu_fault`'s byte is absorbed by the existing page pad, DATA stays 3584 |
+| `lib-x25519-1764` | 8247 → **8317** | 648 → **871** | 2 resident + 6 cold sites survive at K=0 |
+| `lib-x25519-onchip` | 8207 | 160 | unchanged — no REU access, no `$DF00` read anywhere (listing-verified: zero settle expansions in `x25519_init.o` / `fe25519.o`) |
+| §8.2 deferral deltas | `_D_RES_REU` 20 → **55** | `_D_COLD_REU` 364 → **542** (K>0), 186 → **259** (K=0) | `reu_probe` alone is now 452 B |
+
+The seven per-profile `LIB_VERIFY_RESIDENT_EXPECT` /
+`LIB_VERIFY_COLD_EXPECT` locks in the Makefile (contract #62 audit
+lock) were re-derived from the same dumps; `lib-verify` failed on the
+stale default lock before they were updated, which is the lock doing
+its job.
+
+`make lib-verify-guards` leg A moved its diverged-base probe from
+`0x2A00` to `0x2C00`: the standalone image end is now `$2A82`, so the
+old value tripped the *overrun* assert first and the leg could no
+longer distinguish region-disagreement (its job) from overrun (leg
+A2's job). Both legs still fail on their own named error.
+
+## Verification
+
+- `make clean && make && make test-vice` — all green (mul38, fe25519
+  ops, fe_mul/sqr stress, ct_square_cycles ×4, reduce_wide_carry,
+  sqr-then-mul; 64/64, 128/128, 49/49, 50/50, 3/3)
+- `python3 tools/test_ct_square_cycles.py`, `test_fe_reduce_wide_carry.py`
+- `make lib lib-verify lib-verify-shared lib-verify-guards
+  lib-app-owned lib-x25519-1764 lib-x25519-onchip` — every profile
+  assembles and verifies; guards fire on their named errors (A, A2, B,
+  C, C1, C2, C1b)
+- Knob invalidation in both directions (0 / 10 / 0 / 10 TUs)
+- Bench before/after as in §5
+- Not yet run: `make test-slow` on this branch, hardware run on a real
+  U64E
+
+## Tarball
+
+TBD at tag time — `c64-x25519-v0.12.0.tar.gz`, size and SHA256 to be
+filled from the published asset, not the local build.
+
+```
+Size:     TBD
+SHA256:   TBD
+```

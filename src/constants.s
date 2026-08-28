@@ -238,4 +238,93 @@ sqtab_hi = LIB_SHARED_SQTAB_BASE + $0200
   reu_addr_ctrl   = $df0a         ; address control
 .endif
 
+; --- REU post-execute settle (c64-lib-contract SPEC v0.13.0 §8.2, c771935) --
+;
+; Every REU execute (`sta reu_command` with bit 7 set) MUST be followed,
+; before the next access to any REU register, by (a) a read of
+; reu_status ($DF00) confirming bit 6 (END OF BLOCK) is set, spinning
+; bounded if not, and (b) a post-execute settle meeting the bracketed
+; floor (>= 49 cycles at 48 MHz on Ultimate 64 Elite fw 3.15; the
+; 64 MHz turbo is UNBRACKETED — c64-x25519 claims conformance at
+; <= 48 MHz only). One `lda reu_status` is an I/O-mapped read, which is
+; what costs ~49 cycles at turbo on the U64E, so a single read that
+; finds bit 6 set already meets floor (b). Tracked at c64-x25519 #115;
+; contract#144 / contract#146.
+;
+; X25519_REU_SETTLE_ITER is the spin bound — a §6.2 knob (`-D`
+; overridable; the Makefile's CONTRACT_STAMP reads ALL_DEFINES so a
+; changed value invalidates the archive). Reporter's hardware reference
+; found bit 6 set on the FIRST read in all 19,416 calls, so 8 is
+; generous headroom, not a tuned figure.
+;
+; REU_SETTLE — the settle itself, as a macro (not a proc) because two of
+; the twelve execute sites are on the fe25519_mul / fe25519_sqr hot
+; path and a jsr/rts pair per 512-byte row fetch is measurable.
+;
+;   Reads reu_status ONCE per spin iteration into A and tests there:
+;   reading $DF00 clears bits 5-7, so a second read would see them
+;   gone. Bit 6 = END OF BLOCK (transfer complete), bit 5 = VERIFY
+;   ERROR (only ever set by a VERIFY command, which this library never
+;   issues, so its appearance is a hardware fault, not a mismatch).
+;
+;   Fault channel: the primitive has no error return. On bound expiry
+;   the macro ORs $01 into the sticky byte x25519_reu_fault; if bit 5
+;   was observed it ORs $02. The byte is cleared at reu_mul_init and
+;   reu_probe entry and never cleared by the library otherwise, so a
+;   host can inspect it after any call (see src/x25519.inc). The
+;   contract's SHOULD is that a bounded-spin failure surfaces the way a
+;   missing REU does at init — reu_probe folds it into its C=0 return.
+;
+;   Autoload-latch invariant (see reu_fetch_doubled_row's banner in
+;   src/x25519_init.s): reading $DF00 does NOT disturb the latched
+;   address / length / control registers. Per the REC datasheet the
+;   status register is read-only and its read side-effect is confined
+;   to clearing its own bits 5-7 (INTERRUPT PENDING / END OF BLOCK /
+;   VERIFY ERROR); the autoload reload of $DF02-$DF08 happens at
+;   execute completion, keyed on the command register's bit 5, and is
+;   independent of whether or when status is read. So a settle between
+;   two 3-register-touch fetches leaves the latch exactly as the
+;   previous execute's autoload left it.
+;
+;   Registers: clobbers A and X; preserves Y and ALL flags-of-interest
+;   downstream — specifically C is never written (lda/and/ora/dex/bne
+;   /beq/jmp do not touch C), which reu_fetch_doubled_row's DMA #2 and
+;   fe25519_mul's inline fetch do not rely on anyway (both `clc`/`lda`
+;   before their next carry use). Every site's X was measured dead at
+;   the point of expansion (analysis in docs/CT_ANALYSIS.md L31).
+;
+;   CT: the spin count depends only on REU completion timing for a
+;   fixed-length (256- or 512-byte) transfer — never on a secret
+;   operand — and the fault branches are on hardware state. Catalogued
+;   as L31 in docs/CT_ANALYSIS.md.
+;
+;   Fast path (bit 6 set on the first read, the only path ever observed
+;   on hardware): ldx / lda abs / and / bne / and / beq = 16 cycles.
+.ifndef X25519_REU_SETTLE_ITER
+  X25519_REU_SETTLE_ITER = 8
+.endif
+.assert X25519_REU_SETTLE_ITER >= 1 .and X25519_REU_SETTLE_ITER <= 255, error, "X25519_REU_SETTLE_ITER must be 1..255 (8-bit spin counter)"
+
+.macro REU_SETTLE
+        ; Unnamed `:` labels only: a named (even `.local`) label inside
+        ; the expansion would open a new cheap-local scope and orphan
+        ; the enclosing proc's `@labels` across the site.
+        ldx #X25519_REU_SETTLE_ITER
+:       lda reu_status         ; single read: clears bits 5-7
+        and #$60               ; bit 6 END OF BLOCK, bit 5 VERIFY ERROR
+        bne :+                 ; -> seen
+        dex
+        bne :-                 ; -> spin
+        lda #$01               ; bound expired: transfer not confirmed
+        ora x25519_reu_fault
+        sta x25519_reu_fault
+        jmp :++                ; -> done
+:       and #$20               ; seen
+        beq :+                 ; bit 6 alone — the normal case -> done
+        lda #$02               ; bit 5 seen: verify fault
+        ora x25519_reu_fault
+        sta x25519_reu_fault
+:                              ; done
+.endmacro
+
 .endif ; CONSTANTS_S_INCLUDED

@@ -6,6 +6,21 @@ An optimized implementation of X25519 / Curve25519 scalar multiplication written
 
 ## Status
 
+**v0.12.0 (unreleased, DRAFT)** — c64-lib-contract SPEC **v0.13.0 §8.2**
+made REU completion checking normative (contract#146; tracked here as
+#115): after every REU execute, read `$DF00`, confirm bit 6 (END OF
+BLOCK) before the next register access, and leave the bracketed
+post-execute settle. All twelve execute sites now carry the
+`REU_SETTLE` macro; the spin bound `X25519_REU_SETTLE_ITER` (default 8)
+is a §6.2 knob, and faults land in the new sticky `x25519_reu_fault`
+byte, which `reu_probe` folds into its C=0 return. Conformant at
+≤ 48 MHz on U64E fw 3.15; 64 MHz is unbracketed. Cost: +0.62 %
+scalarmult (15,389 → 15,485 jif), +105 B resident. MINOR (new export +
+new knob); ABI stays 3. Contract-aligned through SPEC v0.14.0 (v0.12.x
+/ v0.14.0 are §13.x networking, N/A here). See
+[`docs/RELEASE_NOTES_v0.12.0.md`](docs/RELEASE_NOTES_v0.12.0.md) and
+`docs/LIBRARY.md` §4.12.
+
 **v0.11.3 released 2026-08-23** — [GitHub release](https://github.com/JC-000/c64-x25519/releases/tag/v0.11.3) — a build-correctness
 release. Two defects were live in every release through v0.11.2, both in
 the canonical §6.1 build surface. `make lib` failed outright after any

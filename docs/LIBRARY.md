@@ -342,8 +342,8 @@ compile + VICE test cycle:
 |---|---|---|
 | `LIB_X25519_ZP_USAGE_BYTES` | `85` | Total bytes of ZP slots the library claims (sum of `.exportzp`-ed slots in `src/zp_config.s` + the pinned `fe_wide` region) |
 | `LIB_X25519_REU_BANKS_USED` | `$3B` default / `$03` for `lib-x25519-1764` / `0` for `lib-x25519-onchip` | Bitmask of REU banks claimed for mul tables. **Default build** (banks 0, 1, 3, 4, 5): `$3B << X25519_REU_BANK`. **1764 variant** (`make lib-x25519-1764`, `SQR_DMA_K=0`): `$03 << X25519_REU_BANK` — banks 0, 1 only, drops the doubled-table cluster. Bank 2 is never claimed in either build. **onchip variant** (`make lib-x25519-onchip`, `X25519_ONCHIP_MUL=1`): plain `0` — no shift, no banks. Per SPEC §5 the zero *is* the "no REU" declaration, not an unset field; see §4.11. See [`REU_USAGE_ANALYSIS.md`](REU_USAGE_ANALYSIS.md) §"Group B SHIPPED" for the 1764 rationale + measured trade-offs |
-| `LIB_X25519_RESIDENT_BYTES` | `8383` default / `8247` for `lib-x25519-1764` / `8207` for `lib-x25519-onchip` | Approximate code + data + sqtab footprint that must remain CPU-resident. Dropped from 9209/8895 at the issue-#68 cold-segment split — the init-only code is now counted in `LIB_X25519_COLD_BYTES` (SPEC §5 disjoint partition; see §4.10). All three figures od65-measured; the onchip value has been measured-exact since the profile shipped in v0.8.0 |
-| `LIB_X25519_COLD_BYTES` | `826` default / `648` for `lib-x25519-1764` / `160` for `lib-x25519-onchip` | Approximate footprint a consumer MAY reclaim/overlay after init — the `LIB_X25519_INIT_CODE` segment (issue #68; see §4.10). The onchip segment holds `sqtab_init` alone, so it is much smaller |
+| `LIB_X25519_RESIDENT_BYTES` | `8488` default / `8317` for `lib-x25519-1764` / `8207` for `lib-x25519-onchip` | Approximate code + data + sqtab footprint that must remain CPU-resident. Dropped from 9209/8895 at the issue-#68 cold-segment split — the init-only code is now counted in `LIB_X25519_COLD_BYTES` (SPEC §5 disjoint partition; see §4.10). All three figures od65-measured; the onchip value has been measured-exact since the profile shipped in v0.8.0. v0.12.0 grew default/1764 by +105/+70 for the §8.2 v0.13.0 REU settle (§4.12); onchip touches no REU and is unchanged |
+| `LIB_X25519_COLD_BYTES` | `1154` default / `871` for `lib-x25519-1764` / `160` for `lib-x25519-onchip` | Approximate footprint a consumer MAY reclaim/overlay after init — the `LIB_X25519_INIT_CODE` segment (issue #68; see §4.10). The onchip segment holds `sqtab_init` alone, so it is much smaller. v0.12.0: +328/+223 for the nine boot-time settle sites (§4.12) |
 
 The values are approximate ("within 5% is fine" per SPEC §5), though
 all nine profile figures are currently od65-measured exact. The
@@ -977,6 +977,86 @@ segments, with no §4 segment split of its own. Downstream projects
 vendoring the source can rebuild any of the three forms from the same
 tree by toggling the make target.
 
+## 4.12 REU post-execute settle and the fault byte (c64-lib-contract §8.2 v0.13.0)
+
+SPEC v0.13.0 §8.2 (tag `c771935`; contract#144 / contract#146; tracked here as #115)
+makes REU completion checking normative. After **every** REU execute
+(`sta reu_command` with bit 7 set) and **before the next access to any
+REU register**, an implementation MUST (a) read `$DF00` and confirm
+bit 6 (END OF BLOCK) is set, spinning bounded if not, and (b) leave a
+post-execute settle meeting the bracketed floor — **≥ 49 cycles at
+48 MHz on Ultimate 64 Elite firmware 3.15**. The 64 MHz turbo is
+**unbracketed** by the contract; **c64-x25519 claims conformance at
+≤ 48 MHz only** and makes no statement about 64 MHz.
+
+Since v0.12.0 all twelve execute sites in the library — the three on
+the hot path (`reu_fetch_mul_row`, `reu_fetch_doubled_row`'s inline
+DMA #2, `fe25519_mul`'s inlined row fetch) and the nine at boot (five
+stashes in `reu_mul_init`, four in `reu_probe`) — are followed by the
+`REU_SETTLE` macro from `src/constants.s`. It reads `$DF00` **once per
+iteration** (a read clears bits 5–7, so the value is captured in A and
+tested there), exits on bit 6, and records faults. One I/O-mapped read
+is what costs ~49 cycles at turbo on the U64E, which is why a single
+read that finds bit 6 already set meets floor (b) at 48 MHz. On the
+reporter's hardware run (9/9 pass) bit 6 was set on the first read in
+all 19,416 calls; on VICE it always is. The macro is a macro rather
+than a `jsr` target because two sites sit inside the per-row loops of
+`fe25519_mul` / `fe25519_sqr`; the fast path is 16 cycles.
+
+Reading `$DF00` does not disturb the REU autoload latch (§4.8, the
+`reu_fetch_doubled_row` banner): the status register's only read
+side-effect is clearing its own bits 5–7, and the autoload reload of
+`$DF02–$DF08` is keyed on the command register at execute completion.
+The S3 invariant in `docs/CT_ANALYSIS.md` is untouched.
+
+### The knob: `X25519_REU_SETTLE_ITER`
+
+The spin bound, default `8`, `.ifndef`-guarded in `src/constants.s`
+and `.assert`ed to 1..255. It is a §6.2 knob:
+
+```
+make lib CONTRACT_DEFINES="-D X25519_REU_SETTLE_ITER=16"
+```
+
+`CONTRACT_STAMP` reads `ALL_DEFINES`, so changing the value
+invalidates the archive per §6.3 (measured: the second `make lib`
+with a changed value recompiles all ten TUs; an unchanged value
+recompiles none). A vendoring consumer passes the same `-D` to every
+`ca65` invocation, as with every other knob.
+
+### The fault channel: `x25519_reu_fault`
+
+The fetch primitive has no error return, and the contract says an
+adopter SHOULD surface a bounded-spin failure the same way it
+surfaces a missing REU at init. The library does both:
+
+- `x25519_reu_fault` (exported, one byte in `LIB_X25519_DATA`) is
+  **sticky**: `REU_SETTLE` ORs in `$01` when its bound expires
+  without END OF BLOCK and `$02` when `$DF00` bit 5 (VERIFY ERROR)
+  was observed. It is cleared to 0 at `reu_mul_init` and `reu_probe`
+  entry and never otherwise, so a host can read it after a
+  scalarmult to learn whether every DMA since the last init/probe was
+  confirmed. Always 0 under the onchip profile.
+- `reu_probe` returns C = 0 if the byte is non-zero after its four
+  DMAs, indistinguishable at the carry from "no REU"; read the byte
+  to tell the cases apart.
+
+The library never clears the byte on the hot path and never branches
+on it there. The settle's own branches are on hardware state, not on
+operand data — the CT argument is `docs/CT_ANALYSIS.md` L31a-c.
+
+Register contract change: `reu_fetch_mul_row` and
+`reu_fetch_doubled_row` now clobber **A and X** (X is the spin
+counter); Y and the carry flag are preserved. In-tree callers were
+audited (X is dead at every site); a consumer that JSRs
+`reu_fetch_mul_row` directly and kept something in X across the call
+must save it.
+
+Cost: +1,628,361 cycles per `x25519_scalarmult` (+0.62 %;
+262,318,045 → 263,946,406 cycles, 15,389.3 → 15,484.9 jif on this
+tree's VICE bench), +105 B resident / +328 B cold in the default
+profile — see §4.4 and `docs/RELEASE_NOTES_v0.12.0.md`.
+
 ## 5. Public API
 
 See `src/x25519.inc` for the full reference with calling conventions
@@ -1059,6 +1139,12 @@ deterministically under VICE warp, hardware-confirmed on Ultimate-64
 NTSC.
 
 ### Default build (`make`, `make lib`)
+
+(v0.12.0: the §8.2 v0.13.0 settle adds a measured +1,628,361 cycles /
++95.6 jif per `x25519_scalarmult` on top of the row below — §4.12 —
+and ~+0.5 jif to `fe25519_mul` / ~+0.7 jif to `fe25519_sqr` per
+batch=200 by construction (16 cycles × 32 / × 44 fetches); the table
+itself is not re-measured.)
 
 | Operation                       | Cycles      | Jiffies     | Wall-time NTSC | PAL    |
 | ------------------------------- | ----------: | ----------: | -------------: | -----: |
