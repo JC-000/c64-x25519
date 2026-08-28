@@ -342,8 +342,8 @@ compile + VICE test cycle:
 |---|---|---|
 | `LIB_X25519_ZP_USAGE_BYTES` | `85` | Total bytes of ZP slots the library claims (sum of `.exportzp`-ed slots in `src/zp_config.s` + the pinned `fe_wide` region) |
 | `LIB_X25519_REU_BANKS_USED` | `$3B` default / `$03` for `lib-x25519-1764` / `0` for `lib-x25519-onchip` | Bitmask of REU banks claimed for mul tables. **Default build** (banks 0, 1, 3, 4, 5): `$3B << X25519_REU_BANK`. **1764 variant** (`make lib-x25519-1764`, `SQR_DMA_K=0`): `$03 << X25519_REU_BANK` — banks 0, 1 only, drops the doubled-table cluster. Bank 2 is never claimed in either build. **onchip variant** (`make lib-x25519-onchip`, `X25519_ONCHIP_MUL=1`): plain `0` — no shift, no banks. Per SPEC §5 the zero *is* the "no REU" declaration, not an unset field; see §4.11. See [`REU_USAGE_ANALYSIS.md`](REU_USAGE_ANALYSIS.md) §"Group B SHIPPED" for the 1764 rationale + measured trade-offs |
-| `LIB_X25519_RESIDENT_BYTES` | `8488` default / `8317` for `lib-x25519-1764` / `8207` for `lib-x25519-onchip` | Approximate code + data + sqtab footprint that must remain CPU-resident. Dropped from 9209/8895 at the issue-#68 cold-segment split — the init-only code is now counted in `LIB_X25519_COLD_BYTES` (SPEC §5 disjoint partition; see §4.10). All three figures od65-measured; the onchip value has been measured-exact since the profile shipped in v0.8.0. v0.12.0 grew default/1764 by +105/+70 for the §8.2 v0.13.0 REU settle (§4.12); onchip touches no REU and is unchanged |
-| `LIB_X25519_COLD_BYTES` | `1154` default / `871` for `lib-x25519-1764` / `160` for `lib-x25519-onchip` | Approximate footprint a consumer MAY reclaim/overlay after init — the `LIB_X25519_INIT_CODE` segment (issue #68; see §4.10). The onchip segment holds `sqtab_init` alone, so it is much smaller. v0.12.0: +328/+223 for the nine boot-time settle sites (§4.12) |
+| `LIB_X25519_RESIDENT_BYTES` | `8476` default / `8328` for `lib-x25519-1764` / `8207` for `lib-x25519-onchip` | Approximate code + data + sqtab footprint that must remain CPU-resident. Dropped from 9209/8895 at the issue-#68 cold-segment split — the init-only code is now counted in `LIB_X25519_COLD_BYTES` (SPEC §5 disjoint partition; see §4.10). All three figures od65-measured; the onchip value has been measured-exact since the profile shipped in v0.8.0. v0.12.0 grew default/1764 by +93/+81 for the §8.2 v0.13.0 REU settle (§4.12); onchip touches no REU and is unchanged |
+| `LIB_X25519_COLD_BYTES` | `947` default / `733` for `lib-x25519-1764` / `160` for `lib-x25519-onchip` | Approximate footprint a consumer MAY reclaim/overlay after init — the `LIB_X25519_INIT_CODE` segment (issue #68; see §4.10). The onchip segment holds `sqtab_init` alone, so it is much smaller. v0.12.0: +328/+223 for the nine boot-time settle sites (§4.12) |
 
 The values are approximate ("within 5% is fine" per SPEC §5), though
 all nine profile figures are currently od65-measured exact. The
@@ -1001,13 +1001,28 @@ read that finds bit 6 already set meets floor (b) at 48 MHz. On the
 reporter's hardware run (9/9 pass) bit 6 was set on the first read in
 all 19,416 calls; on VICE it always is. The macro is a macro rather
 than a `jsr` target because two sites sit inside the per-row loops of
-`fe25519_mul` / `fe25519_sqr`; the fast path is 14 cycles and clobbers A only (X/Y preserved, so the §8.2 `reu_fetch_mul_row` "clobbers A" convention is unchanged).
+`fe25519_mul` / `fe25519_sqr`; the fast path is 11 cycles (`lda / and / eor / beq`, taken only when the single `$DF00` sample shows bit 6 set and bit 5 clear; every other sample goes through one shared `jsr x25519_reu_settle_slow`, which spins on bit 6 alone and records bit 5 separately) and clobbers A only (X/Y preserved, so the §8.2 `reu_fetch_mul_row` "clobbers A" convention is unchanged).
 
 Reading `$DF00` does not disturb the REU autoload latch (§4.8, the
 `reu_fetch_doubled_row` banner): the status register's only read
 side-effect is clearing its own bits 5–7, and the autoload reload of
 `$DF02–$DF08` is keyed on the command register at execute completion.
 The S3 invariant in `docs/CT_ANALYSIS.md` is untouched.
+
+### The clock claim: `X25519_MAX_CLOCK_MHZ`
+
+The contract's two obligations are separate — (a) confirm bit 6, (b) a
+bracketed post-execute settle — but on the U64E one I/O-mapped `$DF00`
+read costs the ~49 cycles the 48 MHz bracket demands, so today the
+confirm read is what satisfies (b), which SPEC v0.13.0 itself calls
+meeting the floor "by accident". This library refuses to let that be
+silent: `X25519_MAX_CLOCK_MHZ` (default 48, `.ifndef`-guarded in
+`src/constants.s`) states the clock the settle is claimed for, and an
+`.assert` fails any build that sets it above the bracketed 48. Raising
+the bound is legitimate only together with a measured settle bracket
+at the new clock (contract#144's open 64 MHz cell) — and, if that
+bracket exceeds one status read, an explicit delay. Until then (b) is
+satisfied *because of* this asserted bound, not by the read as such.
 
 ### The knob: `X25519_REU_SETTLE_ITER`
 
@@ -1052,9 +1067,9 @@ audited (X is dead at every site); a consumer that JSRs
 `reu_fetch_mul_row` directly and kept something in X across the call
 must save it.
 
-Cost: +1,396,384 cycles per `x25519_scalarmult` (+0.53 %;
-262,318,045 → 263,714,429 cycles, 15,389.3 → 15,471.3 jif on this
-tree's VICE bench), +105 B resident / +328 B cold in the default
+Cost: +1,106,192 cycles per `x25519_scalarmult` (+0.42 %;
+262,318,045 → 263,424,237 cycles, 15,389.3 → 15,454.2 jif on this
+tree's VICE bench), +93 B resident / +121 B cold in the default
 profile — see §4.4 and `docs/RELEASE_NOTES_v0.12.0.md`.
 
 ## 5. Public API
@@ -1140,10 +1155,10 @@ NTSC.
 
 ### Default build (`make`, `make lib`)
 
-(v0.12.0: the §8.2 v0.13.0 settle adds a measured +1,396,384 cycles /
-+82.0 jif per `x25519_scalarmult` on top of the row below — §4.12 —
+(v0.12.0: the §8.2 v0.13.0 settle adds a measured +1,106,192 cycles /
++64.9 jif per `x25519_scalarmult` on top of the row below — §4.12 —
 and ~+0.5 jif to `fe25519_mul` / ~+0.7 jif to `fe25519_sqr` per
-batch=200 by construction (14 cycles × 32 / × 44 fetches); the table
+batch=200 by construction (11 cycles × 32 / × 44 fetches); the table
 itself is not re-measured.)
 
 | Operation                       | Cycles      | Jiffies     | Wall-time NTSC | PAL    |

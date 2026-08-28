@@ -37,8 +37,7 @@
 
 ; --- Imports from x25519_init.s ---
 .import reu_clear_wide
-.import x25519_reu_fault       ; §8.2 v0.13.0 sticky settle-fault byte
-.import x25519_reu_settle_cnt  ; REU_SETTLE slow-path spin counter
+.import x25519_reu_settle_slow ; §8.2 v0.13.0 REU_SETTLE rare path (x25519_init.s)
 .if ::SQR_DMA_K
 ; reu_fetch_doubled_row is only defined (and only invoked) when the
 ; pre-doubled-table DMA fast-path is compiled in. In the K=0 variant

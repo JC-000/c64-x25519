@@ -89,6 +89,11 @@
 ;                   execute the library reads $DF00 and confirms bit 6
 ;                   (END OF BLOCK) before touching another REU register,
 ;                   spinning at most X25519_REU_SETTLE_ITER times
+;                   (on bit 6 alone; bit 5 is recorded separately).
+;                   The clock the settle is claimed for is
+;                   X25519_MAX_CLOCK_MHZ (default 48, asserted <= 48
+;                   until a 64 MHz bracket exists). x25519_reu_settle_slow
+;                   / _smp / _cnt are cross-TU internals, NOT API.
 ;                   (default 8; `-D` overridable, a §6.2 knob). The spin
 ;                   has no error return, so it reports here instead:
 ;                     bit 0 ($01)  a spin bound expired without END OF

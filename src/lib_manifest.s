@@ -71,33 +71,35 @@
 ;   sections from reu_mul_init):
 ;
 ;     SQR_DMA_K > 0 (default, =22):
-;       LIB_X25519_CODE total ≈ 3880 B  (x25519 717 + fe25519 2746 +
-;                               mul_8x8 63 + x25519_init 202 + util 152)
-;       LIB_X25519_DATA total ≈ 3584 B  (x25519_reu_fault's one byte is
-;                               absorbed by the pre-existing page pad)
+;       LIB_X25519_CODE total ≈ 3868 B  (x25519 717 + fe25519 2723 +
+;                               mul_8x8 63 + x25519_init 213 + util 152)
+;       LIB_X25519_DATA total ≈ 3584 B  (x25519_reu_fault + the two
+;                               settle bytes are absorbed by the
+;                               pre-existing page pad)
 ;       SQTAB         1024 B
 ;       ---------------------------------------------------------------
-;                            ≈ 8488 B RESIDENT
-;       LIB_X25519_INIT_CODE ≈ 1154 B COLD (x25519_init 994 =
-;                               reu_mul_init 542 + reu_probe 452;
+;                            ≈ 8476 B RESIDENT
+;       LIB_X25519_INIT_CODE ≈ 947 B COLD (x25519_init 787 =
+;                               reu_mul_init 427 + reu_probe 360;
 ;                               mul_8x8 160 = sqtab_init + sq_* temps)
-;       (v0.12.0: +105 RESIDENT / +328 COLD for the §8.2 v0.13.0
-;        REU_SETTLE expansion — 35 B at each of the 12 execute sites,
-;        3 resident + 9 cold — plus the fault-byte clears. Was
-;        3775 / 8383 / 826 at v0.11.x.)
+;       (v0.12.0: +93 RESIDENT / +121 COLD for the §8.2 v0.13.0
+;        REU_SETTLE — 9 B at each of the 12 execute sites, 3 resident
+;        + 9 cold, plus the shared resident x25519_reu_settle_slow
+;        proc and the fault-byte clears. Was 3775 / 8383 / 826 at
+;        v0.11.x.)
 ;
 ;     SQR_DMA_K = 0 (lib-x25519-1764 variant):
-;       LIB_X25519_CODE total ≈ 3709 B  (x25519_init.o library code
-;                               drops to 85 B — reu_fetch_doubled_row
-;                               gated out — and fe25519.o to 2692 B per
+;       LIB_X25519_CODE total ≈ 3720 B  (x25519_init.o library code
+;                               drops to 119 B — reu_fetch_doubled_row
+;                               gated out — and fe25519.o to 2669 B per
 ;                               the #61 .if ::SQR_DMA_K DMA-dispatch
 ;                               gating)
 ;       LIB_X25519_DATA total ≈ 3584 B
 ;       SQTAB         1024 B
 ;       ---------------------------------------------------------------
-;                            ≈ 8317 B RESIDENT
-;       LIB_X25519_INIT_CODE ≈ 871 B COLD (x25519_init 711 =
-;                               reu_mul_init 259 + reu_probe 452;
+;                            ≈ 8328 B RESIDENT
+;       LIB_X25519_INIT_CODE ≈ 733 B COLD (x25519_init 573 =
+;                               reu_mul_init 213 + reu_probe 360;
 ;                               reu_mul_init loses the doubled-table
 ;                               generation at K=0)
 ;       (v0.12.0: +70 RESIDENT / +223 COLD for REU_SETTLE — 2 resident
@@ -195,12 +197,12 @@ _BASE_RESIDENT = 8207
 _BASE_COLD     = 160
 .elseif SQR_DMA_K
 LIB_X25519_REU_BANKS_USED = $3B << X25519_REU_BANK
-_BASE_RESIDENT = 8488
-_BASE_COLD     = 1154
+_BASE_RESIDENT = 8476
+_BASE_COLD     = 947
 .else
 LIB_X25519_REU_BANKS_USED = $03 << X25519_REU_BANK
-_BASE_RESIDENT = 8317
-_BASE_COLD     = 871
+_BASE_RESIDENT = 8328
+_BASE_COLD     = 733
 .endif
 
 ; §6.4 half-2 (SPEC v0.9.0): the SHARED_* deferral switches gate real
@@ -210,14 +212,16 @@ _BASE_COLD     = 871
 ; the per-profile lib-verify value locks certified the fiction).
 ; Deltas are od65-measured per combo (2026-08-15, post import-never-
 ; stub migration): sqtab_init body + sq_* temps = 160 B COLD, uniform
-; across profiles; reu_mul_init = 542 B COLD at SQR_DMA_K > 0 (doubled
-; -table generation included) or 259 B at SQR_DMA_K = 0; the deferred
+; across profiles; reu_mul_init = 427 B COLD at SQR_DMA_K > 0 (doubled
+; -table generation included) or 213 B at SQR_DMA_K = 0; the deferred
 ; §8.3 ct_mul_8x8 body + scratch = 63 B RESIDENT; the §8.2 fetch pair
 ; (SPEC v0.9.1-C: INIT and FETCH move together) additionally drops the
-; resident reu_fetch_mul_row body = 55 B RESIDENT. (Re-measured
+; resident reu_fetch_mul_row body = 32 B RESIDENT. (Re-measured
 ; 2026-08-28 for v0.12.0: the §8.2 v0.13.0 REU_SETTLE expansion adds
-; 35 B per execute site, so reu_mul_init grew 364 -> 542 / 186 -> 259
-; and reu_fetch_mul_row 20 -> 55. Measured by assembling x25519_init.s
+; 9 B per execute site plus one shared x25519_reu_settle_slow proc
+; (RESIDENT, not deferrable — it also serves reu_probe and the
+; doubled-row DMA #2), so reu_mul_init grew 364 -> 427 / 186 -> 213
+; and reu_fetch_mul_row 20 -> 32. Measured by assembling x25519_init.s
 ; under `-D SHARED_REU_MUL_INIT -D SHARED_REU_MUL_FETCH` and diffing
 ; od65 --dump-segsize against the owner object.)
 .ifdef SHARED_SQTAB_INIT
@@ -227,11 +231,11 @@ _D_COLD_SQ = 0
 .endif
 .if .defined(SHARED_REU_MUL_INIT) .and (::X25519_ONCHIP_MUL = 0)
 .if ::SQR_DMA_K
-_D_COLD_REU = 542
+_D_COLD_REU = 427
 .else
-_D_COLD_REU = 259
+_D_COLD_REU = 213
 .endif
-_D_RES_REU = 55
+_D_RES_REU = 32
 .else
 _D_COLD_REU = 0
 _D_RES_REU = 0

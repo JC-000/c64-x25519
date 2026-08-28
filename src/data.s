@@ -16,7 +16,8 @@
 .export sqr_lo, sqr_hi
 .export a24_b0, a24_b1, a24_b2, a24_b3
 .export x25519_reu_fault
-.export x25519_reu_settle_cnt   ; REU_SETTLE slow-path spin counter (private)
+.export x25519_reu_settle_cnt   ; REU_SETTLE slow path: cross-TU internal, not API
+.export x25519_reu_settle_smp   ; REU_SETTLE slow path: cross-TU internal, not API
 
 .segment "LIB_X25519_DATA"
 
@@ -131,10 +132,15 @@ mul_cached_a:
 ; byte read/written by absolute address only.
 x25519_reu_fault:
         .byte 0
-; REU_SETTLE bounded-spin counter. Written only when a status read did
-; not show END OF BLOCK (never observed on hardware); lives in memory so
-; the macro clobbers A only. Not part of the public API.
+; x25519_reu_settle_slow's spin counter and last status sample. Written
+; only when a status read did not show exactly END OF BLOCK (never
+; observed on hardware); in memory so the settle clobbers A only.
+; Cross-TU internal (exported because the slow path lives in
+; x25519_init.s and the data here) — part of the linked name surface,
+; NOT part of the API; consumers must not reference them.
 x25519_reu_settle_cnt:
+        .byte 0
+x25519_reu_settle_smp:
         .byte 0
 
 ; mul_src2_buf is 33 bytes, NOT 32. Byte 32 is a load-bearing zero

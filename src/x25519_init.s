@@ -49,7 +49,8 @@
 ; --- Imports from data.s ---
 .import mul_dma_lo, mul_dma_hi, mul_dma_carry, mul_cached_a
 .import x25519_reu_fault       ; §8.2 v0.13.0 sticky settle-fault byte
-.import x25519_reu_settle_cnt  ; REU_SETTLE slow-path spin counter
+.import x25519_reu_settle_cnt  ; REU_SETTLE slow-path spin counter (cross-TU internal)
+.import x25519_reu_settle_smp  ; REU_SETTLE slow-path status sample (cross-TU internal)
 
 .segment "LIB_X25519_CODE"
 
@@ -381,6 +382,57 @@ reu_init_b:     .byte 0
 .segment "LIB_X25519_CODE"
 
 .if ::X25519_ONCHIP_MUL = 0
+; =============================================================================
+; x25519_reu_settle_slow - REU_SETTLE's rare path (SPEC v0.13.0 §8.2)
+;
+; Reached from the REU_SETTLE macro (src/constants.s) whenever its one
+; unconditional $DF00 read did NOT show exactly "bit 6 set, bit 5
+; clear". Never taken on hardware so far (bit 6 was set on the first
+; read in all 19,416 measured calls) nor under VICE; kept out of line
+; so the twelve expansion sites carry 9 bytes each, and so the clause's
+; logic is written once.
+;
+; Input:    A = (status & $60) ^ $40 from the macro's read.
+; Behaviour: records $02 in x25519_reu_fault if bit 5 (VERIFY ERROR) is
+;           seen on ANY sample; keeps spinning on bit 6 (END OF BLOCK)
+;           ALONE until it is set or X25519_REU_SETTLE_ITER status reads
+;           in total (macro + here) have been made, then records $01.
+;           A verify-fault sample never ends the spin early — the clause
+;           says confirm bit 6.
+; Clobbers: A only. X, Y, C preserved. Uses the cross-TU internal bytes
+;           x25519_reu_settle_smp / x25519_reu_settle_cnt (src/data.s).
+; =============================================================================
+.proc x25519_reu_settle_slow
+        eor #$40               ; back to status & $60
+        sta x25519_reu_settle_smp
+        lda #X25519_REU_SETTLE_ITER
+        sta x25519_reu_settle_cnt
+@check:
+        lda x25519_reu_settle_smp
+        and #$20               ; bit 5: VERIFY ERROR on this sample?
+        beq @no_b5
+        lda #$02
+        ora x25519_reu_fault
+        sta x25519_reu_fault
+@no_b5:
+        lda x25519_reu_settle_smp
+        and #$40               ; bit 6: END OF BLOCK confirmed?
+        bne @done
+        dec x25519_reu_settle_cnt
+        beq @expired           ; ITER reads made in total -> give up
+        lda reu_status         ; next sample (clears bits 5-7)
+        and #$60
+        sta x25519_reu_settle_smp
+        jmp @check
+@expired:
+        lda #$01               ; bound expired: transfer never confirmed
+        ora x25519_reu_fault
+        sta x25519_reu_fault
+@done:
+        rts
+.endproc
+.export x25519_reu_settle_slow
+
 .ifndef SHARED_REU_MUL_FETCH
 .proc reu_fetch_mul_row
         lda mul_cached_a

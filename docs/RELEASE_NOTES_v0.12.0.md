@@ -62,13 +62,29 @@ In `reu_probe` the settle sits between the execute and the `lda
 before it is read, not merely before the next register write.
 
 It is a macro, not a `jsr` target, because two sites are inside the
-per-row loops. Fast path (bit 6 set on the first read): `lda abs / and / bne /
-and / beq` = **14 cycles**, clobbering A only; the bounded spin counts
-in a memory byte (`x25519_reu_settle_cnt`) touched only on the slow
-path, so X and Y survive every expansion. The
+per-row loops. Fast path: `lda abs / and / eor #$40 / beq` = **11 cycles**, 9 bytes
+per expansion, taken **only** when the single `$DF00` sample shows bit 6
+set and bit 5 clear. Every other sample takes one shared
+`jsr x25519_reu_settle_slow` (`src/x25519_init.s`), which keeps
+spinning on **bit 6 alone** until it is set or the bound expires and
+records bit 5 separately — a verify-fault sample never ends the spin
+early (review point on #116). Both paths clobber A only; the slow
+path keeps its sample and counter in two cross-TU internal bytes in
+`src/data.s` (`x25519_reu_settle_smp` / `_cnt` — exported for linkage,
+not API), so X, Y and C survive every expansion. The
 macro uses only unnamed `:` labels so that expanding it inside a
 `.proc` does not open a new cheap-local scope and orphan the
 surrounding `@labels` (it did, on the first attempt).
+
+**Clock claim.** `X25519_MAX_CLOCK_MHZ` (default 48, `.ifndef`) — the
+clock the settle is claimed for. SPEC v0.13.0 concedes a read-once
+implementation meets floor (b) at 48 MHz "by accident" (one I/O read
+costs ~49 cycles there); an `.assert` makes any build claiming more
+than the bracketed 48 MHz fail loudly instead of silently shipping an
+unmeasured settle. Verified: `make lib CONTRACT_DEFINES="-D
+X25519_MAX_CLOCK_MHZ=64"` fails on the named assert. Raise it only
+with a measured bracket at the new clock (contract#144's open 64 MHz
+cell).
 
 **Knob.** `X25519_REU_SETTLE_ITER` — the spin bound, default 8,
 `.ifndef`-guarded, `.assert`ed to 1..255. A §6.2 knob:
@@ -126,14 +142,21 @@ after the change):
 | | cycles | jif |
 |---|---:|---:|
 | before | 262,318,045 | 15,389.3 |
-| after | 263,714,429 | 15,471.3 |
-| delta | **+1,396,384 (+0.53 %)** | +82.0 |
+| after | 263,424,237 | 15,454.2 |
+| delta | **+1,106,192 (+0.42 %)** | +64.9 |
 
-Expected from construction: ~14 cycles × (32 fetches per `fe25519_mul`
+Expected from construction: ~11 cycles × (32 fetches per `fe25519_mul`
 + 44 per `fe25519_sqr`) over the ladder's ~1,300 mul + ~1,300 sqr
 calls ≈ 1.6 M cycles. Correctness: PASS (RFC 7748 vector).
 
 ## 6. §6.6 footprint pairs
+
+**Consumer impact — read this before bumping.** The RESIDENT / COLD
+growth below **will trip a consumer's §6.6 footprint asserts at link
+time** if it pins the v0.11.x pair. `c64-wireguard` (RAM-constrained;
+pins v0.10.1 with v0.11.1 as its next target) and `c64-https` (pins
+v0.11.2) both do. That link failure is §6.6 working as designed:
+update the pinned pair to the values below when taking v0.12.0.
 
 Re-measured with `od65 --dump-segsize` (the `make lib-x25519-*`
 dumps, plus assembling `x25519_init.s` under the deferral defines for
@@ -141,10 +164,10 @@ the `_D_*` deltas):
 
 | profile | RESIDENT | COLD | note |
 |---|---:|---:|---|
-| default | 8383 → **8488** | 826 → **1154** | 3 resident + 9 cold sites; `x25519_reu_fault`'s byte is absorbed by the existing page pad, DATA stays 3584 |
-| `lib-x25519-1764` | 8247 → **8317** | 648 → **871** | 2 resident + 6 cold sites survive at K=0 |
+| default | 8383 → **8476** | 826 → **947** | 3 resident + 9 cold sites at 9 B each plus the shared `x25519_reu_settle_slow` proc (resident); the two `data.s` bytes are absorbed by the existing page pad, DATA stays 3584 |
+| `lib-x25519-1764` | 8247 → **8328** | 648 → **733** | 2 resident + 6 cold sites survive at K=0 |
 | `lib-x25519-onchip` | 8207 | 160 | unchanged — no REU access, no `$DF00` read anywhere (listing-verified: zero settle expansions in `x25519_init.o` / `fe25519.o`) |
-| §8.2 deferral deltas | `_D_RES_REU` 20 → **55** | `_D_COLD_REU` 364 → **542** (K>0), 186 → **259** (K=0) | `reu_probe` alone is now 452 B |
+| §8.2 deferral deltas | `_D_RES_REU` 20 → **32** | `_D_COLD_REU` 364 → **427** (K>0), 186 → **213** (K=0) | the slow proc is not deferrable (serves `reu_probe` and DMA #2) |
 
 The seven per-profile `LIB_VERIFY_RESIDENT_EXPECT` /
 `LIB_VERIFY_COLD_EXPECT` locks in the Makefile (contract #62 audit
@@ -186,7 +209,7 @@ A2's job). Both legs still fail on their own named error.
       at both).
   - 64 MHz: **not measured** — no C64 Ultimate reachable; conformance is
     claimed at ≤ 48 MHz only (§8.2 v0.13.0 leaves 64 MHz unbracketed).
-- `make test-slow` on this branch (PRG `5faa220f43c9dc22…`): exit 0, every suite 0 failed (128/128, 256/256, 255/255 ladder steps, 68/68, 64/64, 53/53, 49/49, 35/35, 27/27, 19/19)
+- `make test-slow` on this branch (PRG `80664edcd772b458…`): exit 0, every suite 0 failed (128/128, 256/256, 255/255 ladder steps, 68/68, 64/64, 53/53, 49/49, 35/35, 27/27, 19/19)
 
 ## Tarball
 
