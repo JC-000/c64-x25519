@@ -295,7 +295,7 @@ def run_kat(transport, labels, scalar, u, mhz):
 
 def parse_args(argv):
     opts = {"speeds": [48, 1], "seed": 20260828, "init_mhz": None,
-            "kat": True}
+            "kat": True, "expect_unfixed": False}
     i = 0
     while i < len(argv):
         a = argv[i]
@@ -308,6 +308,9 @@ def parse_args(argv):
             opts["init_mhz"] = int(argv[i + 1]); i += 2
         elif a == "--no-kat":
             opts["kat"] = False; i += 1
+        elif a == "--expect-unfixed":
+            # baseline mode: PRG is the UNFIXED primitive; all-green -> exit 2
+            opts["expect_unfixed"] = True; i += 1
         else:
             print(f"unknown arg {a}"); sys.exit(2)
     return opts
@@ -425,11 +428,17 @@ def main():
     print("\n" + "=" * 66)
     for v in verdicts:
         print(v)
-    if not failed:
-        print("NOTE: every clock passed. On U64E fw 3.15 the unfixed §8.2 "
-              "primitive is expected to FAIL at 48 MHz (contract#144); an "
-              "all-green run means either the firmware is not 3.15 or this "
+    if not failed and opts["expect_unfixed"]:
+        # Baseline mode: the caller asserts the PRG carries the UNFIXED
+        # §8.2 primitive, so an all-green 48 MHz run on U64E fw 3.15 means
+        # the test is not reaching the hazard (contract#144), not that the
+        # hazard is absent. Observed failing on master 232bb11 (2026-08-28):
+        # cpu-read=64 mismatches + KAT=FAIL at 48 MHz, all green at 1 MHz.
+        print("NOTE: --expect-unfixed was given and every clock passed. On "
+              "U64E fw 3.15 the unfixed §8.2 primitive is expected to FAIL at "
+              "48 MHz (contract#144); either the firmware is not 3.15 or this "
               "test is not reaching the hazard — do not read it as a fix.")
+        sys.exit(2)
     sys.exit(1 if failed else 0)
 
 

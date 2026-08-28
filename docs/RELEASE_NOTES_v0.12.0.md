@@ -170,8 +170,23 @@ A2's job). Both legs still fail on their own named error.
   C, C1, C2, C1b)
 - Knob invalidation in both directions (0 / 10 / 0 / 10 TUs)
 - Bench before/after as in §5
-- Not yet run: `make test-slow` on this branch, hardware run on a real
-  U64E
+- **Hardware, `tools/test_reu_mul_u64.py`** (new in this release; builds
+  the table on the device, reads 32 rows back through `reu_fetch_mul_row`
+  twice — once by the host with the CPU idle, once copied by the 6502
+  immediately after the `rts` — against CPU products, then a full RFC
+  7748 KAT through `fe25519_mul`'s inlined fetch, oracle pyca):
+  - **Ultimate 64 Elite fw 3.15** (fpga 123, core 1.4E), 2026-08-28:
+    - master `232bb11` (unfixed): **48 MHz FAIL** — the `cpu-read` leg sees
+      `mul_dma_lo[0..1]`/`mul_dma_hi[0]` still holding the scrub poison
+      on all 32 rows (64 bad products), KAT FAIL; **1 MHz PASS** (0
+      mismatches, KAT PASS). The host-read leg is green even on master —
+      the DMA does complete; the CPU merely runs past it — so only the
+      cpu-read leg and the KAT discriminate.
+    - this branch: **48 MHz PASS, 1 MHz PASS** (0/0 mismatches, KAT PASS
+      at both).
+  - 64 MHz: **not measured** — no C64 Ultimate reachable; conformance is
+    claimed at ≤ 48 MHz only (§8.2 v0.13.0 leaves 64 MHz unbracketed).
+- `make test-slow` on this branch (PRG `5faa220f43c9dc22…`): exit 0, every suite 0 failed (128/128, 256/256, 255/255 ladder steps, 68/68, 64/64, 53/53, 49/49, 35/35, 27/27, 19/19)
 
 ## Tarball
 
