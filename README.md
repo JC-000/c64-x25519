@@ -6,7 +6,7 @@ An optimized implementation of X25519 / Curve25519 scalar multiplication written
 
 ## Status
 
-**v0.12.0 (unreleased, DRAFT)** — c64-lib-contract SPEC **v0.13.0 §8.2**
+**v0.12.0 released 2026-08-29** — [GitHub release](https://github.com/JC-000/c64-x25519/releases/tag/v0.12.0) (tarball 143,836 B, SHA256 `b6b7c930…4902`) — c64-lib-contract SPEC **v0.13.0 §8.2**
 made REU completion checking normative (contract#146; tracked here as
 #115): after every REU execute, read `$DF00`, confirm bit 6 (END OF
 BLOCK) before the next register access, and leave the bracketed

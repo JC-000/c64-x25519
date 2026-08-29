@@ -1,4 +1,4 @@
-# c64-x25519 v0.12.0 — DRAFT
+# c64-x25519 v0.12.0
 
 A contract-conformance release. c64-lib-contract SPEC **v0.13.0 §8.2**
 (tag `c771935`; contract#144 / contract#146; tracked here as #115) made REU completion
@@ -247,10 +247,19 @@ Footprints after the combined #116 + #117 tree (od65-measured, replacing §6's #
 
 ## Tarball
 
-TBD at tag time — `c64-x25519-v0.12.0.tar.gz`, size and SHA256 to be
-filled from the published asset, not the local build.
+`c64-x25519-v0.12.0.tar.gz` — vendor-as-source bundle (`cfg docs LICENSE
+ORIGIN.txt.template src`; no Makefile or README by design). Tag
+`v0.12.0` (annotated) on master merge commit `ce6f8d5`, released
+2026-08-29.
 
 ```
-Size:     TBD
-SHA256:   TBD
+Size:     143,836 bytes
+SHA256:   b6b7c930193f37f65df0d7ac750f9a4ec378a80eaed72a3d499e9d01cab34902
 ```
+
+Byte-identical across two independent post-tag `make dist` runs, and the
+figures above were re-derived from the **published asset** by downloading
+it back and hashing it (`cmp` against the local build: identical). All
+shipped `src/*.s` (11 files) assemble standalone from the extracted
+tarball with zero diagnostics, and the extracted `src/lib_version.s`
+reads `LIB_X25519_VERSION_MINOR = 12`, `_PATCH = 0`.
