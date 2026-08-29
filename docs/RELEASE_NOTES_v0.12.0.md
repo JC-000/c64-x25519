@@ -227,8 +227,17 @@ Footprints after the combined #116 + #117 tree (od65-measured, replacing §6's #
       mismatches, KAT PASS). The host-read leg is green even on master —
       the DMA does complete; the CPU merely runs past it — so only the
       cpu-read leg and the KAT discriminate.
-    - this branch: **48 MHz PASS, 1 MHz PASS** (0/0 mismatches, KAT PASS
+    - #116 branch: **48 MHz PASS, 1 MHz PASS** (0/0 mismatches, KAT PASS
       at both).
+    - **v0.12.0 shipped bytes** (rebased #117, PRG `08d1fef1…`, 2026-08-29):
+      **48 MHz PASS, 1 MHz PASS** (0/0 mismatches, KAT PASS at both; 1 MHz
+      KAT 275 s wall). Recorded honestly: the *first* 1 MHz attempt on
+      this PRG reported KAT=FAIL with all 32 REU rows correct; it
+      coincided with another client driving the same device over UCI
+      (no cross-tool locking — the harness `DeviceLock` only excludes
+      harness users), and the identical re-run with the device to
+      ourselves passed. Treat a lone KAT failure with clean rows as an
+      interference signature before treating it as a ladder bug.
   - 64 MHz: **not measured** — no C64 Ultimate reachable; conformance is
     claimed at ≤ 48 MHz only (§8.2 v0.13.0 leaves 64 MHz unbracketed).
 - `make test-slow` on the rebased #117 tree (`d91bc17`, PRG `08d1fef1…` — the v0.12.0 code): exit 0, ~38 min, every suite 0 failed including the six audit members (54-ladder adversarial KAT vs pyca, 93 field-op corners, RFC §5.2 iterated, edge-u 7/7, full-ladder CT spread 0, settle slow path).
