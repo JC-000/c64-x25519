@@ -136,7 +136,7 @@ def main():
         v1_scalar_clamped = clamp_ref(v1_scalar)
         write_bytes(transport, labels["x25_scalar"], v1_scalar_clamped)
         write_bytes(transport, labels["x25_u"], v1_u)
-        print("  Running scalarmult (this takes ~100 min)...", flush=True)
+        print("  Running scalarmult (this takes ~20 s in VICE warp)...", flush=True)
         t0 = time.time()
         jsr(transport, labels["x25519_scalarmult"], timeout=7200.0)
         elapsed1 = time.time() - t0
@@ -163,7 +163,7 @@ def main():
         v2_scalar_clamped = clamp_ref(v2_scalar)
         write_bytes(transport, labels["x25_scalar"], v2_scalar_clamped)
         write_bytes(transport, labels["x25_u"], v2_u)
-        print("  Running scalarmult (this takes ~100 min)...", flush=True)
+        print("  Running scalarmult (this takes ~20 s in VICE warp)...", flush=True)
         t0 = time.time()
         jsr(transport, labels["x25519_scalarmult"], timeout=7200.0)
         elapsed2 = time.time() - t0

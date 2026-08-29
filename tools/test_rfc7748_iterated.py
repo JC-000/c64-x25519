@@ -9,13 +9,22 @@ RFC 7748 §5.2 defines an iterated self-check for X25519:
         u      = k
         k      = new_u
 
-After 1 iteration, k must equal:
-    422c8e7a 6227d7bc e11196e8 edcc4f13 51d2cea3 a6c4c6cd 87bc8c0a 48f2c1ee
+After 1 iteration, k must equal (RFC 7748 §5.2, verbatim):
+    422c8e7a 6227d7bc a1350b3e 2bb7279f 7897b87b b6854b78 3c60e803 11ae3079
 
-(RFC also gives 1000 and 1_000_000 iteration vectors. Even a single ladder
-takes ~100 minutes in VICE warp mode, so we only run the 1x iteration here.
-The pyca/cryptography oracle is used as a sanity check that our copy of the
-expected hex matches RFC 7748 §5.2; the C64 result is then compared to that.)
+(RFC also gives 1000 and 1_000_000 iteration vectors; see
+tools/test_rfc7748_iter1000.py. One ladder takes ~18-26 s in VICE warp on
+an M-series host — the "~100 min" figure in older docstrings was stale by
+~300x and was what kept this test gated off the suite. The pyca/cryptography
+oracle is used as a sanity check that our copy of the expected hex matches
+RFC 7748 §5.2; the C64 result is then compared to that.)
+
+HISTORY (audit 2026-08-28, A3): until v0.12.0 this file carried a mangled
+literal (tail ...e11196e8edcc4f1351d2cea3a6c4c6cd87bc8c0a48f2c1ee) that its
+own pyca gate rejected, and it claimed the library clamps x25_scalar
+internally — it does not (x25519_scalarmult reads the scalar as-is; only
+x25519_base clamps; see src/x25519.inc). Both are fixed; the caller clamps
+k before every ladder, exactly as X25519(k, u) in RFC 7748 §5 requires.
 
 Same harness pattern as test_x25519.py (BinaryViceTransport via the
 c64_test_harness package). Treats any byte-level mismatch as a hard
@@ -24,9 +33,10 @@ assertion failure.
 Usage:
     python3 tools/test_rfc7748_iterated.py [--seed S] [--verbose] [--slow]
 
-The 1x iteration is the slow path (single full scalarmult). It is gated on
---slow to match the existing test_x25519.py convention; without --slow this
-test is a no-op and exits 0 with a SKIP message.
+The 1x iteration is the slow path (single full scalarmult, ~20 s). It is
+gated on --slow to match the existing test_x25519.py convention (and
+`make test-slow` passes it); without --slow this test is a no-op and exits
+0 with a SKIP message.
 """
 
 import os
@@ -61,9 +71,19 @@ RFC7748_START = bytes([9]) + bytes(31)
 
 # RFC 7748 §5.2: expected k after 1 iteration of the loop.
 RFC7748_ITER1_EXPECTED_HEX = (
-    "422c8e7a6227d7bce11196e8edcc4f13"
-    "51d2cea3a6c4c6cd87bc8c0a48f2c1ee"
+    "422c8e7a6227d7bca1350b3e2bb7279f"
+    "7897b87bb6854b783c60e80311ae3079"
 )
+
+
+def clamp(k: bytes) -> bytes:
+    """RFC 7748 §5 decodeScalar25519. The C64 x25519_scalarmult does NOT
+    clamp (only x25519_base does); pyca clamps inside from_private_bytes.
+    Clamping caller-side keeps both sides on the same input."""
+    s = bytearray(k)
+    s[0] &= 0xF8
+    s[31] = (s[31] & 0x7F) | 0x40
+    return bytes(s)
 
 
 # ============================================================================
@@ -111,7 +131,7 @@ def test_iterated_1x(transport, labels):
 
     # Optional sanity gate: confirm the hex literal matches pyca for the same
     # starting state. If pyca disagrees, we have a bug in our copy of the
-    # RFC vector — bail before paying the ~100 min ladder cost.
+    # RFC vector — bail before paying the ladder cost.
     pyca_result = pyca_iter1()
     if pyca_result is not None:
         assert pyca_result == expected, (
@@ -125,12 +145,12 @@ def test_iterated_1x(transport, labels):
         print("  WARN: pyca/cryptography unavailable; skipping oracle "
               "cross-check on the RFC literal")
 
-    # Run iteration 1 on C64. The library applies clamping internally to
-    # x25_scalar, so x25519_scalarmult(k, u) is equivalent to
-    # X25519(k, u) in RFC 7748 §5.2 terms.
-    k = RFC7748_START
+    # Run iteration 1 on C64. x25519_scalarmult does NOT clamp x25_scalar
+    # (src/x25519.inc: caller clamps; only x25519_base clamps), so clamp
+    # here to make it X25519(k, u) in RFC 7748 §5.2 terms.
+    k = clamp(RFC7748_START)
     u = RFC7748_START
-    print("    iter 1 (one full ladder, ~100 min in VICE warp)...",
+    print("    iter 1 (one full ladder, ~20 s in VICE warp)...",
           end="", flush=True)
     new_k = c64_x25519_scalarmult(transport, labels, k, u)
 
@@ -203,7 +223,7 @@ def main():
 
     if not SLOW:
         print("RFC 7748 §5.2 iterated test is gated on --slow "
-              "(single ladder ~100 min in VICE warp mode).")
+              "(single ladder ~20 s in VICE warp mode).")
         print("  Re-run with: python3 tools/test_rfc7748_iterated.py --slow")
         sys.exit(0)
 

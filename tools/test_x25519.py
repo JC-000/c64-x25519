@@ -4,7 +4,7 @@
 Tests x25519_clamp, x25519_scalarmult, and x25519_base against
 RFC 7748 vectors and Python cryptography library.
 
-Each X25519 scalarmult takes ~100 minutes in VICE warp mode due to
+Each X25519 scalarmult takes ~18-26 s in VICE warp mode (measured 2026-08-28; older "~100 min" figures were stale) due to
 ~2550 field multiplications + 1 field inversion (TCP monitor overhead).
 By default, only fast tests (clamp) are run. Use --slow to include
 scalarmult tests (expect 2+ hours per test).

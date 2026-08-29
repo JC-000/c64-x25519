@@ -5,7 +5,7 @@ Runs the full x25519_scalarmult on vector 2, then reads x2, z2, x3, z3
 after completion to determine whether the bug is in the ladder loop or
 in the final inversion/multiply.
 
-This test takes ~100 minutes in VICE warp mode.
+This test takes ~20 s in VICE warp mode (older "~100 min" figure was stale).
 """
 
 import os
@@ -124,8 +124,8 @@ def main():
         assert check_u == u_masked, "U-coord write verification failed!"
         print("Inputs written and verified.")
 
-        # Run scalarmult (this takes ~100 minutes)
-        print("\nCalling x25519_scalarmult... (expect ~100 minutes in warp)")
+        # Run scalarmult (this takes ~20 s)
+        print("\nCalling x25519_scalarmult... (expect ~20 s in warp)")
         sys.stdout.flush()
         jsr(transport, labels["x25519_scalarmult"], timeout=7200)
         print("x25519_scalarmult returned.")

@@ -141,7 +141,20 @@ test-slow: $(PRG)
 	python3 tools/test_opt_vic_reduce38.py; \
 	python3 tools/test_mul38_tables.py; \
 	python3 tools/test_x25519.py --slow; \
-	python3 tools/test_ladder_checkpoint.py --start 0 --count 255
+	python3 tools/test_ladder_checkpoint.py --start 0 --count 255; \
+	python3 tools/test_fe_adversarial_bigint.py; \
+	python3 tools/test_x25519_adversarial_kat.py --quick; \
+	python3 tools/test_x25519_edge_u.py --slow; \
+	python3 tools/test_rfc7748_iterated.py --slow; \
+	python3 tools/test_rfc7748_iter1000.py --iterations 1; \
+	python3 tools/test_ct_ladder_cycles.py
+# The four audit-2026-08-28 tests above (fe_adversarial_bigint,
+# x25519_adversarial_kat, ct_ladder_cycles, rfc7748_iter1000 at 1
+# iteration) plus the repaired edge_u / rfc7748_iterated members were
+# added so they can never silently rot behind a --slow gate again.
+# `tools/test_rfc7748_iter1000.py --iterations 1000` (RFC 7748 §5.2
+# 1,000-iteration vector) is ~5-7 h under VICE warp and is MANUAL only,
+# as is the full (non --quick) test_x25519_adversarial_kat.py (~80 ladders).
 
 # VICE test suite: run key tests against the built .prg.
 test-vice: $(PRG)
