@@ -153,7 +153,9 @@ after the change):
 |---|---:|---:|
 | before | 262,318,045 | 15,389.3 |
 | after | 263,424,237 | 15,454.2 |
-| delta | **+1,106,192 (+0.42 %)** | +64.9 |
+| delta (settle alone, #116) | **+1,106,192 (+0.42 %)** | +64.9 |
+| **v0.12.0 shipped** (#116 + #117 `mul_a24` fold, PRG `08d1fef1…`) | **263,563,723** | **15,462.4** |
+| delta, total vs v0.11.3 | **+1,245,678 (+0.47 %)** | +73.1 |
 
 Expected from construction: ~11 cycles × (32 fetches per `fe25519_mul`
 + 44 per `fe25519_sqr`) over the ladder's ~1,300 mul + ~1,300 sqr
@@ -191,6 +193,18 @@ old value tripped the *overrun* assert first and the leg could no
 longer distinguish region-disagreement (its job) from overrun (leg
 A2's job). Both legs still fail on their own named error.
 
+## 7. Adversarial audit (2026-08-28) — one correctness bug fixed, two dead tests revived
+
+Full record with exact repro output: [`docs/AUDIT_2026-08-28.md`](AUDIT_2026-08-28.md) (PR #117). Oracle: pyca `hazmat` only; every finding was made to FAIL under VICE before it counted.
+
+- **A1 — `fe25519_mul_a24` dropped the carry out of byte 31** (2^256 ≡ 38 mod p): result short by exactly 38 for ~5.8e5 canonical inputs and every `a ∈ (2p, 2^256)`. Reachable on the ladder at ≈2^-236 per step — proof-level, not practical — but wrong output. Fixed with a branchless fold (catalogue **L32**, spread 0 on `mul_a24` and on the full ladder); +27 B, +0.053 % cycles. Red → green: `tools/test_fe_adversarial_bigint.py` (11 failing cases on the old code).
+- **A2 — the documented Inv3 bound "`fe_reduce_wide` ≤ 2p" was false**; the true ceiling is 2^256 − 1 = 2p + 37. Correctness held (`reduce_final` covers < 3p); the argument in `docs/CT_ANALYSIS.md` and the bound test are now written against the real bound.
+- **A3/A4 — `test_rfc7748_iterated.py` and `test_x25519_edge_u.py` had never been able to pass** (mangled RFC §5.2 literal + false "clamps internally" claim; pyca raising on low-order points) and were gated out of `test-slow`. Repaired and wired in, with the new suite: `test_x25519_adversarial_kat.py` (all 8 low-order points, u ≥ p, bit 255, clamp corners, #33 REU residue, all three profiles), `test_ct_ladder_cycles.py` (exact-cycle full-ladder CT), `test_rfc7748_iter1000.py`, `test_reu_settle_slowpath.py`.
+- **RFC 7748 §5.2 1,000-iteration vector: PASS on the shipped code** (PRG `a8c11790…` at `0ff6e43`; 1,000 ladders each checked against pyca). A separate PASS on the pre-fix #116 build is evidence for the 2^-236 estimate, not for the fix — the two runs carry different claims.
+- Held under attack: full-ladder CT spread 0 across 20 (k,u) classes; all boundary/low-order `u`; clamp corners; REU-residue re-calls; 1764 and onchip profiles vs hazmat (their first differential runs).
+
+Footprints after the combined #116 + #117 tree (od65-measured, replacing §6's #116-only figures): RESIDENT default **8503** / 1764 **8355** / onchip **8234**; COLD unchanged (947 / 733 / 160).
+
 ## Verification
 
 - `make clean && make && make test-vice` — all green (mul38, fe25519
@@ -215,11 +229,21 @@ A2's job). Both legs still fail on their own named error.
       mismatches, KAT PASS). The host-read leg is green even on master —
       the DMA does complete; the CPU merely runs past it — so only the
       cpu-read leg and the KAT discriminate.
-    - this branch: **48 MHz PASS, 1 MHz PASS** (0/0 mismatches, KAT PASS
+    - #116 branch: **48 MHz PASS, 1 MHz PASS** (0/0 mismatches, KAT PASS
       at both).
+    - **v0.12.0 shipped bytes** (rebased #117, PRG `08d1fef1…`, 2026-08-29):
+      **48 MHz PASS, 1 MHz PASS** (0/0 mismatches, KAT PASS at both; 1 MHz
+      KAT 275 s wall). Recorded honestly: the *first* 1 MHz attempt on
+      this PRG reported KAT=FAIL with all 32 REU rows correct; it
+      coincided with another client driving the same device over UCI
+      (no cross-tool locking — the harness `DeviceLock` only excludes
+      harness users), and the identical re-run with the device to
+      ourselves passed. Treat a lone KAT failure with clean rows as an
+      interference signature before treating it as a ladder bug.
   - 64 MHz: **not measured** — no C64 Ultimate reachable; conformance is
     claimed at ≤ 48 MHz only (§8.2 v0.13.0 leaves 64 MHz unbracketed).
-- `make test-slow` on this branch (PRG `80664edcd772b458…`): exit 0, every suite 0 failed (128/128, 256/256, 255/255 ladder steps, 68/68, 64/64, 53/53, 49/49, 35/35, 27/27, 19/19)
+- `make test-slow` on the rebased #117 tree (`d91bc17`, PRG `08d1fef1…` — the v0.12.0 code): exit 0, ~38 min, every suite 0 failed including the six audit members (54-ladder adversarial KAT vs pyca, 93 field-op corners, RFC §5.2 iterated, edge-u 7/7, full-ladder CT spread 0, settle slow path).
+- `make test-slow` on the #116 branch (PRG `80664edcd772b458…`): exit 0, every suite 0 failed (128/128, 256/256, 255/255 ladder steps, 68/68, 64/64, 53/53, 49/49, 35/35, 27/27, 19/19)
 
 ## Tarball
 
