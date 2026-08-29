@@ -1,4 +1,17 @@
-# c64-x25519 v0.12.0 — DRAFT
+# c64-x25519 v0.12.0
+
+> **Erratum against the tarball copy (2026-08-29, post-tag).** `build_release.sh`
+> ships this file inside `c64-x25519-v0.12.0.tar.gz`, and the copy in that
+> immutable artifact (SHA256 `b6b7c930…4902`) predates two corrections made
+> here after the contract-lane release review landed post-tag: (1) the §6
+> "Consumer impact" table there shows the #116-only footprints
+> (`8383 → 8476`, `8247 → 8328`); the shipped pairs are RESIDENT
+> **8503 / 8355 / 8234**, COLD 947 / 733 / 160. (2) §7 there attributes the
+> 1,000-iteration PASS to "the shipped code (PRG `a8c11790…`)"; that run was
+> on the pre-rebase #117 build, and the shipped PRG is `08d1fef1…`. The tag
+> was deliberately not re-cut — immutability of a published, hashed asset
+> outranks a documentation fix; the GitHub release body carries the same
+> erratum. Library, locks and hashes are unaffected.
 
 A contract-conformance release. c64-lib-contract SPEC **v0.13.0 §8.2**
 (tag `c771935`; contract#144 / contract#146; tracked here as #115) made REU completion
@@ -176,9 +189,9 @@ the `_D_*` deltas):
 
 | profile | RESIDENT | COLD | note |
 |---|---:|---:|---|
-| default | 8383 → **8476** | 826 → **947** | 3 resident + 9 cold sites at 9 B each plus the shared `x25519_reu_settle_slow` proc (resident); the two `data.s` bytes are absorbed by the existing page pad, DATA stays 3584 |
-| `lib-x25519-1764` | 8247 → **8328** | 648 → **733** | 2 resident + 6 cold sites survive at K=0 |
-| `lib-x25519-onchip` | 8207 | 160 | unchanged — no REU access, no `$DF00` read anywhere (listing-verified: zero settle expansions in `x25519_init.o` / `fe25519.o`) |
+| default | 8383 → **8503** (settle +93, `mul_a24` fold +27) | 826 → **947** | 3 resident + 9 cold sites at 9 B each plus the shared `x25519_reu_settle_slow` proc (resident); the two `data.s` bytes are absorbed by the existing page pad, DATA stays 3584 |
+| `lib-x25519-1764` | 8247 → **8355** (settle +81, fold +27) | 648 → **733** | 2 resident + 6 cold sites survive at K=0 |
+| `lib-x25519-onchip` | 8207 → **8234** (fold +27 only) | 160 | REU code unchanged — no REU access, no `$DF00` read anywhere (listing-verified: zero settle expansions in `x25519_init.o` / `fe25519.o`) |
 | §8.2 deferral deltas | `_D_RES_REU` 20 → **32** | `_D_COLD_REU` 364 → **427** (K>0), 186 → **213** (K=0) | the slow proc is not deferrable (serves `reu_probe` and DMA #2) |
 
 The seven per-profile `LIB_VERIFY_RESIDENT_EXPECT` /
@@ -200,7 +213,7 @@ Full record with exact repro output: [`docs/AUDIT_2026-08-28.md`](AUDIT_2026-08-
 - **A1 — `fe25519_mul_a24` dropped the carry out of byte 31** (2^256 ≡ 38 mod p): result short by exactly 38 for ~5.8e5 canonical inputs and every `a ∈ (2p, 2^256)`. Reachable on the ladder at ≈2^-236 per step — proof-level, not practical — but wrong output. Fixed with a branchless fold (catalogue **L32**, spread 0 on `mul_a24` and on the full ladder); +27 B, +0.053 % cycles. Red → green: `tools/test_fe_adversarial_bigint.py` (11 failing cases on the old code).
 - **A2 — the documented Inv3 bound "`fe_reduce_wide` ≤ 2p" was false**; the true ceiling is 2^256 − 1 = 2p + 37. Correctness held (`reduce_final` covers < 3p); the argument in `docs/CT_ANALYSIS.md` and the bound test are now written against the real bound.
 - **A3/A4 — `test_rfc7748_iterated.py` and `test_x25519_edge_u.py` had never been able to pass** (mangled RFC §5.2 literal + false "clamps internally" claim; pyca raising on low-order points) and were gated out of `test-slow`. Repaired and wired in, with the new suite: `test_x25519_adversarial_kat.py` (all 8 low-order points, u ≥ p, bit 255, clamp corners, #33 REU residue, all three profiles), `test_ct_ladder_cycles.py` (exact-cycle full-ladder CT), `test_rfc7748_iter1000.py`, `test_reu_settle_slowpath.py`.
-- **RFC 7748 §5.2 1,000-iteration vector: PASS on the shipped code** (PRG `a8c11790…` at `0ff6e43`; 1,000 ladders each checked against pyca). A separate PASS on the pre-fix #116 build is evidence for the 2^-236 estimate, not for the fix — the two runs carry different claims.
+- **RFC 7748 §5.2 1,000-iteration vector: PASS on the `mul_a24`-fixed pre-rebase #117 build** (PRG `a8c11790…` at `0ff6e43` — the fix without the §8.2 settle; 1,000 ladders each checked against pyca). The **shipped** PRG `08d1fef1…` (`ce6f8d5`) has its own 1,000-iteration run recorded below under Verification; the shipped bytes are otherwise covered by `make test-slow` (RFC §5.2 at 1 iteration, 54-ladder adversarial KAT) and the U64E fw 3.15 hardware run. A separate PASS on the pre-fix #116 build is evidence for the 2^-236 estimate, not for the fix — the two runs carry different claims.
 - Held under attack: full-ladder CT spread 0 across 20 (k,u) classes; all boundary/low-order `u`; clamp corners; REU-residue re-calls; 1764 and onchip profiles vs hazmat (their first differential runs).
 
 Footprints after the combined #116 + #117 tree (od65-measured, replacing §6's #116-only figures): RESIDENT default **8503** / 1764 **8355** / onchip **8234**; COLD unchanged (947 / 733 / 160).
@@ -242,15 +255,25 @@ Footprints after the combined #116 + #117 tree (od65-measured, replacing §6's #
       interference signature before treating it as a ladder bug.
   - 64 MHz: **not measured** — no C64 Ultimate reachable; conformance is
     claimed at ≤ 48 MHz only (§8.2 v0.13.0 leaves 64 MHz unbracketed).
+- RFC 7748 §5.2 1,000-iteration vector on the **shipped** PRG `08d1fef1…`: **run in progress** (started 2026-08-29 13:57Z on `ce6f8d5`, ~5–10 h under VICE depending on host load); result to be recorded here by a follow-up PR, never inferred from the pre-rebase run above
 - `make test-slow` on the rebased #117 tree (`d91bc17`, PRG `08d1fef1…` — the v0.12.0 code): exit 0, ~38 min, every suite 0 failed including the six audit members (54-ladder adversarial KAT vs pyca, 93 field-op corners, RFC §5.2 iterated, edge-u 7/7, full-ladder CT spread 0, settle slow path).
 - `make test-slow` on the #116 branch (PRG `80664edcd772b458…`): exit 0, every suite 0 failed (128/128, 256/256, 255/255 ladder steps, 68/68, 64/64, 53/53, 49/49, 35/35, 27/27, 19/19)
 
 ## Tarball
 
-TBD at tag time — `c64-x25519-v0.12.0.tar.gz`, size and SHA256 to be
-filled from the published asset, not the local build.
+`c64-x25519-v0.12.0.tar.gz` — vendor-as-source bundle (`cfg docs LICENSE
+ORIGIN.txt.template src`; no Makefile or README by design). Tag
+`v0.12.0` (annotated) on master merge commit `ce6f8d5`, released
+2026-08-29.
 
 ```
-Size:     TBD
-SHA256:   TBD
+Size:     143,836 bytes
+SHA256:   b6b7c930193f37f65df0d7ac750f9a4ec378a80eaed72a3d499e9d01cab34902
 ```
+
+Byte-identical across two independent post-tag `make dist` runs, and the
+figures above were re-derived from the **published asset** by downloading
+it back and hashing it (`cmp` against the local build: identical). All
+shipped `src/*.s` (11 files) assemble standalone from the extracted
+tarball with zero diagnostics, and the extracted `src/lib_version.s`
+reads `LIB_X25519_VERSION_MINOR = 12`, `_PATCH = 0`.
