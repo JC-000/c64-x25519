@@ -255,7 +255,7 @@ Footprints after the combined #116 + #117 tree (od65-measured, replacing §6's #
       interference signature before treating it as a ladder bug.
   - 64 MHz: **not measured** — no C64 Ultimate reachable; conformance is
     claimed at ≤ 48 MHz only (§8.2 v0.13.0 leaves 64 MHz unbracketed).
-- RFC 7748 §5.2 1,000-iteration vector on the **shipped** PRG `08d1fef1…`: **run in progress** (started 2026-08-29 13:57Z on `ce6f8d5`, ~5–10 h under VICE depending on host load); result to be recorded here by a follow-up PR, never inferred from the pre-rebase run above
+- RFC 7748 §5.2 1,000-iteration vector on the **shipped** PRG `08d1fef1…` (built from `ce6f8d5`): **PASS** — 1,000 ladders, every iteration checked against pyca, run 2026-08-29 13:57Z–~20:00Z under VICE (18–37 s/ladder with host contention). This is the run the shipped bytes own; the pre-rebase run above covers the `mul_a24` fix alone
 - `make test-slow` on the rebased #117 tree (`d91bc17`, PRG `08d1fef1…` — the v0.12.0 code): exit 0, ~38 min, every suite 0 failed including the six audit members (54-ladder adversarial KAT vs pyca, 93 field-op corners, RFC §5.2 iterated, edge-u 7/7, full-ladder CT spread 0, settle slow path).
 - `make test-slow` on the #116 branch (PRG `80664edcd772b458…`): exit 0, every suite 0 failed (128/128, 256/256, 255/255 ladder steps, 68/68, 64/64, 53/53, 49/49, 35/35, 27/27, 19/19)
 
