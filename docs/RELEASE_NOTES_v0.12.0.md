@@ -19,8 +19,12 @@ One documented register contract tightened — `reu_fetch_mul_row` and
 why consumers that JSR the fetch helper directly should read this
 before taking the release.
 
-Contract-aligned through c64-lib-contract SPEC **v0.14.2** (tag
-`bffe36b`; v0.14.2 is a doc-only PATCH writing §8.1's
+Contract-aligned through c64-lib-contract SPEC **v0.15.0** (tag
+`5f923db`; v0.15.0 adds the §8.4 zero-consumer carve-out for the bare
+`LIB_PRECALC_<name>_*` triple — inapplicable here for the v0.11.0
+reason, x25519 has released consumers, so the bare triple stays; the
+vendored `precalc_table.inc` is byte-identical to the contract's;
+v0.14.2 tag `bffe36b`; v0.14.2 is a doc-only PATCH writing §8.1's
 `LIB_SHARED_SQTAB_BASE` examples `$`-free — the `0x` form this README
 already prescribes; v0.14.1 tag `62a9d78`): v0.12.0 (`a6bb30a`), v0.12.1 (`42c84bd`) and v0.14.0
 (`e76bcff`) are §13.x networking and do not apply to x25519; v0.13.0
