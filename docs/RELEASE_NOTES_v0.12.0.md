@@ -191,6 +191,18 @@ old value tripped the *overrun* assert first and the leg could no
 longer distinguish region-disagreement (its job) from overrun (leg
 A2's job). Both legs still fail on their own named error.
 
+## 7. Adversarial audit (2026-08-28) — one correctness bug fixed, two dead tests revived
+
+Full record with exact repro output: [`docs/AUDIT_2026-08-28.md`](AUDIT_2026-08-28.md) (PR #117). Oracle: pyca `hazmat` only; every finding was made to FAIL under VICE before it counted.
+
+- **A1 — `fe25519_mul_a24` dropped the carry out of byte 31** (2^256 ≡ 38 mod p): result short by exactly 38 for ~5.8e5 canonical inputs and every `a ∈ (2p, 2^256)`. Reachable on the ladder at ≈2^-236 per step — proof-level, not practical — but wrong output. Fixed with a branchless fold (catalogue **L32**, spread 0 on `mul_a24` and on the full ladder); +27 B, +0.053 % cycles. Red → green: `tools/test_fe_adversarial_bigint.py` (11 failing cases on the old code).
+- **A2 — the documented Inv3 bound "`fe_reduce_wide` ≤ 2p" was false**; the true ceiling is 2^256 − 1 = 2p + 37. Correctness held (`reduce_final` covers < 3p); the argument in `docs/CT_ANALYSIS.md` and the bound test are now written against the real bound.
+- **A3/A4 — `test_rfc7748_iterated.py` and `test_x25519_edge_u.py` had never been able to pass** (mangled RFC §5.2 literal + false "clamps internally" claim; pyca raising on low-order points) and were gated out of `test-slow`. Repaired and wired in, with the new suite: `test_x25519_adversarial_kat.py` (all 8 low-order points, u ≥ p, bit 255, clamp corners, #33 REU residue, all three profiles), `test_ct_ladder_cycles.py` (exact-cycle full-ladder CT), `test_rfc7748_iter1000.py`, `test_reu_settle_slowpath.py`.
+- **RFC 7748 §5.2 1,000-iteration vector: PASS on the shipped code** (PRG `a8c11790…` at `0ff6e43`; 1,000 ladders each checked against pyca). A separate PASS on the pre-fix #116 build is evidence for the 2^-236 estimate, not for the fix — the two runs carry different claims.
+- Held under attack: full-ladder CT spread 0 across 20 (k,u) classes; all boundary/low-order `u`; clamp corners; REU-residue re-calls; 1764 and onchip profiles vs hazmat (their first differential runs).
+
+Footprints after the combined #116 + #117 tree (od65-measured, replacing §6's #116-only figures): RESIDENT default **8503** / 1764 **8355** / onchip **8234**; COLD unchanged (947 / 733 / 160).
+
 ## Verification
 
 - `make clean && make && make test-vice` — all green (mul38, fe25519
@@ -219,7 +231,7 @@ A2's job). Both legs still fail on their own named error.
       at both).
   - 64 MHz: **not measured** — no C64 Ultimate reachable; conformance is
     claimed at ≤ 48 MHz only (§8.2 v0.13.0 leaves 64 MHz unbracketed).
-- `make test-slow` on this branch (PRG `80664edcd772b458…`): exit 0, every suite 0 failed (128/128, 256/256, 255/255 ladder steps, 68/68, 64/64, 53/53, 49/49, 35/35, 27/27, 19/19)
+- `make test-slow` on the #116 branch (PRG `80664edcd772b458…`): exit 0, every suite 0 failed (128/128, 256/256, 255/255 ladder steps, 68/68, 64/64, 53/53, 49/49, 35/35, 27/27, 19/19)
 
 ## Tarball
 
