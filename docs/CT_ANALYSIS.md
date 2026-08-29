@@ -7,6 +7,11 @@ c64-lib-contract SPEC v0.13.0 §8.2 post-execute REU settle (#115,
 v0.12.0) — a bounded spin on a hardware-status bit at every REU
 execute site, three of them on the hot path. Tracking issue
 [#20](https://github.com/JC-000/c64-x25519/issues/20).
+**L32** (v0.12.0)
+catalogues the `fe25519_mul_a24` byte-31 carry-out fold added by the
+2026-08-28 adversarial audit (finding A1, a *correctness* bug fixed in
+CT shape); the same audit (A2) corrected the Inv3 bound quoted at
+L27f/L29d from "≤ 2p" to the true ceiling 2^256 − 1 = 2p + 37.
 
 This document catalogues every currently-known secret-dependent branch and
 every `(zp),y` indirect-indexed load in the X25519 library, records the
@@ -132,12 +137,12 @@ still relevant.
 | L27c | src/fe25519.s:~1000  | branch      | low      | fixed  | `fe_reduce_wide` propagate-carry-on-zero short-circuit — Phase 7, unconditional |
 | L27d | src/fe25519.s:~1025  | branch      | low      | fixed  | `fe_reduce_wide` post-mul38 carry-skip — Phase 7, unconditional |
 | L27e | src/fe25519.s:~1050  | branch      | low      | fixed  | `fe_reduce_wide` final-limb carry-skip — Phase 7, unconditional |
-| L27f | src/fe25519.s:~1075  | branch      | low      | fixed  | `fe_reduce_wide` end-of-pass cascade — Phase 7, public-count terminator. Output bound ≤ 2p enforced (regression: `tools/test_fe_reduce_wide_bound.py`) |
+| L27f | src/fe25519.s:~1075  | branch      | low      | fixed  | `fe_reduce_wide` end-of-pass cascade — Phase 7, public-count terminator. Output bound **< 2^256 = 2p + 38** (i.e. ≤ 2p + 37; the earlier "≤ 2p" claim was false — (2p−1)² reduces raw to 2p+1 and the (2p−i)(2p−j) search max reaches 2p+37; audit 2026-08-28 A2). Regression: `tools/test_fe_reduce_wide_bound.py` (asserts ≤ 2p+37), extremes in `tools/test_fe_adversarial_bigint.py` |
 | L28a-k | src/fe25519.s:~1738+ | branch    | med      | fixed  | `fe25519_mul_a24` outer body + 11 cascade-short-circuit sites (4 stages × multi-byte ripples) — Phase 7, unconditional outer body and `fe_carry`-threaded reduction stages; cascades replaced by `dey/bne` public-count ripples |
 | L29a | src/fe25519.s:~296   | branch      | **HIGH** | fixed  | `fe_cmp_p` early-exit byte comparison (~4,080 calls/scalarmult, 250 cy variance) — Phase 7, replaced by new `fe_cmp_p_ct` proc returning $00/$FF mask via `lda#0/sbc#0/eor#$FF` idiom; unconditional 32-byte scan |
 | L29b | src/fe25519.s:~118   | branch      | med      | fixed  | `fe25519_add` carry-out short-circuit — Phase 7, captures carry to `fe_add_carry_mask` via `lda#0/sbc#0/eor#$FF`; masked sub-p driven by mask AND p_byte |
 | L29c | src/fe25519.s:~209   | branch      | med      | fixed  | `fe25519_sub` borrow-handling branch — Phase 7, mirror of L29b idiom (sub-p → add-p via masked p_byte path) |
-| L29d | src/fe25519.s:~346   | branch      | **HIGH** | fixed  | `fe25519_reduce_final` conditional sub-p — Phase 7, two-iteration unconditional masked-subp (works because `fe_reduce_wide` output bound ≤ 2p). Sufficiency regression: `tools/test_fe_reduce_wide_bound.py` |
+| L29d | src/fe25519.s:~346   | branch      | **HIGH** | fixed  | `fe25519_reduce_final` conditional sub-p — Phase 7, two-iteration unconditional masked-subp (works because `fe_reduce_wide` output is < 2^256 = 2p + 38 < 3p: iter 1 leaves R < p + 38, iter 2 leaves R < 38 < p — two conditional subtractions cover any R < 3p; corrected from "≤ 2p", audit 2026-08-28 A2). Sufficiency regression: `tools/test_fe_reduce_wide_bound.py` |
 | L29e | src/fe25519.s:~370   | branch      | med      | fixed  | `fe25519_reduce_final` byte-level cascade in mask propagation — Phase 7, unconditional via `fe_subp_rhs` per-iter scratch (= p_byte AND mask) |
 | L30a | src/fe25519.s:688-702 | branch     | (HIGH)   | clean  | **`X25519_ONCHIP_MUL` profile only.** On-chip row generator loop (`@gen_row`). Fixed 32 iterations, terminated by `dex / bpl` on the public counter X; no zero-skip on either operand — neither `a = src1[i]` (the L25 invariant, restated below) nor `b = src2[j]`. Deliberately rejects nist-curves' `og_common` `beq` zero-byte skip, whose row time counts the secret nonzero bytes of the operand (`docs/design/issue_72_onchip_mul.md` §2) |
 | L30b | src/fe25519.s:691-696 | page-cross | (HIGH)   | clean  | **`X25519_ONCHIP_MUL` profile only.** The two SMC-patched `ldy mul_src2_buf,x` sites (`@gen_src2_a`, `@gen_src2_b`) that fetch the secret `b = src2[j]`. Absolute-indexed, patched at `fe25519_mul` entry from `fe25519_src2` alongside `@ldy_src2_a..d` — same addressing shape and same 32-byte caller-buffer alignment contract (`docs/LIBRARY.md` §6) as those four body sites, so no `(zp),y` and no data-dependent page cross |
@@ -146,6 +151,7 @@ still relevant.
 | L31b | src/x25519_init.s:~530 | branch | (HIGH) | clean | **v0.12.0, `SQR_DMA_K > 0` only.** `REU_SETTLE` after `reu_fetch_doubled_row`'s inline DMA #2 (256-byte carry-table fetch from `X25519_REU_BANK_CARRY`, 22 per `fe25519_sqr`). Same argument as L31a with a 256-byte fixed length. Register note: the macro clobbers A only (its bounded-spin counter is a memory byte touched on the slow path alone); C is never written, and the `jsr reu_fetch_doubled_row` site's next carry use is preceded by `clc` regardless. The autoload latch is not disturbed: reading `$DF00` clears only its own bits 5–7 (S3 remains intact) |
 | L31c | src/x25519_init.s: reu_mul_init ×5, reu_probe ×4 | branch | low | clean | **v0.12.0, boot only.** `REU_SETTLE` after the nine init/probe execute sites. No secret data exists at these sites (public table enumeration, sentinel round-trip), and neither runs during a scalarmult — no network-observable exposure, catalogued for completeness under the "every execute site" rule. `reu_probe` folds the sticky `x25519_reu_fault` byte into its C=0 return |
 | L30d | src/mul_8x8.s:231-268 | promotion  | (HIGH)   | clean  | **`X25519_ONCHIP_MUL` profile only.** `jsr ct_mul_8x8` moves the §8.3 body onto the ladder hot path with **both** operands secret (`a = src1[i]` SMC-baked into `smc_sum_a_imm+1` / `smc_diff_a_imm+1`, `b = src2[j]` in Y). No code change — the promotion is what is catalogued: the L1/L2 closures become load-bearing under the network threat model rather than retained canonical shape. See the rewritten Phase 1 landing note below |
+| L32  | src/fe25519.s:`@fold_ripple` (fe25519_mul_a24, after `@final_ripple`) | new code | med | clean | **v0.12.0, audit 2026-08-28 A1.** `fe25519_mul_a24` dropped the byte-31 carry-out of its final ripple (weight 2^256 ≡ 38), returning a value short by 38 whenever `lo + 38·hi ≥ 2^256` (~5.8e5 canonical inputs, every input in (2p, 2^256)). The fold-back is CT by construction: `lda #0 / adc #0` captures C without a branch, `mul38_lo_tab,y` with Y ∈ {0,1} maps it to {0, 38} (no data-dependent page cross), and the add ripples through bytes 1..31 with the same fixed-length `inx/dey/bne` chain as `@final_ripple`. Second fold cannot overflow (wrapped value < 2^23). Measured: `tools/test_ct_mul_a24_cycles.py` 0.000 jif spread; `tools/test_ct_ladder_cycles.py` 0-cycle spread on the full ladder. See the L32 landing note below |
 
 **L31a-c: the settle is a branch on hardware state, not on data.** The
 CT rule ("every branch must depend only on public loop indices") is
@@ -504,7 +510,8 @@ base for L30c, and a data-dependent multiply body for L30d.
      using `fe_subp_rhs` as per-iter scratch (= `p_byte AND mask`).
      `fe25519_reduce_final` runs **two iterations** of the
      unconditional masked sub-p — sufficient because
-     `fe_reduce_wide` output is bounded by 2p (regression guard:
+     `fe_reduce_wide` output is < 2^256 = 2p + 38 < 3p (corrected
+     from "≤ 2p", audit 2026-08-28 A2; regression guard:
      `tools/test_fe_reduce_wide_bound.py`).
 
   2. **L25 + L26 (`fe25519_mul`).** Outer zero-skip dropped.
@@ -518,8 +525,9 @@ base for L30c, and a data-dependent multiply body for L30d.
      by unconditional `dey/bne` cascades whose iteration count is
      derived from the public reduction-stage counter. Safety relies
      on the `mul38_lo_tab[0] = 0` lemma (no carry can propagate past
-     the zero limb in any reduction step). Output bound <= 2p, the
-     load-bearing precondition for L29d's two-iteration sufficiency,
+     the zero limb in any reduction step). Output bound < 2^256
+     (= 2p + 38; **not** ≤ 2p — see A2 below), the load-bearing
+     precondition for L29d's two-iteration sufficiency (any R < 3p),
      is the regression invariant guarded by
      `tools/test_fe_reduce_wide_bound.py`.
 
@@ -569,9 +577,9 @@ base for L30c, and a data-dependent multiply body for L30d.
   - `tools/test_ct_reduce_wide_cycles.py` — `fe_reduce_wide`
     per-call spread. **Measured: ~0.01 jif spread**.
   - `tools/test_fe_reduce_wide_bound.py` — output-bound regression:
-    asserts `fe_reduce_wide(x) <= 2p` for adversarially-shaped
-    inputs (raw 64-byte products near 2^512 - 1). Required for
-    L29d two-iteration sufficiency.
+    asserts `fe_reduce_wide(x) <= 2p + 37` (= 2^256 − 1) for
+    adversarially-shaped inputs (raw 64-byte products near
+    2^512 - 1). Required for L29d two-iteration sufficiency.
 
   Plus the existing `tools/test_ct_square_cycles.py`, which now
   also exercises the L23-related `diag_zeros` profile and lands at
@@ -715,6 +723,75 @@ base for L30c, and a data-dependent multiply body for L30d.
   and has not yet landed. Measured cycle cost for the profile is
   **(VICE measurement pending)**. Hardware A/B at 16/48/64 MHz remains
   a deferred merge gate for any wall-clock claim.
+
+- **L32 — `fe25519_mul_a24` byte-31 carry-out fold (audit
+  2026-08-28 A1, v0.12.0).** A correctness bug, fixed in CT shape.
+  Write `121665·a = hi·2^256 + lo` with `hi = fe_wide[32..34] <
+  121665` and `lo = fe_wide[0..31] < 2^256`. The three L28 reduction
+  stages compute `lo + 38·hi` positionally (`38·hi ≤ 38·121,664 <
+  2^23`), so the sum is `< 2^256 + 2^23` and wraps 2^256 at most
+  once — but it *can* wrap, since `lo` is an arbitrary 256-bit
+  residue and may lie within 2^23 of 2^256. The previous
+  `@final_ripple` dropped that carry (its banner's "plus the original
+  fe_wide value < 2^256" argument only bounded the *addends*, not the
+  sum), returning a value short by exactly 38 (`2^256 ≡ 38 mod p`)
+  for ~5.8e5 canonical inputs `a < p` and for every `a ∈ (2p, 2^256)`.
+  `fe25519_reduce_final` cannot repair a value that is wrong mod p, so
+  the ladder was wrong on those inputs (the RFC 7748 vectors and every
+  random differential case happened to miss them).
+
+  **Fix.** After `@final_ripple`, `lda #0 / adc #0` captures the
+  carry-out as A ∈ {0,1} with no branch; `tay / lda mul38_lo_tab,y`
+  maps it to {0, 38} (`mul38_lo_tab[0] = 0`, `[1] = 38`, data.s
+  invariant; Y ∈ {0,1} so no data-dependent page cross); the value is
+  added at byte 0 and rippled through bytes 1..31 by `@fold_ripple`,
+  the same fixed-length unconditional `inx/dey/bne` chain as
+  `@final_ripple`. **The second fold cannot overflow:** if C=1 the
+  wrapped value is `< 2^23`, so +38 stays far below 2^256; if C=0
+  nothing is added. Its byte-31 carry-out is therefore always 0 and is
+  dropped legitimately. Cost: +27 B `LIB_X25519_CODE` (fe25519.o
+  2711 → 2738, all profiles), ~547 cycles per call, +139,498 cycles
+  per scalarmult (262,318,045 → 262,457,543, +0.053 %).
+
+  **CT.** No new branch, no secret-indexed load beyond the two-entry
+  table read, public-length ripple. Measured:
+  `tools/test_ct_mul_a24_cycles.py` **0.000 jif spread** across all
+  12 inputs; `tools/test_ct_ladder_cycles.py` (exact CIA cycle count
+  over the full ladder, four structurally distinct scalar/u classes)
+  **0-cycle spread**. Regression: `tools/test_fe_adversarial_bigint.py`
+  (mul_a24 on 2p+1, 2p+19, 2p+37, and three canonical `a < p` values
+  with `hi` chosen to force the byte-31 carry — all off by 38 before
+  the fix, all green after).
+
+- **A2 — Inv3 bound correction (audit 2026-08-28).** The documented
+  `fe_reduce_wide` output bound "≤ 2p" (Inv3) was false: the true
+  ceiling is the 32-byte ceiling `2^256 − 1 = 2p + 37`. Measured:
+  `(2p−1)²` reduces raw to `2p + 1`; the `(2p−i)(2p−j)` search
+  maximum reaches `2p + 37`. Nothing was ever incorrect *because* of
+  this — the argument was — and the re-argued dependants are:
+
+  1. **L29d / `fe25519_reduce_final`.** Two conditional sub-p
+     iterations land any `R < 3p` in `[0, p)`; `2p + 37 < 3p`.
+     Concretely iter 1 leaves `R < 2^256 − p = p + 38`, iter 2 leaves
+     `R < 38`. Two iterations remain sufficient.
+  2. **`fe25519_add` with one canonical partner (the W4 pruning
+     contract in `src/x25519.s`).** One operand `< p`, the other
+     `< 2^256`: the sum is `< 2^256 + p`, so the single masked sub-p
+     (whose 32-byte borrow wraps mod 2^256) returns `sum` or `sum − p`
+     — correct mod p and `< 2^256`. That is all the consumer
+     (`fe25519_mul` / `sqr` / `mul_a24`, which accept any 32-byte
+     value) requires; the result is canonical only when `sum − p < p`,
+     and the `x25519.s` W4 comments now say "correct mod p, < 2^256"
+     rather than "canonical".
+  3. **`fe25519_sub`** keeps the non-canonical operand on `src1`
+     (`src1 < 2^256`, `src2 < p`): the masked add-p tail yields
+     `src1 − src2` or `src1 − src2 + p ≥ 0`, correct and `< 2^256`.
+  4. **`fe25519_mul_a24`** was the one consumer that did *not*
+     tolerate an input above 2p — that is L32.
+
+  `tools/test_fe_reduce_wide_bound.py` now asserts the corrected
+  bound; `tools/test_fe_adversarial_bigint.py` pins the 2p+1 and
+  2p+37 extremes.
 
 ### Follow-ups
 
