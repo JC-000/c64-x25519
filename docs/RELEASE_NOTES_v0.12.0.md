@@ -153,7 +153,9 @@ after the change):
 |---|---:|---:|
 | before | 262,318,045 | 15,389.3 |
 | after | 263,424,237 | 15,454.2 |
-| delta | **+1,106,192 (+0.42 %)** | +64.9 |
+| delta (settle alone, #116) | **+1,106,192 (+0.42 %)** | +64.9 |
+| **v0.12.0 shipped** (#116 + #117 `mul_a24` fold, PRG `08d1fef1…`) | **263,563,723** | **15,462.4** |
+| delta, total vs v0.11.3 | **+1,245,678 (+0.47 %)** | +73.1 |
 
 Expected from construction: ~11 cycles × (32 fetches per `fe25519_mul`
 + 44 per `fe25519_sqr`) over the ladder's ~1,300 mul + ~1,300 sqr

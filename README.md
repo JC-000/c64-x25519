@@ -14,9 +14,17 @@ post-execute settle. All twelve execute sites now carry the
 `REU_SETTLE` macro; the spin bound `X25519_REU_SETTLE_ITER` (default 8)
 is a §6.2 knob, and faults land in the new sticky `x25519_reu_fault`
 byte, which `reu_probe` folds into its C=0 return. Conformant at
-≤ 48 MHz on U64E fw 3.15; 64 MHz is unbracketed. Cost: +0.42 %
-scalarmult (15,389 → 15,454 jif), +93 B resident. MINOR (new export +
-new knob); ABI stays 3. Contract-aligned through SPEC v0.15.0 (v0.12.x
+≤ 48 MHz on U64E fw 3.15; 64 MHz is unbracketed. The release also
+carries the 2026-08-28 adversarial audit (#117,
+[`docs/AUDIT_2026-08-28.md`](docs/AUDIT_2026-08-28.md)): `fe25519_mul_a24`
+dropped the carry out of byte 31 (result short by 38 for ~5.8e5
+canonical inputs — proof-level, ≈2^-236 per ladder step, but wrong
+output; fixed in CT shape, L32), the documented `fe_reduce_wide` bound
+was corrected, and two tests that had never been able to pass were
+repaired and wired into `test-slow` with a new adversarial suite. RFC
+7748 §5.2 1,000-iteration vector PASS on the shipped code. Cost, total:
++0.47 % scalarmult (15,389 → 15,462 jif), +120 B resident (8383 → 8503).
+MINOR (new export + new knob); ABI stays 3. Contract-aligned through SPEC v0.15.0 (v0.12.x
 / v0.14.0 are §13.x networking, N/A here; v0.14.1 is a §8.2 wording
 PATCH that keeps this implementation conformant). See
 [`docs/RELEASE_NOTES_v0.12.0.md`](docs/RELEASE_NOTES_v0.12.0.md) and
