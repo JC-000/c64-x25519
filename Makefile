@@ -126,6 +126,7 @@ test-slow: $(PRG)
 	@set -e; \
 	python3 tools/ref_x25519.py; \
 	python3 tools/test_fe25519.py; \
+	python3 tools/test_reu_settle_slowpath.py; \
 	python3 tools/test_fe_mul_stress.py; \
 	python3 tools/test_fe_sqr_stress.py; \
 	python3 tools/test_ct_square_cycles.py; \
