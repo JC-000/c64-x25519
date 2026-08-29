@@ -2,7 +2,10 @@
 
 Status: **Phases 0–7 landed: L1–L29 CT-clean.** L30a-d catalogue the
 `X25519_ONCHIP_MUL` on-chip row generator (issue #72) — new hot-path
-surface, CT-clean by construction, profile-scoped. Tracking issue
+surface, CT-clean by construction, profile-scoped. L31a-c catalogue the
+c64-lib-contract SPEC v0.13.0 §8.2 post-execute REU settle (#115,
+v0.12.0) — a bounded spin on a hardware-status bit at every REU
+execute site, three of them on the hot path. Tracking issue
 [#20](https://github.com/JC-000/c64-x25519/issues/20).
 
 This document catalogues every currently-known secret-dependent branch and
@@ -139,7 +142,28 @@ still relevant.
 | L30a | src/fe25519.s:688-702 | branch     | (HIGH)   | clean  | **`X25519_ONCHIP_MUL` profile only.** On-chip row generator loop (`@gen_row`). Fixed 32 iterations, terminated by `dex / bpl` on the public counter X; no zero-skip on either operand — neither `a = src1[i]` (the L25 invariant, restated below) nor `b = src2[j]`. Deliberately rejects nist-curves' `og_common` `beq` zero-byte skip, whose row time counts the secret nonzero bytes of the operand (`docs/design/issue_72_onchip_mul.md` §2) |
 | L30b | src/fe25519.s:691-696 | page-cross | (HIGH)   | clean  | **`X25519_ONCHIP_MUL` profile only.** The two SMC-patched `ldy mul_src2_buf,x` sites (`@gen_src2_a`, `@gen_src2_b`) that fetch the secret `b = src2[j]`. Absolute-indexed, patched at `fe25519_mul` entry from `fe25519_src2` alongside `@ldy_src2_a..d` — same addressing shape and same 32-byte caller-buffer alignment contract (`docs/LIBRARY.md` §6) as those four body sites, so no `(zp),y` and no data-dependent page cross |
 | L30c | src/fe25519.s:697-700 | page-cross | (HIGH)   | clean  | **`X25519_ONCHIP_MUL` profile only.** `sta mul_dma_lo,y` / `sta mul_dma_hi,y` generator stores, indexed by the **secret** `b`. Fixed 5 cycles for any Y because both buffers are page-aligned — previously asserted only indirectly through the `LIB_SHARED_REU_MUL_STAGE` aliases in `src/reu_config.s`, now hard-asserted at the definition site (`src/data.s:150-152`) |
+| L31a | src/x25519_init.s:~390, src/fe25519.s:~712 | branch | (HIGH) | clean | **v0.12.0, `X25519_ONCHIP_MUL = 0` only.** `REU_SETTLE` after the two hot-path 512-byte row fetches — `reu_fetch_mul_row` (called per `fe25519_sqr` DMA-path row via `reu_fetch_doubled_row` DMA #1) and `fe25519_mul`'s inlined per-row fetch (32 per call). The macro's one branch (`lda $DF00 / and #$60 / eor #$40 / beq`) tests hardware completion state — bit 6 (END OF BLOCK) set and bit 5 (VERIFY ERROR) clear — for a transfer whose length (512 B), direction and target buffer are fixed; only the REU *address* varies with the secret row index, and REU DMA cost is address-independent. Any other sample takes `jsr x25519_reu_settle_slow` (`src/x25519_init.s`), whose branches likewise test only bits 6/5 of successive samples and a public bound. Spin count therefore depends on REU completion timing, never on an operand; on the reporter's U64E run bit 6 was set on the first read in all 19,416 calls, and under VICE it is always set, so the observed path is the 11-cycle fast path every time and the slow proc has never executed. The DMA itself was already in the pre-settle timing model (the 6502 is halted for its duration, again length-fixed) |
+| L31b | src/x25519_init.s:~530 | branch | (HIGH) | clean | **v0.12.0, `SQR_DMA_K > 0` only.** `REU_SETTLE` after `reu_fetch_doubled_row`'s inline DMA #2 (256-byte carry-table fetch from `X25519_REU_BANK_CARRY`, 22 per `fe25519_sqr`). Same argument as L31a with a 256-byte fixed length. Register note: the macro clobbers A only (its bounded-spin counter is a memory byte touched on the slow path alone); C is never written, and the `jsr reu_fetch_doubled_row` site's next carry use is preceded by `clc` regardless. The autoload latch is not disturbed: reading `$DF00` clears only its own bits 5–7 (S3 remains intact) |
+| L31c | src/x25519_init.s: reu_mul_init ×5, reu_probe ×4 | branch | low | clean | **v0.12.0, boot only.** `REU_SETTLE` after the nine init/probe execute sites. No secret data exists at these sites (public table enumeration, sentinel round-trip), and neither runs during a scalarmult — no network-observable exposure, catalogued for completeness under the "every execute site" rule. `reu_probe` folds the sticky `x25519_reu_fault` byte into its C=0 return |
 | L30d | src/mul_8x8.s:231-268 | promotion  | (HIGH)   | clean  | **`X25519_ONCHIP_MUL` profile only.** `jsr ct_mul_8x8` moves the §8.3 body onto the ladder hot path with **both** operands secret (`a = src1[i]` SMC-baked into `smc_sum_a_imm+1` / `smc_diff_a_imm+1`, `b = src2[j]` in Y). No code change — the promotion is what is catalogued: the L1/L2 closures become load-bearing under the network threat model rather than retained canonical shape. See the rewritten Phase 1 landing note below |
+
+**L31a-c: the settle is a branch on hardware state, not on data.** The
+CT rule ("every branch must depend only on public loop indices") is
+about the *secret-operand* dependency of control flow. `REU_SETTLE`'s
+loop condition is `$DF00` bit 6, which the REU sets when a
+fixed-length transfer completes; the transfer's only secret-derived
+input is which REU page it reads, and the REU's per-byte DMA cost does
+not depend on the address. So the settle contributes a term to the
+timing that is a function of (hardware, transfer length) and not of
+(scalar, point). The spin bound `X25519_REU_SETTLE_ITER` is a build
+constant. `tools/test_ct_square_cycles.py` (the `fe25519_sqr` cycle
+gate, which now runs 22 × 2 settles per call) reports 0.000–0.010 jif
+spread post-change, unchanged from v0.11.x; the `fe_mul` stress and
+sqr-then-mul regressions are green. Conformance to the contract's
+timing bracket (≥ 49 cycles post-execute) is claimed at ≤ 48 MHz on
+U64E fw 3.15 only — 64 MHz is unbracketed by SPEC v0.13.0 §8.2 — and
+that is a *correctness* claim (the transfer has landed before the next
+register access), not a CT one.
 
 **L30a-d are new-surface entries, not closed leaks.** Status `clean`
 reads "audited, no leak present" — nothing was ever shipped in a

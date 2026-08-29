@@ -15,6 +15,9 @@
 .export mul38_lo_tab, mul38_hi_tab
 .export sqr_lo, sqr_hi
 .export a24_b0, a24_b1, a24_b2, a24_b3
+.export x25519_reu_fault
+.export x25519_reu_settle_cnt   ; REU_SETTLE slow path: cross-TU internal, not API
+.export x25519_reu_settle_smp   ; REU_SETTLE slow path: cross-TU internal, not API
 
 .segment "LIB_X25519_DATA"
 
@@ -117,6 +120,28 @@ x25_x1:
 ; --- fe25519_mul optimization buffers ---
 mul_cached_a:
         .byte 0                ; cached src1[i] for inlined multiply
+
+; --- REU settle fault byte (c64-lib-contract SPEC v0.13.0 §8.2) ---
+; Sticky. Cleared at reu_mul_init / reu_probe entry; the REU_SETTLE
+; macro (src/constants.s) ORs in $01 when its bounded spin expires
+; without seeing END OF BLOCK and $02 when $DF00 bit 5 (VERIFY ERROR)
+; was observed. Never cleared by the library otherwise — a host reads
+; it after any REU-touching call to learn whether every DMA since the
+; last init/probe was confirmed complete. Always 0 under the onchip
+; profile (no REU is touched). Not alignment-sensitive: it is a single
+; byte read/written by absolute address only.
+x25519_reu_fault:
+        .byte 0
+; x25519_reu_settle_slow's spin counter and last status sample. Written
+; only when a status read did not show exactly END OF BLOCK (never
+; observed on hardware); in memory so the settle clobbers A only.
+; Cross-TU internal (exported because the slow path lives in
+; x25519_init.s and the data here) — part of the linked name surface,
+; NOT part of the API; consumers must not reference them.
+x25519_reu_settle_cnt:
+        .byte 0
+x25519_reu_settle_smp:
+        .byte 0
 
 ; mul_src2_buf is 33 bytes, NOT 32. Byte 32 is a load-bearing zero
 ; (the "phantom slot") relied on by fe25519_sqr body B. Body B

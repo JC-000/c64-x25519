@@ -27,8 +27,8 @@
 ; ----------------------------------------------------------------------------
 ;
 ;   LIB_X25519_VERSION_MAJOR   semver major (currently 0)
-;   LIB_X25519_VERSION_MINOR   semver minor (currently 11)
-;   LIB_X25519_VERSION_PATCH   semver patch (currently 3)
+;   LIB_X25519_VERSION_MINOR   semver minor (currently 12)
+;   LIB_X25519_VERSION_PATCH   semver patch (currently 0)
 ;   LIB_X25519_ABI_VERSION     exported-surface generation counter
 ;                              (currently 3; contract v0.7.5 — bumped
 ;                              on any breaking export change, does NOT
@@ -82,6 +82,32 @@
 ;                   fe25519_sqr, plus a 64-byte zero block in bank 2 for
 ;                   reu_clear_wide). REQUIRES sqtab_init to have been called
 ;                   first. Takes ~1-2 seconds. No inputs. Clobbers: A, X, Y.
+;                   Clears x25519_reu_fault at entry (see below).
+;
+;   x25519_reu_fault  (v0.12.0, c64-lib-contract SPEC v0.13.0 §8.2)
+;                   One sticky byte in LIB_X25519_DATA. After every REU
+;                   execute the library reads $DF00 and confirms bit 6
+;                   (END OF BLOCK) before touching another REU register,
+;                   spinning at most X25519_REU_SETTLE_ITER times
+;                   (on bit 6 alone; bit 5 is recorded separately).
+;                   The clock the settle is claimed for is
+;                   X25519_MAX_CLOCK_MHZ (default 48, asserted <= 48
+;                   until a 64 MHz bracket exists). x25519_reu_settle_slow
+;                   / _smp / _cnt are cross-TU internals, NOT API.
+;                   (default 8; `-D` overridable, a §6.2 knob). The spin
+;                   has no error return, so it reports here instead:
+;                     bit 0 ($01)  a spin bound expired without END OF
+;                                  BLOCK — a transfer was not confirmed
+;                     bit 1 ($02)  $DF00 bit 5 (VERIFY ERROR) was seen
+;                   Cleared to 0 at reu_mul_init and reu_probe entry;
+;                   never cleared otherwise, so a host reads it after a
+;                   scalarmult to learn whether every DMA since the last
+;                   init/probe completed. reu_probe folds a non-zero
+;                   value into its C=0 return (the contract's SHOULD:
+;                   surface it the way a missing REU is surfaced).
+;                   Always 0 under lib-x25519-onchip (no REU access).
+;                   Conformance is claimed at <= 48 MHz (U64E fw 3.15
+;                   bracket); 64 MHz is unbracketed by the contract.
 ;
 ;   Order:          jsr sqtab_init
 ;                   jsr reu_mul_init
@@ -172,7 +198,10 @@
 ;                       Replaced by the inline DMA setup at the top of
 ;                       fe25519_mul. No external migration needed if you
 ;                       call fe25519_mul; otherwise inline the bank
-;                       computation + reu_command write yourself.
+;                       computation + reu_command write yourself — AND
+;                       the §8.2 v0.13.0 settle after it (v0.12.0; the
+;                       helper still clobbers A only — REU_SETTLE keeps
+;                       its spin counter in memory).
 ;
 ;   x25_basepoint       32-byte read-only buffer holding the Curve25519
 ;                       basepoint {9, 0, ..., 0}. Used only by
@@ -376,6 +405,8 @@
 .import fe25519_copy, fe25519_zero, fe25519_one, fe25519_cswap
 .import fe25519_inv, fe25519_reduce_final, fe25519_mul_a24
 .import x25_scalar, x25_u, x25_result, x25_basepoint
+.import x25519_reu_fault             ; §8.2 v0.13.0 sticky settle-fault byte
+                                     ; (v0.12.0; always 0 under onchip)
 .import vic_blank, vic_unblank, bench_start, bench_stop, bench_ticks
 .import bench_cycles_start, bench_cycles_stop, bench_cycles
 

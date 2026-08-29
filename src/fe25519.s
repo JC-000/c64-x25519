@@ -37,6 +37,7 @@
 
 ; --- Imports from x25519_init.s ---
 .import reu_clear_wide
+.import x25519_reu_settle_slow ; §8.2 v0.13.0 REU_SETTLE rare path (x25519_init.s)
 .if ::SQR_DMA_K
 ; reu_fetch_doubled_row is only defined (and only invoked) when the
 ; pre-doubled-table DMA fast-path is compiled in. In the K=0 variant
@@ -710,6 +711,8 @@
         sta reu_reu_bank
         lda #%10110001         ; execute + autoload + FETCH (REU->C64)
         sta reu_command
+        REU_SETTLE             ; §8.2 v0.13.0: confirm END OF BLOCK + settle
+                               ; (clobbers A only; C is `clc`'d below.)
 .endif
 
         ; Self-mod: patch accumulation addresses to base = fe_wide + i

@@ -238,4 +238,101 @@ sqtab_hi = LIB_SHARED_SQTAB_BASE + $0200
   reu_addr_ctrl   = $df0a         ; address control
 .endif
 
+; --- REU post-execute settle (c64-lib-contract SPEC v0.13.0 §8.2, c771935) --
+;
+; Every REU execute (`sta reu_command` with bit 7 set) MUST be followed,
+; before the next access to any REU register, by two SEPARATE
+; obligations: (a) a read of reu_status ($DF00) confirming bit 6 (END
+; OF BLOCK) is set, spinning bounded if it is not, and (b) a
+; post-execute settle meeting the empirically bracketed floor. Tracked
+; at c64-x25519 #115; contract#144 / contract#146.
+;
+; Obligation (b) and the clock claim. The floor is bracketed at
+; >= 49 cycles at 48 MHz on an Ultimate 64 Elite fw 3.15 and is
+; UNBRACKETED at 64 MHz. On the U64E one I/O-mapped `lda reu_status`
+; costs ~49 cycles at turbo, so the confirm read in (a) is what
+; currently satisfies (b) — the contract itself calls that meeting the
+; floor "by accident". This library does not let the accident be
+; silent: X25519_MAX_CLOCK_MHZ (below) states the clock the settle is
+; claimed for, and the .assert makes a build that claims more than the
+; bracketed 48 MHz FAIL rather than quietly ship a settle nobody
+; measured. Raising the assert bound is only legitimate together with a
+; measured bracket at the new clock (and, if that bracket exceeds one
+; status read, an explicit delay added to x25519_reu_settle_slow's
+; caller path). Until then (b) is satisfied BECAUSE of this asserted
+; bound, not by the read as such.
+;
+; X25519_REU_SETTLE_ITER is the spin bound for (a) — a §6.2 knob (`-D`
+; overridable; the Makefile's CONTRACT_STAMP reads ALL_DEFINES so a
+; changed value invalidates the archive). Reporter's hardware reference
+; found bit 6 set on the FIRST read in all 19,416 calls, so 8 is
+; generous headroom, not a tuned figure. Total status reads before a
+; fault is recorded = X25519_REU_SETTLE_ITER (one in the macro,
+; ITER-1 in the slow path).
+;
+; REU_SETTLE — the settle, as a macro (not a proc) because three of the
+; twelve execute sites are on the fe25519_mul / fe25519_sqr hot path.
+;
+;   Fast path (the only path ever observed on hardware, and the only
+;   path under VICE): lda abs / and / eor / beq = 11 cycles, 9 bytes,
+;   taken iff the single read shows bit 6 SET and bit 5 CLEAR. Reading
+;   $DF00 clears bits 5-7, so the byte is read ONCE into A and every
+;   decision is made on that sample.
+;
+;   Anything else — bit 6 clear (transfer not confirmed), or bit 5
+;   (VERIFY ERROR) set with or without bit 6 — takes
+;   `jsr x25519_reu_settle_slow` (src/x25519_init.s), which keeps
+;   spinning on bit 6 ALONE until it is set or the bound expires, and
+;   records bit 5 separately: $02 into the sticky x25519_reu_fault if
+;   bit 5 was ever observed, $01 if the bound expired without bit 6.
+;   The clause says confirm bit 6; a verify-fault sample never ends the
+;   spin early. (This library issues no VERIFY command, so bit 5 is a
+;   hardware fault, not a mismatch.) The byte is cleared at
+;   reu_mul_init / reu_probe entry and never otherwise, so a host can
+;   inspect it after any call (src/x25519.inc); reu_probe folds a
+;   non-zero value into its C=0 return — the contract's SHOULD that a
+;   bounded-spin failure surfaces the way a missing REU does at init.
+;
+;   Autoload-latch invariant (see reu_fetch_doubled_row's banner in
+;   src/x25519_init.s): reading $DF00 does NOT disturb the latched
+;   address / length / control registers. Per the REC datasheet the
+;   status register is read-only and its read side-effect is confined
+;   to clearing its own bits 5-7; the autoload reload of $DF02-$DF08
+;   happens at execute completion, keyed on the command register's
+;   bit 5, and is independent of whether or when status is read.
+;
+;   Registers: clobbers A ONLY, on both paths. X, Y and C are preserved
+;   (lda/and/eor/beq/jsr and the slow proc's lda/and/ora/dec/branches
+;   never write C), so the §8.2 provider-surface convention of
+;   reu_fetch_mul_row ("clobbers A") is unchanged. The slow path keeps
+;   its sample and counter in two cross-TU internal bytes in
+;   src/data.s (x25519_reu_settle_smp / _cnt — exported for linkage,
+;   not API).
+;
+;   CT: the sampled bits are hardware completion state for a transfer
+;   whose length (256 or 512 B), direction and target are fixed; only
+;   the REU address varies with the secret row index and REU DMA cost
+;   is address-independent. Catalogued as L31 in docs/CT_ANALYSIS.md.
+.ifndef X25519_REU_SETTLE_ITER
+  X25519_REU_SETTLE_ITER = 8
+.endif
+.assert X25519_REU_SETTLE_ITER >= 2 .and X25519_REU_SETTLE_ITER <= 255, error, "X25519_REU_SETTLE_ITER must be 2..255 (8-bit spin counter; first read is unconditional)"
+
+.ifndef X25519_MAX_CLOCK_MHZ
+  X25519_MAX_CLOCK_MHZ = 48
+.endif
+.assert X25519_MAX_CLOCK_MHZ <= 48, error, "SPEC v0.13.0 §8.2: the REU post-execute settle is bracketed only to 48 MHz (U64E fw 3.15); claiming X25519_MAX_CLOCK_MHZ > 48 needs a measured settle bracket at that clock first (contract#144)"
+
+.macro REU_SETTLE
+        ; Unnamed `:` label only: a named (even `.local`) label inside
+        ; the expansion would open a new cheap-local scope and orphan
+        ; the enclosing proc's `@labels` across the site.
+        lda reu_status         ; single read: clears bits 5-7
+        and #$60               ; bit 6 END OF BLOCK, bit 5 VERIFY ERROR
+        eor #$40               ; zero iff bit 6 set AND bit 5 clear
+        beq :+                 ; -> done (11 cycles)
+        jsr x25519_reu_settle_slow   ; A = sample ^ $40; spins on bit 6
+:
+.endmacro
+
 .endif ; CONSTANTS_S_INCLUDED

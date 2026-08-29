@@ -1,5 +1,15 @@
 ; =============================================================================
 ; x25519_init.s - Library initialization and REU helper routines
+;
+; REU execute discipline (c64-lib-contract SPEC v0.13.0 §8.2, tag c771935; tracked at
+; c64-x25519 #115, contract#146): every `sta reu_command` in this file
+; is immediately followed by the REU_SETTLE macro from src/constants.s,
+; which reads $DF00 once per spin, confirms bit 6 (END OF BLOCK), and
+; by that single I/O read leaves the >= 49-cycle post-execute settle the
+; contract brackets at 48 MHz on the U64E. Conformance is claimed at
+; <= 48 MHz only; 64 MHz is unbracketed. Faults land in the sticky
+; x25519_reu_fault byte (src/data.s), cleared at reu_mul_init and
+; reu_probe entry.
 ; =============================================================================
 
 .setcpu "6502"
@@ -38,6 +48,9 @@
 
 ; --- Imports from data.s ---
 .import mul_dma_lo, mul_dma_hi, mul_dma_carry, mul_cached_a
+.import x25519_reu_fault       ; §8.2 v0.13.0 sticky settle-fault byte
+.import x25519_reu_settle_cnt  ; REU_SETTLE slow-path spin counter (cross-TU internal)
+.import x25519_reu_settle_smp  ; REU_SETTLE slow-path status sample (cross-TU internal)
 
 .segment "LIB_X25519_CODE"
 
@@ -117,6 +130,7 @@ reu_mul_tables_init = reu_mul_init
 
 .proc reu_mul_init
         lda #0
+        sta x25519_reu_fault   ; §8.2 v0.13.0: fresh fault window
         sta reu_init_a         ; outer counter (multiplier a)
 
 @outer:
@@ -165,6 +179,7 @@ reu_mul_tables_init = reu_mul_init
         sta reu_addr_ctrl      ; both addresses increment
         lda #%10110000         ; execute + autoload + STASH (C64->REU)
         sta reu_command
+        REU_SETTLE             ; §8.2 v0.13.0: confirm END OF BLOCK + settle
 
         ; Stash hi table (256 bytes) to REU at offset a*512+256
         lda #<(mul_dma_hi)
@@ -190,6 +205,7 @@ reu_mul_tables_init = reu_mul_init
         sta reu_addr_ctrl
         lda #%10110000         ; execute + autoload + STASH
         sta reu_command
+        REU_SETTLE             ; §8.2 v0.13.0: confirm END OF BLOCK + settle
 
 .if ::SQR_DMA_K
         ; --- Generate pre-doubled tables for fe25519_sqr (8f+8g) ---
@@ -248,6 +264,7 @@ reu_mul_tables_init = reu_mul_init
         sta reu_addr_ctrl
         lda #%10110000
         sta reu_command
+        REU_SETTLE             ; §8.2 v0.13.0: confirm END OF BLOCK + settle
 
         ; Stash doubled hi table to banks 4-5, offset a*512+256
         lda #<(mul_dma_hi)
@@ -272,6 +289,7 @@ reu_mul_tables_init = reu_mul_init
         sta reu_addr_ctrl
         lda #%10110000
         sta reu_command
+        REU_SETTLE             ; §8.2 v0.13.0: confirm END OF BLOCK + settle
 
         ; Stash carry table (256 bytes) to bank 3, offset a*256
         lda #<(mul_dma_carry)
@@ -291,6 +309,7 @@ reu_mul_tables_init = reu_mul_init
         sta reu_addr_ctrl
         lda #%10110000
         sta reu_command
+        REU_SETTLE             ; §8.2 v0.13.0: confirm END OF BLOCK + settle
 .endif  ; SQR_DMA_K (non-zero)
 
         inc reu_init_a
@@ -335,7 +354,8 @@ reu_init_b:     .byte 0
 ;
 ; Input: A = multiplier value (0-255) in mul_cached_a
 ; Fetches 512 bytes: 256 lo bytes to mul_dma_lo, 256 hi bytes to mul_dma_hi
-; Clobbers: A
+; Clobbers: A only (unchanged by the v0.12.0 §8.2 v0.13.0 settle: REU_SETTLE
+;           counts its bounded spin in memory). X, Y and C preserved.
 ;
 ; The `bank_lda` regular local label (not cheap-`@`-local because we
 ; address it from outside the proc via `proc::label` syntax, which
@@ -362,6 +382,57 @@ reu_init_b:     .byte 0
 .segment "LIB_X25519_CODE"
 
 .if ::X25519_ONCHIP_MUL = 0
+; =============================================================================
+; x25519_reu_settle_slow - REU_SETTLE's rare path (SPEC v0.13.0 §8.2)
+;
+; Reached from the REU_SETTLE macro (src/constants.s) whenever its one
+; unconditional $DF00 read did NOT show exactly "bit 6 set, bit 5
+; clear". Never taken on hardware so far (bit 6 was set on the first
+; read in all 19,416 measured calls) nor under VICE; kept out of line
+; so the twelve expansion sites carry 9 bytes each, and so the clause's
+; logic is written once.
+;
+; Input:    A = (status & $60) ^ $40 from the macro's read.
+; Behaviour: records $02 in x25519_reu_fault if bit 5 (VERIFY ERROR) is
+;           seen on ANY sample; keeps spinning on bit 6 (END OF BLOCK)
+;           ALONE until it is set or X25519_REU_SETTLE_ITER status reads
+;           in total (macro + here) have been made, then records $01.
+;           A verify-fault sample never ends the spin early — the clause
+;           says confirm bit 6.
+; Clobbers: A only. X, Y, C preserved. Uses the cross-TU internal bytes
+;           x25519_reu_settle_smp / x25519_reu_settle_cnt (src/data.s).
+; =============================================================================
+.proc x25519_reu_settle_slow
+        eor #$40               ; back to status & $60
+        sta x25519_reu_settle_smp
+        lda #X25519_REU_SETTLE_ITER
+        sta x25519_reu_settle_cnt
+@check:
+        lda x25519_reu_settle_smp
+        and #$20               ; bit 5: VERIFY ERROR on this sample?
+        beq @no_b5
+        lda #$02
+        ora x25519_reu_fault
+        sta x25519_reu_fault
+@no_b5:
+        lda x25519_reu_settle_smp
+        and #$40               ; bit 6: END OF BLOCK confirmed?
+        bne @done
+        dec x25519_reu_settle_cnt
+        beq @expired           ; ITER reads made in total -> give up
+        lda reu_status         ; next sample (clears bits 5-7)
+        and #$60
+        sta x25519_reu_settle_smp
+        jmp @check
+@expired:
+        lda #$01               ; bound expired: transfer never confirmed
+        ora x25519_reu_fault
+        sta x25519_reu_fault
+@done:
+        rts
+.endproc
+.export x25519_reu_settle_slow
+
 .ifndef SHARED_REU_MUL_FETCH
 .proc reu_fetch_mul_row
         lda mul_cached_a
@@ -373,6 +444,7 @@ bank_lda:
         sta reu_reu_bank
         lda #%10110001         ; execute + autoload + FETCH (REU->C64)
         sta reu_command
+        REU_SETTLE             ; §8.2 v0.13.0: confirm END OF BLOCK + settle
         rts
 .endproc
 
@@ -392,7 +464,7 @@ reu_fetch_mul_row_bank_patch := reu_fetch_mul_row::bank_lda + 1
 ; Input: A = multiplier value in mul_cached_a
 ; Fetches 512 bytes from banks 4-5 to mul_dma_lo/hi (doubled lo+hi),
 ; then 256 bytes from bank 3 to mul_dma_carry (17th-bit carry flags).
-; Clobbers: A
+; Clobbers: A (REU_SETTLE after each of the two DMAs clobbers A only)
 ; NOTE: Leaves REU registers in a non-default state; caller must restore
 ; if the regular mul-row FETCH config is needed afterward (see
 ; reu_clear_wide's autoload-restore tail, which is what fe25519_sqr
@@ -514,6 +586,7 @@ reu_fetch_mul_row_bank_patch := reu_fetch_mul_row::bank_lda + 1
         sta reu_reu_bank
         lda #%10110001
         sta reu_command
+        REU_SETTLE             ; §8.2 v0.13.0: confirm END OF BLOCK + settle
         rts
 .endproc
 .endif  ; SQR_DMA_K
@@ -602,7 +675,9 @@ reu_fetch_mul_row_bank_patch := reu_fetch_mul_row::bank_lda + 1
 ;
 ; Output:
 ;   C = 1   REU is present and round-trips the sentinel correctly
-;   C = 0   no REU detected (or REU is faulty)
+;   C = 0   no REU detected (or REU is faulty, or a §8.2 v0.13.0
+;           settle fault was recorded in x25519_reu_fault during the
+;           probe's four DMAs — inspect that byte to tell them apart)
 ;
 ; This routine saves and restores enough REU state that subsequent
 ; sqtab_init / reu_mul_init / x25519_scalarmult calls work as if it
@@ -628,6 +703,8 @@ reu_fetch_mul_row_bank_patch := reu_fetch_mul_row::bank_lda + 1
 ;  link the default-profile archive and probe there.)
 .export reu_probe
 .proc reu_probe
+        lda #0
+        sta x25519_reu_fault   ; §8.2 v0.13.0: fresh fault window
         ; Save original REU register set we are about to disturb so the
         ; library's own state machine isn't surprised after probing.
         lda reu_c64_lo
@@ -663,6 +740,7 @@ reu_fetch_mul_row_bank_patch := reu_fetch_mul_row::bank_lda + 1
         sta reu_len_hi
         lda #%10010001         ; execute (no autoload) + FETCH
         sta reu_command
+        REU_SETTLE             ; §8.2 v0.13.0: confirm END OF BLOCK + settle
         lda @scratch
         sta @orig_byte         ; remember pre-probe byte for restore
 
@@ -685,6 +763,7 @@ reu_fetch_mul_row_bank_patch := reu_fetch_mul_row::bank_lda + 1
         sta reu_len_hi
         lda #%10010000         ; execute (no autoload) + STASH
         sta reu_command
+        REU_SETTLE             ; §8.2 v0.13.0: confirm END OF BLOCK + settle
 
         ; Round-trip read back to scratch, then capture it in @rt_byte
         ; before any subsequent DMA can stomp scratch.
@@ -706,6 +785,7 @@ reu_fetch_mul_row_bank_patch := reu_fetch_mul_row::bank_lda + 1
         sta reu_len_hi
         lda #%10010001         ; execute (no autoload) + FETCH
         sta reu_command
+        REU_SETTLE             ; §8.2 v0.13.0: confirm END OF BLOCK + settle
         lda @scratch           ; latch fetched byte to a private slot
         sta @rt_byte
 
@@ -730,6 +810,7 @@ reu_fetch_mul_row_bank_patch := reu_fetch_mul_row::bank_lda + 1
         sta reu_len_hi
         lda #%10010000         ; execute (no autoload) + STASH (restore)
         sta reu_command
+        REU_SETTLE             ; §8.2 v0.13.0: confirm END OF BLOCK + settle
 
         ; Now restore the saved REU register set the caller may rely on.
         lda @save_c64_lo
@@ -755,12 +836,18 @@ reu_fetch_mul_row_bank_patch := reu_fetch_mul_row::bank_lda + 1
         ; sentinel we wrote: REU present.
         lda @rt_byte
         cmp #$5A
-        beq @ok
-        clc                    ; C = 0: REU not present / not working
-        rts
-@ok:
+        bne @fail
+        ; §8.2 v0.13.0: a bounded-spin expiry or verify fault during any
+        ; of the four probe DMAs is surfaced the same way a missing REU
+        ; is (the contract's SHOULD) — C = 0. The sticky byte keeps the
+        ; distinction for hosts that want it.
+        lda x25519_reu_fault
+        bne @fail
         sec                    ; C = 1: REU OK
         rts
+@fail:
+        clc                    ; C = 0: REU not present / not working /
+        rts                    ;        settle fault (see x25519_reu_fault)
 
 @scratch:       .byte 0        ; 1-byte DMA scratch buffer
 @orig_byte:     .byte 0        ; saved pre-probe byte at bank7/$0000
