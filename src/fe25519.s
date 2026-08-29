@@ -342,9 +342,14 @@
 ; =============================================================================
 ; fe25519_reduce_final - Canonical reduction of (fe25519_dst) to [0, p-1]
 ;
-; Pre: post-fe_reduce_wide invariant guarantees R <= 2*p (Inv3 / W2),
-; so two unconditional iterations of (compare-with-p, masked subtract-p)
-; suffice to land R in [0, p).
+; Pre: R < 2^256 = 2p + 38, i.e. R <= 2p + 37 (Inv3 as corrected by the
+; 2026-08-28 audit, A2: fe_reduce_wide's true ceiling is 2^256 - 1, NOT
+; "<= 2p" as previously documented — (2p-1)^2 reduces raw to 2p+1 and
+; the (2p-i)(2p-j) search maximum reaches 2p+37). Two unconditional
+; iterations of (compare-with-p, masked subtract-p) still suffice: any
+; R < 3p lands in [0, p) after two conditional subtractions, and
+; 2p + 37 < 3p. Concretely, iter 1 leaves R < 2^256 - p = p + 38 and
+; iter 2 leaves R < 38 < p.
 ; Clobbers: A, X, Y, fe_cmp_mask, fe_subp_rhs.
 ;
 ; L29 closure: constant-time via masked sub-p. The pre-L29 version used
@@ -355,10 +360,11 @@
 ;       jsr fe_cmp_p_ct              ; mask <- (dst >= p) ? $FF : $00
 ;       <32-byte unconditional masked sub-p>
 ;
-; Two iterations suffice because after iter 0 R is in [0, p+max(0,p-1)]
-; ⊆ [0, 2p); after iter 1 R must be in [0, p). A 3-iteration variant
-; was rejected by the maintainer in favor of relying on the R <= 2p
-; bound, gated by the regression test in tools/test_fe_reduce_wide_bound.py.
+; Two iterations suffice because after iter 0 R is in [0, p + 38)
+; (R < 2^256 minus one conditional p); after iter 1 R must be in
+; [0, p). A 3-iteration variant was rejected by the maintainer in favor
+; of relying on the R < 3p bound, gated by the regression test in
+; tools/test_fe_reduce_wide_bound.py (asserts R <= 2p + 37).
 ;
 ; SMC: dst patched into both sub_p loops at proc entry. fe_cmp_p_ct
 ; performs its own dst patch internally on each call.
@@ -1868,6 +1874,27 @@ sqr_ripple_start:  .byte 0
         ;   remaining residual through the high bytes. (`inx/dey/bne` —
         ;   NOT `cpx/bcc`, since cpx clobbers C, breaking the carry chain;
         ;   this is the v0.1.0 carry-bug pattern in fe_reduce_wide.)
+        ;
+        ;   Byte-31 carry-out fold (audit 2026-08-28 A1, L32):
+        ;   Write 121665*a = hi*2^256 + lo, hi = fe_wide[32..34] < 121665,
+        ;   lo = fe_wide[0..31] < 2^256. The three stages compute
+        ;   lo + 38*hi positionally; 38*hi <= 38*121,664 < 2^23, so the
+        ;   sum is < 2^256 + 2^23 and wraps 2^256 AT MOST ONCE — but it
+        ;   CAN wrap, because lo may sit within 2^23 of 2^256 (for
+        ;   ~5.8e5 canonical a < p, and for every a in (2p, 2^256)). The
+        ;   pre-v0.12 code dropped the byte-31 carry-out of the final
+        ;   ripple, producing a result short by exactly 38 (2^256 ≡ 38
+        ;   mod p); its "plus the original fe_wide value < 2^256"
+        ;   magnitude argument was wrong for exactly this reason. Fix:
+        ;   capture C via `lda #0 / adc #0`, look up mul38_lo_tab[C]
+        ;   (0 or 38 — mul38_lo_tab[1] = 38, [0] = 0), add at byte 0 and
+        ;   ripple through bytes 1..31 with a public-count chain.
+        ;   The second fold cannot overflow: if C=1 the wrapped value is
+        ;   < 2^23, so +38 stays < 2^256; if C=0 the value is < 2^256
+        ;   and +0 changes nothing. Hence the second ripple's byte-31
+        ;   carry-out is always 0 and may be dropped. CT: no branch on C;
+        ;   the table lookup is Y in {0,1}, and the ripple is the same
+        ;   fixed-length unconditional chain as @final_ripple.
         ; ---------------------------------------------------------------
 
         ; Zero fe_wide[0..36] - widened by 2 vs. the pre-L28 path so the
@@ -2044,11 +2071,12 @@ sqr_ripple_start:  .byte 0
         ; ---- Final ripple: absorb fe_carry through fe_wide[4..31] ----
         ; Add fe_carry to fe_wide+4, then propagate any new carry through
         ; bytes 5..31 via unconditional `inx/dey/bne` ripple.
-        ; Magnitude: total reduction adds ≤ 38*255 + 38*255 + 38 ≤ 19,418
-        ; ≈ 2^15 across bytes 0..3 of fe_wide, plus the original fe_wide
-        ; value < 2^256. So the ripple chain length to escape would
-        ; require many consecutive $FF bytes — public-count loop
-        ; deterministically absorbs.
+        ; Magnitude: fe_wide[0..31] = lo + 38*hi (positional), with
+        ; lo < 2^256 and 38*hi < 2^23. This CAN exceed 2^256 — lo is an
+        ; arbitrary 256-bit residue of 121665*a and may lie within 2^23
+        ; of 2^256 — so the byte-31 carry-out of this ripple is
+        ; meaningful (weight 2^256 ≡ 38 mod p) and is folded back below.
+        ; It is at most 1 because the sum is < 2^256 + 2^23 < 2^257.
         clc
         lda fe_wide+4
         adc fe_carry
@@ -2062,6 +2090,31 @@ sqr_ripple_start:  .byte 0
         inx
         dey
         bne @final_ripple
+
+        ; ---- L32: fold the byte-31 carry-out (2^256 ≡ 38) back in ----
+        ; C = carry out of byte 31 (0 or 1). Capture it branchlessly and
+        ; translate to {0, 38} via mul38_lo_tab (mul38_lo_tab[0] = 0,
+        ; mul38_lo_tab[1] = 38 — data.s), then add at byte 0 and ripple
+        ; through bytes 1..31 with the same public-count chain shape.
+        ; Cannot overflow: with C=1 the wrapped value is < 2^23, so +38
+        ; stays far below 2^256; with C=0 nothing is added. The chain's
+        ; byte-31 carry-out is therefore always 0 (see proc banner).
+        lda #0
+        adc #0                 ; A = C (no branch on the secret carry)
+        tay
+        lda mul38_lo_tab,y     ; Y in {0,1}: 0 or 38, no page-cross variance
+        clc
+        adc fe_wide
+        sta fe_wide
+        ldx #1
+        ldy #31
+@fold_ripple:
+        lda fe_wide,x
+        adc #0
+        sta fe_wide,x
+        inx
+        dey
+        bne @fold_ripple
 
         ; Copy to (fe25519_dst). PUBLIC loop bound (#31) — CT-clean.
         ldy #31

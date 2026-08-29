@@ -389,10 +389,12 @@
         ; W4 pairwise-safe pruning: reduce_final dropped here. The very
         ; next consumer of AA (fe25519_sub for E = AA - BB) is paired
         ; with a partner operand (BB) that is canonical: BB's
-        ; reduce_final immediately below is retained. Per Inv3, fe25519
-        ; output bound ≤ 2p plus one canonical partner is sufficient
-        ; for the masked reduce_final inside fe25519_sub to produce a
-        ; canonical result without an explicit reduce here.
+        ; reduce_final immediately below is retained. Per Inv3 (as
+        ; corrected 2026-08-28: fe25519_mul/sqr output is < 2^256 =
+        ; 2p+38, not ≤ 2p), one operand < 2^256 on the src1 side plus
+        ; one canonical partner is sufficient for fe25519_sub's masked
+        ; add-p tail to produce a result that is correct mod p and
+        ; < 2^256 — all the following fe25519_mul/sqr/mul_a24 require.
 
         ; BB = B^2 → fe25519_tmp4
         lda #<(x25_b)
@@ -464,9 +466,11 @@
         jsr fe25519_mul             ; x25_da = D * A
         ; W4 pairwise-safe pruning: reduce_final dropped here. DA is
         ; consumed only as `DA + CB` and `DA - CB`; CB's reduce_final
-        ; is retained below as the canonical partner. Per Inv3 bound,
-        ; one canonical operand per pair suffices for the next
-        ; fe25519_add/sub to produce a correct, canonical result.
+        ; is retained below as the canonical partner. Per Inv3 bound
+        ; (< 2^256, corrected 2026-08-28), one canonical operand per
+        ; pair suffices for the next fe25519_add/sub to produce a
+        ; correct (mod p), < 2^256 result: add's sum is < 2^256 + p so
+        ; its single masked sub-p covers it; sub keeps DA on src1.
 
         ; CB = C * B → x25_cb
         lda #<(fe25519_tmp1)

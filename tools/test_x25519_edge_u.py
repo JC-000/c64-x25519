@@ -30,15 +30,24 @@ This test exercises x25519_scalarmult with the following u-coordinates:
       u = 2^255 - 19 - 1                    (= p - 1, already above)
 
 For each (scalar, u), the C64 result must match pyca/cryptography to the
-byte. RFC 7748 §6.1 permits all-zero output for low-order points but does
-not require it; the library is conformant either way as long as it agrees
-with the oracle on every input.
+byte. On a low-order u the shared secret is all-zero and pyca (OpenSSL)
+REJECTS it with ValueError("Error computing shared key") — the RFC 7748
+§6.1 "MAY check for the all-zero value" option. The library does not
+check (documented: caller's responsibility), so on that ValueError the
+expected output is the 32 zero bytes the RFC defines, and the test asserts
+the C64 returns exactly that.
+
+HISTORY (audit 2026-08-28, A4): until v0.12.0 this test propagated pyca's
+ValueError and died on its first case (u = 0), so it had never passed;
+`--slow` gating (justified by a stale "~100 min per ladder" figure —
+measured 18-26 s under VICE warp) kept it out of the suite. It now runs in
+`make test-slow`.
 
 A small set of randomized 32-byte clamped scalars is paired with each
 edge-u to broaden coverage without paying for huge iteration counts.
 
-Each X25519 scalarmult takes ~100 minutes in VICE warp mode. The test is
-gated on --slow.
+Each X25519 scalarmult takes ~18-26 s in VICE warp mode (7 ladders per
+run). The test is gated on --slow (test-slow passes it).
 
 Usage:
     python3 tools/test_x25519_edge_u.py [--seed S] [--verbose] [--slow]
@@ -61,7 +70,7 @@ LABELS_PATH = os.path.join(PROJECT_ROOT, "build", "labels.txt")
 
 VERBOSE = False
 SLOW = False
-SCALARS_PER_U = 1  # number of random scalars per edge-u (each ~100 min)
+SCALARS_PER_U = 1  # number of random scalars per edge-u (each ~20 s)
 
 # Make tools/ importable so we can pull in the cryptography-backed reference.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -173,16 +182,24 @@ def test_edge_u_sweep(transport, labels, rng, scalars_per_u):
             scalar = bytes(rng.randint(0, 255) for _ in range(32))
             scalar = _clamp_scalar_bytes(scalar)
 
-            expected_hex = ref_x25519.x25519_scalarmult(
-                scalar.hex(), u_bytes.hex())
-            expected = bytes.fromhex(expected_hex)
+            try:
+                expected_hex = ref_x25519.x25519_scalarmult(
+                    scalar.hex(), u_bytes.hex())
+                expected = bytes.fromhex(expected_hex)
+                src = "pyca"
+            except ValueError:
+                # pyca/OpenSSL rejects an all-zero shared secret (RFC 7748
+                # §6.1 MAY-check). The library does not check, so the
+                # expected output is the all-zero value itself.
+                expected = bytes(32)
+                src = "pyca-rejects/RFC-6.1-all-zero"
 
             print(f"    {label} scalar#{j}...", end="", flush=True)
             got = c64_x25519_scalarmult(transport, labels, scalar, u_bytes)
 
             if got == expected:
                 passed += 1
-                print(" PASS")
+                print(f" PASS ({src})")
                 if VERBOSE:
                     if int.from_bytes(got, "little") == 0:
                         print(f"      (all-zero output, as expected for "
@@ -259,7 +276,7 @@ def main():
 
     if not SLOW:
         print("Edge-u sweep is gated on --slow "
-              "(each ladder ~100 min in VICE warp mode).")
+              "(each ladder ~20 s in VICE warp mode).")
         print("  Re-run with: python3 tools/test_x25519_edge_u.py --slow")
         sys.exit(0)
 

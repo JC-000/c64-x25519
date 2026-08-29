@@ -1,19 +1,30 @@
 #!/usr/bin/env python3
-"""test_fe_reduce_wide_bound.py — strict R <= 2*p bound regression for
-fe25519_mul's post-fe_reduce_wide output.
+"""test_fe_reduce_wide_bound.py — strict R <= 2p+37 (= 2^256-1) bound
+regression for fe25519_mul's post-fe_reduce_wide output.
+
+BOUND CORRECTION (audit 2026-08-28, A2): this file and CT_ANALYSIS.md
+used to claim R <= 2p. That is FALSE — e.g. (2p-1)*(2p-1) reduces raw to
+2p+1, and the (2p-i)(2p-j) search maximum is 2p+37 = 2^256-1, the
+32-byte ceiling. The true Inv3 statement is R < 2^256 = 2p+38. Two
+masked subtract-p iterations in fe25519_reduce_final still suffice
+because 2p+37 < 3p. The bound asserted below is the corrected one; the
+random cases here never reached the old false bound, which is why the
+test passed while the documentation was wrong.
 
 Background
 ----------
 The L29 constant-time `fe25519_reduce_final` performs exactly TWO
 unconditional iterations of (compare-with-p, masked subtract-p). The
 2-iteration count is sufficient *iff* the value handed to
-fe25519_reduce_final is bounded above by 2*p. The library guarantees
-this via Inv3: every fe25519_mul / fe25519_sqr completes with the raw
-fe_reduce_wide output already in [0, 2*p).
+fe25519_reduce_final is below 3p. The library guarantees this via Inv3:
+every fe25519_mul / fe25519_sqr completes with the raw fe_reduce_wide
+output in [0, 2^256) = [0, 2p+38), and 2p+37 < 3p.
 
 This test is a runtime safety net for that bound: if some future
 refactor of fe_reduce_wide (or upstream of it) accidentally lets the
-post-reduce value exceed 2*p, fe25519_reduce_final will silently
+post-reduce value reach 3p (impossible for a 32-byte value, but a
+64-byte-to-32-byte reduction refactor could in principle leave a
+value that is not even correct mod p), fe25519_reduce_final will silently
 return non-canonical output and downstream comparisons / equality
 checks will start failing (or worse, fail differently for different
 inputs, leaking timing).
@@ -26,13 +37,14 @@ For each of N pseudo-random (a, b) pairs:
   3. jsr fe25519_mul.
   4. Read raw bytes from tmp3 (NO fe25519_reduce_final between jsr and
      read — we are explicitly checking the pre-reduce_final range).
-  5. Assert int(tmp3, "little") < 2*p.
+  5. Assert int(tmp3, "little") <= 2p+37 (= 2^256-1).
 
 Also checks correctness modulo p: raw_value % p == (a * b) % p.
 
-Pre-fix: this test would pass on the v0.3.0 codebase since fe_reduce_wide
-already produced R <= 2p; the test is a permanent safety net for any
-future change that might break that bound.
+The test is a permanent safety net for any future change that might
+break that bound or the mod-p correctness of the raw output. For the
+adversarial extreme cases ((2p-1)^2, search-max) see
+tools/test_fe_adversarial_bigint.py.
 
 Usage:
     python3 tools/test_fe_reduce_wide_bound.py
@@ -55,6 +67,7 @@ LABELS_PATH = os.path.join(PROJECT_ROOT, "build", "labels.txt")
 
 P = (1 << 255) - 19
 TWO_P = 2 * P
+RAW_MAX = TWO_P + 37  # = 2^256 - 1, the corrected Inv3 ceiling (A2)
 N_CASES = 50
 SEED = 0xBADC0DE29  # deterministic
 
@@ -98,7 +111,7 @@ def run_case(t, labels, tmps, idx, a_bytes, b_bytes):
     b_int = int.from_bytes(b_bytes, "little")
     expected_mod = (a_int * b_int) % P
 
-    bound_ok = raw_int < TWO_P
+    bound_ok = raw_int <= RAW_MAX
     mod_ok = (raw_int % P) == expected_mod
     ok = bound_ok and mod_ok
 
@@ -107,7 +120,7 @@ def run_case(t, labels, tmps, idx, a_bytes, b_bytes):
         print(f"         a       = {a_bytes.hex()}")
         print(f"         b       = {b_bytes.hex()}")
         print(f"         raw     = {raw.hex()}")
-        print(f"         raw/P   = {raw_int / P:.6f}  (need < 2.0)")
+        print(f"         raw/P   = {raw_int / P:.6f}  (need <= (2p+37)/p)")
         print(f"         bound_ok={bound_ok} mod_ok={mod_ok}")
     return ok
 
@@ -134,11 +147,11 @@ def main():
         extra_args=reu_args,
     )
 
-    print("fe_reduce_wide R<=2p strict-bound regression test")
+    print("fe_reduce_wide R<=2p+37 (2^256-1) strict-bound regression test")
     print(f"  N_CASES = {N_CASES}")
     print(f"  seed    = 0x{SEED:x}")
     print(f"  P       = 2^255 - 19")
-    print(f"  bound   = raw_post_reduce_wide < 2*P")
+    print(f"  bound   = raw_post_reduce_wide <= 2*P + 37")
     print()
 
     rng = random.Random(SEED)
