@@ -231,6 +231,7 @@ Footprints after the combined #116 + #117 tree (od65-measured, replacing §6's #
       at both).
   - 64 MHz: **not measured** — no C64 Ultimate reachable; conformance is
     claimed at ≤ 48 MHz only (§8.2 v0.13.0 leaves 64 MHz unbracketed).
+- `make test-slow` on the rebased #117 tree (`d91bc17`, PRG `08d1fef1…` — the v0.12.0 code): exit 0, ~38 min, every suite 0 failed including the six audit members (54-ladder adversarial KAT vs pyca, 93 field-op corners, RFC §5.2 iterated, edge-u 7/7, full-ladder CT spread 0, settle slow path).
 - `make test-slow` on the #116 branch (PRG `80664edcd772b458…`): exit 0, every suite 0 failed (128/128, 256/256, 255/255 ladder steps, 68/68, 64/64, 53/53, 49/49, 35/35, 27/27, 19/19)
 
 ## Tarball
