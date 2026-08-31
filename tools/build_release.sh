@@ -15,6 +15,16 @@
 # script must reproduce the SHA256 recorded in the matching
 # docs/RELEASE_NOTES_<tag>.md.
 #
+# That requirement is satisfiable only because of a convention worth
+# stating: the release notes AT THE TAG carry no hash value. This script
+# archives `git archive "$TAG"`, so docs/RELEASE_NOTES_<tag>.md is itself
+# a member of the tarball -- a hash written into it before the tag would
+# be a hash of an archive that does not yet contain it. The tarball's
+# content is therefore frozen before its own SHA256 exists. The value is
+# published in the GitHub Release description at release time, and the
+# repo copy of the notes is a post-tag artifact that may reference it;
+# neither is inside the archive whose hash is being reproduced.
+#
 # File list: the canonical v0.5.0+ vendoring set. Adds three config
 # files over the v0.4.0 list (lib_version.s, zp_config.s,
 # reu_config.s) for c64-lib-contract §1/§2/§3/§5 compliance. For

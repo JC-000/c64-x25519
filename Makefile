@@ -1365,7 +1365,10 @@ perf-diff:
 # size + SHA256. Deterministic: same VERSION always produces a byte-identical
 # tarball (git archive is content-deterministic; gzip -n drops the timestamp).
 # The recorded SHA256 in docs/RELEASE_NOTES_<VERSION>.md must match this
-# script's output for that VERSION.
+# script's output for that VERSION -- which works only because the notes
+# AT THE TAG carry no hash value: they are archived INSIDE the tarball,
+# so the value is published in the GitHub Release description instead.
+# The convention is spelled out in tools/build_release.sh's header.
 #
 # Used at release time to produce the artifact uploaded to the GitHub Release
 # page. See tools/build_release.sh for the full recipe.
