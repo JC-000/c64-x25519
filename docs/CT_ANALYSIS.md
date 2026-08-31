@@ -216,7 +216,10 @@ base for L30c, and a data-dependent multiply body for L30d.
     straight-line sequence above contains no branch at all) plus
     `tools/ct_mul_brute_check.py`'s exhaustive functional check; a
     dedicated per-proc cycle guard is a recorded follow-up (see
-    Follow-ups below), not yet in the suite.
+    Follow-ups below), not yet in the suite. That functional check has
+    itself been observed FAILING on a knowingly wrong kernel — see
+    "Falsification record for `tools/ct_mul_brute_check.py`" below, per
+    SPEC v0.17.0 §15.1.
 
   **§8.3 adoption (issue #14):** the L1/L2-fixed body was reorganized to
   the canonical sum-first SMC-baked `ct_mul_8x8` shape — byte-identical
@@ -793,6 +796,69 @@ base for L30c, and a data-dependent multiply body for L30d.
   bound; `tools/test_fe_adversarial_bigint.py` pins the 2p+1 and
   2p+37 extremes.
 
+### Falsification record for `tools/ct_mul_brute_check.py`
+
+c64-lib-contract SPEC **v0.17.0 §15.1**: *"A conformance
+check offered as evidence SHOULD be accompanied by a demonstration that
+it fails when the property it checks is false. A check never observed to
+fail is not evidence that the property holds; it is evidence only that
+the check ran."* SPEC **§8.3** cites this tool **by name** as the ratchet
+pinning the `ct_mul_8x8` body shape, so it is squarely in §15 scope.
+(Cited by section throughout, never by line. An earlier cut said
+`SPEC.md:1567`, which is the v0.7.4 changelog entry, not §8.3 — a line
+citation into a repo we do not control, drifting where we cannot see it.
+Every quotation here is verbatim against contract `2d7f40c`; the section
+number plus the sentence identifies the clause without a line offset.)
+
+Every other citation of the tool in this document — :86, :217, :227,
+:236, :930, :931, :974, :1077 — records it **passing**. That is a one-sided record,
+and until 2026-08-31 it was the whole record. It is now two-sided.
+
+**The negative leg is re-runnable, not a transcript:**
+
+```
+python3 tools/ct_mul_brute_check.py --mutate
+```
+
+`--mutate` points the sweep kernel's high-byte load at `poly_prod_lo`
+instead of `poly_prod_hi`, so each product is reassembled as
+`(lo | lo << 8)`. Exactly one operand word changes; the instruction
+stream stays **valid** — same length, same opcodes, same timing — so the
+sweep runs to completion and the *mismatch counter* is what reports,
+which is the behaviour under test. A tool that crashed instead would
+demonstrate only that it can crash.
+
+**Measured, 2026-08-31, default profile, PRG `08d1fef1`, VICE warp NTSC,
+512 KB REU:**
+
+| leg | mismatches / 65536 | first failing case | exit |
+|---|---|---|---|
+| unmutated | 0 | — | 0 (pass) |
+| `--mutate` | **65025** | `a=1 b=1 got=0x0101 (257) expected=0x0001 (1)` | 0 (leg pass; inverted) |
+
+65025 = 65536 − 511: the 511 agreeing pairs are exactly those with
+`a = 0` or `b = 0`, where the product is 0 and `lo == hi`, so the
+mutation is invisible. The tool printed the first five failures
+(`a=1, b=1..5`) as designed and did **not** error out.
+
+Under `--mutate` the **exit code is inverted** so the leg can be wired
+into a gate: `0` means the check reported the mismatches, `1` means it
+stayed silent on knowingly wrong products — the failure this leg exists
+to catch. The banner it prints says which happened.
+
+**Grade, stated rather than implied.** SPEC §15.2 warns
+that *"a negative build shows a check CAN report. It does not show that
+the check measures the property it names — a check can be made to fail
+by breaking something adjacent to what it is for."* This leg mutates the
+**Python harness**, not `src/mul_8x8.s`: repo assembly is deliberately
+never touched by a demonstration. So it is evidence that the tool
+detects and reports wrong 16-bit products — the compare-count-report
+path is live against real wrong values — and it is *not* evidence that
+the tool would localise a fault inside the quarter-square body. The
+L1/L2 fixed-cycle property remains held by inspection plus a recorded
+follow-up for a per-proc cycle guard (see below); this leg does not
+change that.
+
 ### Follow-ups
 
 **Queued performance-recovery options** (Phase 6 CT-clean landing
@@ -1010,7 +1076,8 @@ Issue [#20](https://github.com/JC-000/c64-x25519/issues/20) was the
 origin report for L1-L15. L16-L22 were discovered during the Phase 3
 audit. L25-L29 were catalogued in the v0.4.0 sweep and closed in
 Phase 7. Every landing was gated on `tools/ct_mul_brute_check.py`
-(mul_8x8 exhaustive) plus the full `make test-slow` matrix
+(mul_8x8 exhaustive — falsifiability demonstrated, see "Falsification
+record" above) plus the full `make test-slow` matrix
 (`tools/test_fe_mul_stress.py` / `tools/test_fe_sqr_stress.py` /
 `tools/test_x25519.py --slow` / `tools/test_ladder_checkpoint.py
 --start 0 --count 255`) plus the per-proc CT cycle-count guards in

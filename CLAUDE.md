@@ -71,6 +71,19 @@ make lib-verify-docs # assert the doc/header consumer snippets are pasteable as
                      #   written (prerequisite of lib-verify)
 make lib-verify-shared  # linkage matrix for the four SHARED_* deferral builds (R6)
 make lib-verify-guards  # §6.6/§6.7 NEGATIVE legs — guards must fail with named errors
+                     #   (leg C family runs for BOTH default and onchip)
+make lib-verify-footprint  # §5 RESIDENT/COLD DERIVED from od65 over the shipped
+                     #   archive, not restated. Also runs inside lib-verify, so
+                     #   all seven profiles get it.
+
+# --- SPEC v0.17.0 §15 evidence legs (a check never seen to fail is not
+# --- evidence). Each is re-runnable, not a one-off transcript.
+make lib-verify-footprint-negative  # 16 nops into fe25519_add on a throwaway
+                     #   src copy; the derived check MUST fail and name the segment
+make lib-verify-negative            # one negative leg per assertion INSIDE
+                     #   lib-verify (N0..N7); each must fail with its named message
+python3 tools/ct_mul_brute_check.py --mutate  # §8.3 tool's own negative leg;
+                     #   must report counted mismatches, not error out (needs VICE)
 make lib-app-owned   # §6.3 all-primitives-app-owned archive (x25519-app-owned.a)
 make lib-x25519-1764 # 256 KB-REU variant (SQR_DMA_K=0)
 make lib-x25519-onchip  # no-REU variant (X25519_ONCHIP_MUL=1)

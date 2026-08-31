@@ -7,6 +7,13 @@ build-onchip/
 build-app-owned/
 build-guards/
 build-shared/
+build-guards-default/
+build-guards-onchip/
+build-fp/
+build-fp-default/
+build-fp-onchip/
+build-neg/
+build-neg-artifact/
 __pycache__/
 *.pyc
 .DS_Store
