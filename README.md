@@ -6,7 +6,7 @@ An optimized implementation of X25519 / Curve25519 scalar multiplication written
 
 ## Status
 
-**v0.13.0 released 2026-08-31 (DRAFT until tagged)** — [GitHub release](https://github.com/JC-000/c64-x25519/releases/tag/v0.13.0) — a
+**v0.13.0 released 2026-08-31** — [GitHub release](https://github.com/JC-000/c64-x25519/releases/tag/v0.13.0) (tarball 151,501 B, SHA256 `22f14751…917b`) — a
 build-integrity and evidence release. **Zero runtime change: the PRG is
 byte-identical to v0.12.0** at `08d1fef1…f333`, 8628 B — everything here
 is documentation, header, build-invalidation and verification machinery.
