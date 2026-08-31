@@ -49,11 +49,26 @@ which overwrites it; C on return is that add's carry-out.
 The correct contract for both is at `src/x25519_init.s:357` and `:471`.
 
 Every release through v0.12.0 documented these routines as clobbering
-**A only**. That documentation was wrong. It was wrong in six of the
-nine places the claim appeared, and all nine are now reconciled as a set
-(header, banners, `docs/LIBRARY.md`). v0.12.0's release notes recorded
-the correction; this release states the consumer consequence, which is
-what actually matters.
+**A only** — or, in the v0.12.0 wording, **A and X** with "the carry
+flag preserved". That documentation was wrong, and it was wrong
+**everywhere**: the fetch routines' register contract was stated in
+**nine** places, and all nine were wrong. They were reconciled as a set
+at #121 — `src/x25519_init.s:357` and `:471` (the two banners),
+`src/x25519.inc:206` (the public header), `src/constants.s:333`,
+`docs/LIBRARY.md:1004` and `:1063-1068`, and three passages in
+`docs/RELEASE_NOTES_v0.12.0.md` (`:30-36`, `:145`, `:150`).
+
+Six *further* register-clobber claims in the same area were, and remain,
+correct, because they are scoped to the `REU_SETTLE` macro and its slow
+proc rather than to the fetch routines: `src/constants.s:304`,
+`src/x25519_init.s:402`, `src/data.s:137`, `src/fe25519.s:721`,
+`docs/RELEASE_NOTES_v0.12.0.md:94` and `docs/CT_ANALYSIS.md:151` (L31b).
+That split is what makes the count easy to misread — fifteen clobber
+claims sit in this area, and the nine that are about the fetch routines
+are exactly the nine that were wrong. #123 touched none of them.
+
+v0.12.0's release notes recorded the correction; this release states the
+consumer consequence, which is what actually matters.
 
 **The consequence — what you must do.** If you `JSR` either routine
 directly *and* held a live carry across the call, **your code was
@@ -127,8 +142,10 @@ archive.
 
 `tests/lib_linkage` drops twelve imports that shadowed the header it
 already includes, so the header's guards govern and its divergence
-asserts become reachable. Grading is byte-identical: `stub.labels`
-unchanged at 157 lines across all seven profiles.
+asserts become reachable. Grading is byte-identical: `stub.labels` is
+unchanged in all seven profiles — rebuilt against the pre-#121 stub and
+compared byte-for-byte. (157 lines in the *default* profile; the line
+count itself is profile-dependent and is not the invariant.)
 
 ## 3. Documentation defects (#121), each verified against source
 

@@ -536,7 +536,7 @@ The tarball contains:
 - Integration guide (`docs/LIBRARY.md`) + release notes
 - `LICENSE` and `ORIGIN.txt.template` for provenance tracking
 
-Copy `ORIGIN.txt.template` → `ORIGIN.txt` in your vendored copy, fill in the `date_imported` / `local_modifications` fields, then assemble the source with `ca65` from your own build system.
+Copy `ORIGIN.txt.template` → `ORIGIN.txt` in your vendored copy, fill in every `<…>` placeholder field (upstream tag, commit SHA, tarball SHA256, import date) plus `local_modifications`, then assemble the source with `ca65` from your own build system.
 
 See [`docs/LIBRARY.md`](docs/LIBRARY.md) §4 and §4.1 for the full integration walkthrough.
 
