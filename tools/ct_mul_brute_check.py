@@ -18,9 +18,45 @@ targeted inputs can miss.
 Usage
 -----
     python3 tools/ct_mul_brute_check.py
+    python3 tools/ct_mul_brute_check.py --mutate     # negative leg
 
 Exits 0 on 0 mismatches, 1 otherwise (printing the first 5 failing
 (a, b, got, expected) tuples).
+
+--mutate: the §15.1 negative leg
+--------------------------------
+c64-lib-contract SPEC v0.17.0 §15.1: "A conformance check offered as
+evidence SHOULD be accompanied by a demonstration that it fails when the
+property it checks is false. A check never observed to fail is not
+evidence that the property holds; it is evidence only that the check
+ran."  SPEC §8.3 cites this tool BY NAME as the ratchet that pins the
+ct_mul_8x8 body shape, so it is squarely in §15 scope, and
+docs/CT_ANALYSIS.md recorded it only ever passing.
+
+(Cited by SECTION deliberately. An earlier cut said "SPEC.md:1567",
+which is wrong -- that line is in the v0.7.4 changelog entry. The tool
+citation is in §8.3 proper. Line numbers into a document under active
+amendment drift; section numbers are what the contract versions.)
+
+`--mutate` flips ONE quarter-square index in the sweep kernel: the
+high-byte load is pointed at poly_prod_lo instead of poly_prod_hi, so
+the kernel reassembles each product as (lo | lo << 8).  The instruction
+stream stays VALID — same length, same opcodes, same timing, one operand
+byte different — so the run completes normally and the tool must report
+COUNTED MISMATCHES with the first five printed, rather than erroring
+out.  A tool that crashed instead would demonstrate only that it can
+crash.
+
+Grade, stated honestly: this exercises the compare-count-and-report path
+against genuinely wrong products.  It mutates the PYTHON harness, not
+`src/mul_8x8.s` — the repo's assembly is deliberately never touched by a
+demonstration — so it is evidence that the tool reports wrong products,
+not that it would localise a fault inside the quarter-square body.
+
+EXIT CODE IS INVERTED UNDER --mutate, so the leg can be wired into a
+gate: 0 means "the check correctly reported the mismatches" and 1 means
+"the check stayed silent on knowingly wrong products", which is the
+failure this leg exists to catch.  The banner says which happened.
 
 Implementation notes
 --------------------
@@ -38,6 +74,7 @@ Per project memory (`feedback_vice_instances.md`,
  - Never probe VICE ports directly — always via the harness.
 """
 
+import argparse
 import os
 import sys
 
@@ -63,7 +100,8 @@ SCRATCH_HI = 0xC100
 ZP_B = 0xFB
 
 
-def build_kernel(mul_8x8_addr, poly_prod_lo_addr, poly_prod_hi_addr):
+def build_kernel(mul_8x8_addr, poly_prod_lo_addr, poly_prod_hi_addr,
+                 mutate=False):
     """Assemble the 6502 inner-sweep kernel for the SMC-baked
     ct_mul_8x8 calling convention (c64-lib-contract §8.3 adoption).
 
@@ -88,8 +126,15 @@ def build_kernel(mul_8x8_addr, poly_prod_lo_addr, poly_prod_hi_addr):
             rts
 
     Returns the kernel bytes.
+
+    With `mutate=True` the high-byte load reads poly_prod_lo instead of
+    poly_prod_hi (see the --mutate section of the module docstring).
+    Exactly one operand word changes; the instruction stream is
+    otherwise byte-for-byte the same, so the sweep still runs to
+    completion and the mismatch counter is what reports.
     """
     code = bytearray()
+    hi_src_addr = poly_prod_lo_addr if mutate else poly_prod_hi_addr
 
     # ldx #$00
     code += bytes([0xA2, 0x00])
@@ -114,9 +159,9 @@ def build_kernel(mul_8x8_addr, poly_prod_lo_addr, poly_prod_hi_addr):
     # sta $C000,y
     code += bytes([0x99, SCRATCH_LO & 0xFF, (SCRATCH_LO >> 8) & 0xFF])
 
-    # lda poly_prod_hi (absolute)
-    code += bytes([0xAD, poly_prod_hi_addr & 0xFF,
-                   (poly_prod_hi_addr >> 8) & 0xFF])
+    # lda poly_prod_hi (absolute) -- poly_prod_lo under --mutate
+    code += bytes([0xAD, hi_src_addr & 0xFF,
+                   (hi_src_addr >> 8) & 0xFF])
 
     # sta $C100,y
     code += bytes([0x99, SCRATCH_HI & 0xFF, (SCRATCH_HI >> 8) & 0xFF])
@@ -137,6 +182,18 @@ def build_kernel(mul_8x8_addr, poly_prod_lo_addr, poly_prod_hi_addr):
 
 
 def main():
+    ap = argparse.ArgumentParser(
+        description="Exhaustive 65,536-pair correctness check for the §8.3 "
+                    "ct_mul_8x8 quarter-square multiply.")
+    ap.add_argument(
+        "--mutate", action="store_true",
+        help="SPEC v0.17.0 §15.1 negative leg: point the kernel's high-byte "
+             "load at poly_prod_lo, so the sweep computes wrong products from "
+             "a valid instruction stream and the check MUST report counted "
+             "mismatches. Exit code is inverted: 0 = the check reported, "
+             "1 = the check stayed silent.")
+    args = ap.parse_args()
+
     os.chdir(PROJECT_ROOT)
 
     labels = Labels.from_file(LABELS_PATH)
@@ -160,9 +217,21 @@ def main():
     print(f"smc_sum_a_imm+1  = ${sum_a_addr:04X}")
     print(f"smc_diff_a_imm+1 = ${diff_a_addr:04X}")
 
-    kernel = build_kernel(mul_addr, lo_addr, hi_addr)
+    kernel = build_kernel(mul_addr, lo_addr, hi_addr, mutate=args.mutate)
     print(f"Kernel: {len(kernel)} bytes at ${KERNEL_ADDR:04X} "
           f"(b-sweep; a SMC-baked per outer iter)")
+
+    if args.mutate:
+        print()
+        print("!" * 68)
+        print("!! --mutate: §15.1 NEGATIVE LEG. The kernel's high-byte load")
+        print(f"!! points at poly_prod_lo (${lo_addr:04X}) instead of "
+              f"poly_prod_hi (${hi_addr:04X}),")
+        print("!! so every product is reassembled as (lo | lo << 8). This is a")
+        print("!! deliberately WRONG kernel; src/mul_8x8.s is untouched.")
+        print("!! PASS for this leg = the check REPORTS the mismatches.")
+        print("!" * 68)
+        print()
 
     # C64_NO_REU=1 launches VICE with no REU at all: runtime proof that a
     # no-REU build profile (e.g. X25519_ONCHIP_MUL) never polls $DFxx.
@@ -232,6 +301,23 @@ def main():
         for a, b, got, expected in first_failures:
             print(f"  a={a:3d} b={b:3d}  got=0x{got:04X} ({got})  "
                   f"expected=0x{expected:04X} ({expected})")
+
+    if args.mutate:
+        # Inverted: the demonstration succeeds when the check reports.
+        print()
+        if mismatches:
+            print(f"OK: §15.1 negative leg — the check REPORTED {mismatches} "
+                  f"mismatches out of 65536 on a knowingly wrong kernel,")
+            print("    with the first five printed above. It is falsifiable, "
+                  "not merely runnable.")
+            sys.exit(0)
+        print("FAIL: §15.1 negative leg — the kernel was mutated to compute "
+              "wrong products and")
+        print("      the check still reported 0 mismatches. It is not "
+              "measuring what it names.")
+        sys.exit(1)
+
+    if mismatches:
         sys.exit(1)
 
     sys.exit(0)

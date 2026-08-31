@@ -1,0 +1,419 @@
+#!/usr/bin/env python3
+"""check_footprint.py — DERIVE the §5 footprint equates and check them.
+
+c64-lib-contract SPEC v0.17.0 §15.1 evidence duty
+-------------------------------------------------
+`make lib-verify` already asserts that LIB_X25519_RESIDENT_BYTES and
+LIB_X25519_COLD_BYTES hold specific values.  That assert compares two
+HAND-WRITTEN numbers against each other:
+
+  * the equates themselves are hand-written literals in
+    src/lib_manifest.s (_BASE_RESIDENT / _BASE_COLD minus the hand-
+    written deferral deltas), and
+  * LIB_VERIFY_RESIDENT_EXPECT / _COLD_EXPECT in the Makefile are
+    hand-written literals too.
+
+So the existing check catches an INCONSISTENT edit (someone changes one
+side and not the other) but can never catch a STALE PAIR — the case where
+the code grew and neither number was updated.  Measured before this
+checker existed: injecting 16 `nop`s into fe25519_add grew fe25519.o's
+LIB_X25519_CODE 2750 -> 2766, the bytes were present in the linked
+binary, and `make lib-verify` exited 0 with all seven profiles green.
+That is a check which "is not evidence that the property holds; it is
+evidence only that the check ran" (§15.1, SPEC.md:1278).
+
+This tool closes that by MEASURING the footprint from the shipped
+artifact instead of restating it:
+
+    RESIDENT = sum(LIB_X25519_CODE) + sum(LIB_X25519_DATA)
+               + LIB_X25519_PRECALC_sqtab_SIZE   (the sqtab window)
+    COLD     = sum(LIB_X25519_INIT_CODE)
+
+summed with `od65 --dump-segsize` over the members `ar65 t` reports for
+the archive that `make lib` actually shipped, each one EXTRACTED from
+that archive with `ar65 x` rather than read from the loose .o copies
+`make lib` drops alongside it.  Those copies and the archive come from
+two separate Makefile rules over the same objects, so "they cannot
+diverge" is an inference about the build system, not a property of the
+artifact a consumer vendors.  Extraction costs one `ar65 x` per run and
+removes the inference.  Validated against all seven profiles: default
+8503/947, onchip 8234/160, 1764 8355/733, shared-sqtab 8503/787,
+shared-reu 8471/520, shared-ct 8440/947, shared-all 8408/360.
+
+Why od65 and not object bytes
+-----------------------------
+ca65 stamps OPT_DATETIME plus source paths into every object
+unconditionally, so raw object/archive byte comparison is
+non-deterministic across rebuilds yet byte-IDENTICAL within the same
+second — it reports both false differences and false sameness.
+`od65 --dump-segsize` is structural.  (CLAUDE.md, "Verifying a profile
+axis".)
+
+The sqtab window term
+---------------------
+The window is address space the linker RESERVES; no object emits into it
+(sqtab_lo/hi are equates off LIB_SHARED_SQTAB_BASE, and the SQTAB segment
+is `type = bss`).  That is an assumption the formula rests on, so this
+tool ASSERTS it rather than trusting it: if any member ever emits into
+SQTAB the term would be double-counting, and the run fails with a named
+error instead of silently drifting.
+
+Its SIZE is derived, not written down here.  An earlier cut hardcoded
+1024, which was a third hand-maintained number inside the tool that
+exists to remove hand-maintained numbers -- the same defect one level
+down.  It now reads `LIB_X25519_PRECALC_sqtab_SIZE`, which the library
+publishes through its §8.4 precalc enumeration
+(`LIB_PRECALC_TABLE "sqtab", 1024, ...` at src/lib_manifest.s:410) and
+which ld65 exports into the label file.  So the resident claim and the
+§8.4 declaration cannot disagree by construction.  It is additionally
+cross-checked against `__SQTAB_SIZE__`, the region size the LINKER
+reserved from the consumer cfg -- an independent number, from the cfg
+rather than from the library.  The relation asserted is
+`__SQTAB_SIZE__ >= LIB_X25519_PRECALC_sqtab_SIZE`: a consumer may
+reserve more than the table needs, but a region smaller than the
+declared table means the resident claim counts space nobody reserved.
+
+This is the SAME relation over the SAME two symbols that src/main.s
+asserts at link time for the standalone image, which is what makes the
+correspondence real rather than a coincidence of two literals agreeing.
+It was not always: until the §15 evidence pass main.s compared against a
+hardcoded 1024, so an earlier cut of this comment claiming to "match
+src/main.s" was false the moment either number moved. Both sides now
+read LIB_X25519_PRECALC_sqtab_SIZE. The two layers are checked
+separately -- main.s's assert by leg A3 of `make lib-verify-guards`
+(artifact-side, a real shrunken cfg), this one by step 1b of
+`make lib-verify-footprint-negative` (label-file-side).
+
+Baseline mode (§15.2 attribution)
+---------------------------------
+`--emit-baseline FILE` records the per-member/per-segment map; a later
+run with `--baseline FILE` diffs against it, so a failure can name the
+exact member and segment that moved rather than only the aggregate
+delta.  The baseline is GENERATED by the caller immediately before the
+mutation (see `make lib-verify-footprint-negative`), never hand-
+maintained — a checked-in baseline would reintroduce the very
+stale-literal defect this tool exists to remove.
+
+Usage
+-----
+    python3 tools/check_footprint.py --archive build/lib/libx25519.a \
+                                     --labels  build/lib_verify/stub.labels
+    python3 tools/check_footprint.py ... --emit-baseline map.json
+    python3 tools/check_footprint.py ... --baseline map.json
+
+Exit 0 when both derived fields match the exported equates, 1 otherwise.
+"""
+
+import argparse
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+
+# The sqtab window is NOT a literal here. An earlier cut of this tool
+# hardcoded 1024, which was a third hand-maintained number in a tool whose
+# whole purpose is to remove hand-maintained numbers. It is now read from
+# the library's own §8.4 precalc enumeration, exported at link time from
+# the LIB_PRECALC_TABLE "sqtab" invocation in src/lib_manifest.s:410, and
+# cross-checked against the cfg region the linker actually reserved.
+SQTAB_SIZE_SYMBOL = "LIB_X25519_PRECALC_sqtab_SIZE"
+SQTAB_REGION_SIZE_SYMBOL = "__SQTAB_SIZE__"
+
+RESIDENT_SEGMENTS = ("LIB_X25519_CODE", "LIB_X25519_DATA")
+COLD_SEGMENTS = ("LIB_X25519_INIT_CODE",)
+
+# Segments that must contribute zero, because the footprint formula
+# accounts for them with a constant instead of a sum.
+MUST_BE_EMPTY_SEGMENTS = ("SQTAB",)
+
+_SEGSIZE_RE = re.compile(r"^\s{4}([A-Za-z_][A-Za-z0-9_]*):\s+(\d+)\s*$")
+
+
+def run(cmd, cwd=None):
+    proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                          universal_newlines=True, cwd=cwd)
+    if proc.returncode != 0:
+        sys.stderr.write("FATAL: %s failed (exit %d):\n%s\n"
+                         % (" ".join(cmd), proc.returncode, proc.stdout))
+        sys.exit(2)
+    return proc.stdout
+
+
+def archive_members(ar65, archive):
+    """Member basenames, in the order `ar65 t` reports them."""
+    out = run([ar65, "t", archive])
+    return [line.strip() for line in out.splitlines() if line.strip()]
+
+
+def extract_members(ar65, archive, members, destdir):
+    """Extract every archive member into destdir and return their paths.
+
+    Why extraction rather than the .o files `make lib` copies alongside
+    the archive: those copies and the archive are built by two SEPARATE
+    rules from the same $(BUILD_DIR) objects, so "they cannot diverge" is
+    an inference about the Makefile, not a property of the artifact. This
+    tool is the one place in the tree that is supposed to measure what
+    SHIPPED. A consumer vendors the archive; the loose .o copies are a
+    convenience. Extracting costs one `ar65 x` per run and removes the
+    inference entirely, so the measured bytes are the archived bytes.
+
+    `ar65 x` writes into the current directory and takes no output-path
+    flag, hence the cwd= and the absolute archive path.
+    """
+    run([ar65, "x", os.path.abspath(archive)] + list(members),
+        cwd=destdir)
+    paths = {}
+    for member in members:
+        path = os.path.join(destdir, member)
+        if not os.path.isfile(path):
+            sys.stderr.write("FATAL: `ar65 t` lists member %s but `ar65 x` "
+                             "did not produce it\n" % member)
+            sys.exit(2)
+        paths[member] = path
+    return paths
+
+
+def segment_sizes(od65, obj):
+    """{segment: size} for one object file."""
+    sizes = {}
+    for line in run([od65, "--dump-segsize", obj]).splitlines():
+        m = _SEGSIZE_RE.match(line)
+        if m:
+            sizes[m.group(1)] = int(m.group(2))
+    if not sizes:
+        sys.stderr.write("FATAL: od65 --dump-segsize %s reported no segments\n"
+                         % obj)
+        sys.exit(2)
+    return sizes
+
+
+def read_equate(labels_path, symbol, optional=False):
+    """Value of an ld65 -Ln exported absolute symbol, as an int.
+
+    Accepts both the raw `al 002137 .SYM` form ld65 emits and the
+    `al C:002137 .SYM` form the top-level build rewrites for VICE.
+    """
+    pat = re.compile(r"^al\s+(?:[A-Za-z]:)?([0-9a-fA-F]+)\s+\.%s$"
+                     % re.escape(symbol))
+    try:
+        with open(labels_path) as fh:
+            for line in fh:
+                m = pat.match(line.strip())
+                if m:
+                    return int(m.group(1), 16)
+    except IOError as exc:
+        sys.stderr.write("FATAL: cannot read %s: %s\n" % (labels_path, exc))
+        sys.exit(2)
+    if optional:
+        return None
+    sys.stderr.write("FATAL: %s is not exported in %s -- the archive did not "
+                     "ship the §5 manifest, so there is nothing to check\n"
+                     % (symbol, labels_path))
+    sys.exit(2)
+
+
+def total(seg_map, segments):
+    return sum(sizes.get(seg, 0)
+               for sizes in seg_map.values()
+               for seg in segments)
+
+
+def contributors(seg_map, segment):
+    """[(member, size)] for members emitting into `segment`, biggest first."""
+    rows = [(member, sizes[segment])
+            for member, sizes in seg_map.items()
+            if sizes.get(segment)]
+    rows.sort(key=lambda row: (-row[1], row[0]))
+    return rows
+
+
+def describe(seg_map, segments, indent="    "):
+    lines = []
+    for seg in segments:
+        rows = contributors(seg_map, seg)
+        detail = ", ".join("%s %d" % (m, n) for m, n in rows) or "(none)"
+        lines.append("%s%-22s %6d   %s"
+                     % (indent, seg, total(seg_map, [seg]), detail))
+    return lines
+
+
+def diff_against_baseline(baseline, seg_map, segments):
+    """Named per-member/per-segment moves, for §15.2 attribution."""
+    moves = []
+    members = sorted(set(baseline) | set(seg_map))
+    for member in members:
+        was = baseline.get(member, {})
+        now = seg_map.get(member, {})
+        for seg in segments:
+            a, b = was.get(seg, 0), now.get(seg, 0)
+            if a != b:
+                moves.append((member, seg, a, b))
+    return moves
+
+
+def check_field(name, symbol, derivation, derived, declared,
+                seg_map, segments, baseline):
+    """Report one derived-vs-declared field. Returns True when it matches."""
+    if derived == declared:
+        print("  OK: %-28s = %5d ($%04X)  [derived: %s]"
+              % (symbol, declared, declared, derivation))
+        return True
+
+    delta = derived - declared
+    print("FAIL: %s declares $%04X (%d) but od65 measures %d (delta %+d)"
+          % (symbol, declared, declared, derived, delta))
+    print("      derivation: %s" % derivation)
+    print("      the declared value is a hand-written literal in "
+          "src/lib_manifest.s;")
+    print("      the measured value comes from the shipped archive members.")
+
+    if baseline is not None:
+        moves = diff_against_baseline(baseline, seg_map, segments)
+        if moves:
+            print("      SEGMENT(S) THAT MOVED vs the recorded baseline:")
+            for member, seg, was, now in moves:
+                print("        %s in %s: %d -> %d (%+d)"
+                      % (seg, member, was, now, now - was))
+        else:
+            print("      no member/segment moved vs the recorded baseline, so "
+                  "the equate itself is wrong (not the code).")
+
+    print("      %s constituent segments, per shipped archive member:" % name)
+    for line in describe(seg_map, segments, indent="        "):
+        print(line)
+    return False
+
+
+def main():
+    ap = argparse.ArgumentParser(
+        description="Derive LIB_X25519_RESIDENT_BYTES / _COLD_BYTES from the "
+                    "shipped archive and check the exported equates.")
+    ap.add_argument("--archive", required=True,
+                    help="path to the shipped archive (build/lib/libx25519.a)")
+    ap.add_argument("--labels", required=True,
+                    help="ld65 -Ln label file naming the exported equates")
+    ap.add_argument("--profile", default="default",
+                    help="X25519_PROFILE name, for the report only")
+    ap.add_argument("--emit-baseline", metavar="FILE",
+                    help="write the per-member/per-segment map as JSON")
+    ap.add_argument("--baseline", metavar="FILE",
+                    help="diff against a previously emitted map on failure")
+    ap.add_argument("--od65", default="od65")
+    ap.add_argument("--ar65", default="ar65")
+    args = ap.parse_args()
+
+    if not os.path.isfile(args.archive):
+        sys.stderr.write("FATAL: no archive at %s -- run `make lib` first\n"
+                         % args.archive)
+        sys.exit(2)
+
+    members = archive_members(args.ar65, args.archive)
+    if not members:
+        sys.stderr.write("FATAL: %s reports no members\n" % args.archive)
+        sys.exit(2)
+
+    tmpdir = tempfile.mkdtemp(prefix="x25519-footprint-")
+    try:
+        paths = extract_members(args.ar65, args.archive, members, tmpdir)
+        seg_map = dict((member, segment_sizes(args.od65, path))
+                       for member, path in paths.items())
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+    if args.emit_baseline:
+        with open(args.emit_baseline, "w") as fh:
+            json.dump(seg_map, fh, indent=1, sort_keys=True)
+
+    baseline = None
+    if args.baseline:
+        try:
+            with open(args.baseline) as fh:
+                baseline = json.load(fh)
+        except (IOError, ValueError) as exc:
+            sys.stderr.write("FATAL: cannot read baseline %s: %s\n"
+                             % (args.baseline, exc))
+            sys.exit(2)
+
+    print("=== footprint check: %s profile, %d archive members (extracted "
+          "from the archive) ===" % (args.profile, len(members)))
+
+    ok = True
+
+    # The sqtab window term, DERIVED. Not a literal in this file: it is the
+    # size the library itself publishes for the sqtab table through the §8.4
+    # precalc enumeration, read back out of the link.
+    window = read_equate(args.labels, SQTAB_SIZE_SYMBOL)
+
+    # Cross-check it against the region the linker actually reserved, which
+    # is an independent number coming from the consumer's cfg rather than
+    # from the library. `>=` and not `=` deliberately: a consumer MAY
+    # reserve more than the table needs. A region SMALLER than the declared
+    # table is the real defect -- the resident claim would then be counting
+    # space no one reserved.
+    #
+    # src/main.s:55 asserts this same relation over these same two symbols
+    # at link time for the standalone image. That correspondence is exact
+    # because both sides name LIB_X25519_PRECALC_sqtab_SIZE; before the §15
+    # evidence pass main.s used a literal 1024 and the correspondence held
+    # only while two independent literals happened to agree.
+    region = read_equate(args.labels, SQTAB_REGION_SIZE_SYMBOL)
+    if region < window:
+        print("FAIL: the cfg reserves %d bytes for the sqtab window "
+              "(%s) but the library declares a %d-byte sqtab table (%s). "
+              "The RESIDENT claim would count space the link did not reserve."
+              % (region, SQTAB_REGION_SIZE_SYMBOL, window, SQTAB_SIZE_SYMBOL))
+        ok = False
+    else:
+        print("  OK: sqtab window %d B, derived from %s and within the "
+              "%d B cfg region" % (window, SQTAB_SIZE_SYMBOL, region))
+
+    # The window term is a reservation, not an emission. Verify that.
+    for seg in MUST_BE_EMPTY_SEGMENTS:
+        emitted = total(seg_map, [seg])
+        if emitted:
+            print("FAIL: %d bytes emitted into %s, but the RESIDENT formula "
+                  "accounts for that window with the declared %d-byte table "
+                  "size -- it would now be double-counted:"
+                  % (emitted, seg, window))
+            for line in describe(seg_map, [seg], indent="        "):
+                print(line)
+            ok = False
+
+    code = total(seg_map, ["LIB_X25519_CODE"])
+    data = total(seg_map, ["LIB_X25519_DATA"])
+    init = total(seg_map, ["LIB_X25519_INIT_CODE"])
+
+    resident = code + data + window
+    cold = init
+
+    ok &= check_field(
+        "RESIDENT", "LIB_X25519_RESIDENT_BYTES",
+        "sum(LIB_X25519_CODE) %d + sum(LIB_X25519_DATA) %d + %d sqtab window"
+        % (code, data, window),
+        resident, read_equate(args.labels, "LIB_X25519_RESIDENT_BYTES"),
+        seg_map, RESIDENT_SEGMENTS, baseline)
+
+    ok &= check_field(
+        "COLD", "LIB_X25519_COLD_BYTES",
+        "sum(LIB_X25519_INIT_CODE) %d" % init,
+        cold, read_equate(args.labels, "LIB_X25519_COLD_BYTES"),
+        seg_map, COLD_SEGMENTS, baseline)
+
+    if not ok:
+        print()
+        print("The §5 footprint equates no longer describe the shipped "
+              "archive. Re-derive them in src/lib_manifest.s and the matching "
+              "LIB_VERIFY_*_EXPECT locks in the Makefile from the numbers "
+              "above -- do not adjust this checker.")
+        sys.exit(1)
+
+    print("OK: both §5 footprint equates are derived from the shipped "
+          "archive, not restated")
+    sys.exit(0)
+
+
+if __name__ == "__main__":
+    main()

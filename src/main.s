@@ -39,8 +39,20 @@ zp_tmp2 = $03           ; temp byte
 .import __MAIN_LAST__
 .assert __MAIN_LAST__ <= LIB_SHARED_SQTAB_BASE, lderror, "image overruns the sqtab window (LIB_SHARED_SQTAB_BASE)"
 .import __SQTAB_START__, __SQTAB_SIZE__
+; The size operand is the library's OWN published §8.4 table size, not a
+; literal. It was `1024` until the SPEC v0.17.0 §15 evidence pass: that
+; put the sqtab table size in two uncrossed places (here and the
+; LIB_PRECALC_TABLE "sqtab" invocation in lib_manifest.s), so the two
+; could drift apart silently -- the same two-hand-maintained-numbers
+; shape §15 exists to remove, and in the very file docs/LIBRARY.md tells
+; consumers to mirror. Importing the equate makes the three §6.7 asserts
+; uniform: three asserts, three published symbols, no magic number.
+; lib_manifest.o is in CA65_OBJS (Makefile:119) so the operand always
+; resolves, and the macro invocation is ungated (lib_manifest.s:410), so
+; it resolves in every profile.
+.import LIB_X25519_PRECALC_sqtab_SIZE
 .assert __SQTAB_START__ = LIB_SHARED_SQTAB_BASE, lderror, "cfg SQTAB region base disagrees with LIB_SHARED_SQTAB_BASE"
-.assert __SQTAB_SIZE__ >= 1024, lderror, "cfg SQTAB region reserves less than 1024 bytes"
+.assert __SQTAB_SIZE__ >= LIB_X25519_PRECALC_sqtab_SIZE, lderror, "cfg SQTAB region is smaller than the declared sqtab table (LIB_X25519_PRECALC_sqtab_SIZE)"
 
 ; --- Imports from mul_8x8.s ---
 .import sqtab_init
