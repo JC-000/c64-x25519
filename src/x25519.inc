@@ -127,8 +127,11 @@
 ;   x25519_scalarmult
 ;       Compute x25_result = x25_scalar * x25_u on Curve25519 (Montgomery
 ;       ladder, RFC 7748). Caller is responsible for clamping x25_scalar
-;       and for masking the high bit of x25_u (the routine also masks the
-;       high bit of x25_u[31] internally per RFC 7748 decodeUCoordinate).
+;       and for masking the high bit of x25_u. The routine also applies
+;       the RFC 7748 decodeUCoordinate bit-255 mask internally, but only
+;       to its own working copy -- x25_u is NOT modified and is left
+;       exactly as the caller supplied it (src/x25519.s:146-150), so the
+;       same buffer may be reused across calls.
 ;       Input:   x25_scalar (32 bytes, little-endian, clamped)
 ;                x25_u      (32 bytes, little-endian u-coordinate)
 ;       Output:  x25_result (32 bytes, little-endian, fully reduced mod p)
@@ -200,8 +203,11 @@
 ;                       call fe25519_mul; otherwise inline the bank
 ;                       computation + reu_command write yourself — AND
 ;                       the §8.2 v0.13.0 settle after it (v0.12.0; the
-;                       helper still clobbers A only — REU_SETTLE keeps
-;                       its spin counter in memory).
+;                       settle adds no register cost — REU_SETTLE keeps
+;                       its spin counter in memory. The helper itself
+;                       clobbers A and C, preserving X and Y: its
+;                       asl / adc #0 bank computation destroys the
+;                       entry carry and then overwrites it).
 ;
 ;   x25_basepoint       32-byte read-only buffer holding the Curve25519
 ;                       basepoint {9, 0, ..., 0}. Used only by
@@ -424,7 +430,41 @@
 .if ::X25519_ONCHIP_MUL = 0
 ; REU layout equates (c64-lib-contract §3). Default 0; override via
 ; ca65 -D X25519_REU_BANK=0x<bank> when rebuilding the library from source.
-.import X25519_REU_BANK, X25519_REU_OFFSET
+; Guarding rule (contract#164): guard a header .import iff the defining
+; TU guards the definition with .ifndef, and pair every such guard with
+; an .else branch asserting the override against the library's exported
+; value; if the defining TU assigns unconditionally the equate is
+; derived, so leave the import bare and let the -D collide loudly.
+;
+; §3 documents the consumer override `ca65 -D X25519_REU_BANK=0x<bank>`,
+; but a -D that reaches a TU which also .imports the name is "Symbol
+; already defined" -- the same -D-versus-.import collision §2 hit and
+; solved at v0.9.1. Unguarded, §3's own worked example failed to
+; assemble against this header (measured on the pre-guard header, at
+; what was then its bare `.import X25519_REU_BANK` line). So
+; X25519_REU_BANK / X25519_REU_OFFSET are guarded (reu_config.s:61,74
+; define them under .ifndef). A bare guard alone would be worse than
+; the collision it removes: it converts a compile error into SILENT
+; divergence (measured: a consumer at bank 8 links clean against a
+; bank-0 archive). Hence the .else legs, which assert the override
+; against the library OUTPUT equates the archive actually baked in.
+;
+; X25519_REU_BANK_DOUBLED / _CARRY get NO guard: reu_config.s:90-91
+; assign them unconditionally as derived values (BANK+4 / BANK+3), so a
+; -D on them is not a supported override and MUST collide loudly. A
+; guard there would mask a deliberate parse-time rejection.
+.ifndef X25519_REU_BANK
+.import X25519_REU_BANK
+.else
+.import LIB_X25519_SHARED_REU_MUL_BANK
+.assert X25519_REU_BANK = LIB_X25519_SHARED_REU_MUL_BANK, lderror, "X25519_REU_BANK override disagrees with the archive this header ships against"
+.endif
+.ifndef X25519_REU_OFFSET
+.import X25519_REU_OFFSET
+.else
+.import LIB_X25519_SHARED_REU_MUL_OFFSET
+.assert X25519_REU_OFFSET = LIB_X25519_SHARED_REU_MUL_OFFSET, lderror, "X25519_REU_OFFSET override disagrees with the archive this header ships against"
+.endif
 
 ; §8.2 shared reu_mul placement equates, LIBRARY-PREFIXED (contract
 ; #82; see LIBRARY.md §4.8). These are library OUTPUT — what this
@@ -439,7 +479,19 @@
 ; assemble-time-asserted in reu_config.s).
 .import LIB_X25519_SHARED_REU_MUL_BANK, LIB_X25519_SHARED_REU_MUL_OFFSET
 .import LIB_X25519_SHARED_REU_MUL_BANKS_USED
-.import X25519_REU_BANK_DOUBLED, X25519_REU_BANK_CARRY
+.import X25519_REU_BANK_DOUBLED
+.import X25519_REU_BANK_CARRY
+
+; REU presence probe. Completes the x25519_reu_fault contract: the fault
+; byte is the READER, reu_probe is the entry that opens a fresh fault
+; window and tests for a working REU. Both halves are public API and are
+; documented above (§ x25519_reu_fault) and in LIBRARY.md §4.12, but the
+; .import was missing here until v0.12.0-post, so a consumer following
+; that documentation had to hand-write the import. Call it BEFORE the
+; first reu_mul_init -- it does not preserve the autoload latch.
+; Returns C=1 when an REU responded, C=0 when absent or faulted.
+; Gated with the rest of the REU surface: absent from the onchip archive.
+.import reu_probe
 .endif ; X25519_ONCHIP_MUL = 0 (issue #72 — no REU surface in onchip archive)
 
 ; §5 aggregate manifest equates — assemble-time fit / collision checks

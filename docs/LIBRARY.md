@@ -206,7 +206,7 @@ and is wrapped in `.ifndef <name>` / `.endif`, so a host project that
 wants to place the library's ZP scratch at different addresses can:
 
 1. **Override via `ca65 -D`** (recommended). Pass `-D
-   fe25519_src1=$40` on the `ca65` command line when building the
+   fe25519_src1=0x40` on the `ca65` command line when building the
    library. All translation units that include `zp_config.s` see the
    override. The library must be rebuilt from source with the same
    `-D` values for every `.o` file; the slot value is baked in at
@@ -1001,7 +1001,7 @@ read that finds bit 6 already set meets floor (b) at 48 MHz. On the
 reporter's hardware run (9/9 pass) bit 6 was set on the first read in
 all 19,416 calls; on VICE it always is. The macro is a macro rather
 than a `jsr` target because two sites sit inside the per-row loops of
-`fe25519_mul` / `fe25519_sqr`; the fast path is 11 cycles (`lda / and / eor / beq`, taken only when the single `$DF00` sample shows bit 6 set and bit 5 clear; every other sample goes through one shared `jsr x25519_reu_settle_slow`, which spins on bit 6 alone and records bit 5 separately) and clobbers A only (X/Y preserved, so the §8.2 `reu_fetch_mul_row` "clobbers A" convention is unchanged).
+`fe25519_mul` / `fe25519_sqr`; the fast path is 11 cycles (`lda / and / eor / beq`, taken only when the single `$DF00` sample shows bit 6 set and bit 5 clear; every other sample goes through one shared `jsr x25519_reu_settle_slow`, which spins on bit 6 alone and records bit 5 separately) and clobbers A only (X, Y and C preserved, so the settle adds no register cost to the sites it expands at — it does not, however, make `reu_fetch_mul_row` carry-safe: that routine's own `asl`/`adc #0` clobbers C, see the register contract below).
 
 Reading `$DF00` does not disturb the REU autoload latch (§4.8, the
 `reu_fetch_doubled_row` banner): the status register's only read
@@ -1060,12 +1060,22 @@ The library never clears the byte on the hot path and never branches
 on it there. The settle's own branches are on hardware state, not on
 operand data — the CT argument is `docs/CT_ANALYSIS.md` L31a-c.
 
-Register contract change: `reu_fetch_mul_row` and
-`reu_fetch_doubled_row` now clobber **A and X** (X is the spin
-counter); Y and the carry flag are preserved. In-tree callers were
-audited (X is dead at every site); a consumer that JSRs
-`reu_fetch_mul_row` directly and kept something in X across the call
-must save it.
+Register contract: `reu_fetch_mul_row` and `reu_fetch_doubled_row`
+clobber **A and the carry flag** -- X and Y are preserved. The carry is
+*not* preserved: `reu_fetch_mul_row` computes its bank byte with
+`asl` (which destroys the entry carry) followed by `adc #0` (which
+overwrites it), so C on return is that add's carry-out;
+`reu_fetch_doubled_row` inherits this through its `jsr
+reu_fetch_mul_row`. The §8.2 settle keeps its bounded spin counter in
+memory (`x25519_reu_settle_cnt`), not in X, so the pre-existing
+"clobbers A" convention is unchanged in the X/Y dimension and a
+consumer that JSRs `reu_fetch_mul_row` directly need not save X or Y --
+but it must not carry a live C across the call. (Earlier drafts of the
+settle used X as the counter; the routine banners at
+`src/x25519_init.s:357-362` and `:471-472` are authoritative. The
+settle's own banner at `:406` does claim C preserved, and that is correct
+and verified -- it is the fetch routines' arithmetic, not the settle,
+that clobbers C.)
 
 Cost: +1,106,192 cycles per `x25519_scalarmult` (+0.42 %;
 262,318,045 → 263,424,237 cycles, 15,389.3 → 15,454.2 jif on this

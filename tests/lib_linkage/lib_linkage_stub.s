@@ -19,6 +19,23 @@
 ; Pull in the library's public header. This .import's every public symbol
 ; so any regression that removes one will fail at link time here, which is
 ; exactly the smoke test we want.
+;
+; The header is the ONLY import surface for those symbols. This stub used
+; to restate ~12 of them in its own `.import` lines below; those are gone
+; deliberately, for two reasons:
+;   (1) the header's contract#164 guards must GOVERN. A hand-rolled bare
+;       `.import X25519_REU_BANK` here shadowed the header's .ifndef/.else
+;       pair, so `-D X25519_REU_BANK=` died on "Symbol already defined" in
+;       this file before the header's placement .assert could ever run --
+;       i.e. lib-verify never exercised the shipped header's import block.
+;   (2) a second surface list drifts silently: the header could add, gate
+;       or rename an import and this stub would keep linking against its
+;       own stale copy.
+; What stays local is what the header cannot supply: the two `.importzp`
+; ZP-slot lines, `__MAIN_SIZE__` (a linker-provided consumer symbol), and
+; every `.word`/`.byte`/`.addr` reference block -- ca65 emits an import
+; record only for a REFERENCED symbol, so those references are what
+; actually force the archive-member pulls this smoke test is checking.
 .include "x25519.inc"
 
 ; LOADADDR segment: 2-byte PRG load header.
@@ -88,8 +105,6 @@ public_refs:
 ; only when the archive still exports them (gated on the same
 ; LIB_NO_BARE_EXPORTS define the archive build uses; CA65FLAGS
 ; propagates to this stub's assembly, so the two sides stay in step).
-.import LIB_X25519_VERSION_MAJOR, LIB_X25519_VERSION_MINOR
-.import LIB_X25519_VERSION_PATCH, LIB_X25519_ABI_VERSION
 public_version_refs:
         .word LIB_X25519_VERSION_MAJOR, LIB_X25519_VERSION_MINOR
         .word LIB_X25519_VERSION_PATCH, LIB_X25519_ABI_VERSION
@@ -109,12 +124,8 @@ public_zp_refs:
 ; REU layout equates from src/reu_config.s. .word reference forces ld65
 ; to pull reu_config.o out of the archive.
 .if ::X25519_ONCHIP_MUL = 0
-.import X25519_REU_BANK, X25519_REU_OFFSET
 ; c64-lib-contract §8.2 placement equates (v0.7-prep+).
-.import LIB_X25519_SHARED_REU_MUL_BANK, LIB_X25519_SHARED_REU_MUL_OFFSET
-.import LIB_X25519_SHARED_REU_MUL_BANKS_USED
 ; Derived symbolic bank names (also exported from reu_config.s).
-.import X25519_REU_BANK_DOUBLED, X25519_REU_BANK_CARRY
 public_reu_refs:
         .word X25519_REU_BANK, X25519_REU_OFFSET
         .word LIB_X25519_SHARED_REU_MUL_BANK, LIB_X25519_SHARED_REU_MUL_OFFSET
@@ -126,16 +137,12 @@ public_reu_refs:
 ; trick to force ld65 archive-member resolution of lib_manifest.o
 ; (split out of lib_version.o per SPEC v0.7.0 §1 TU isolation,
 ; issues #78/#79).
-.import LIB_X25519_ZP_USAGE_BYTES, LIB_X25519_REU_BANKS_USED
-.import LIB_X25519_RESIDENT_BYTES, LIB_X25519_COLD_BYTES
 ; §8.x ownership + consumes masks (SPEC v0.4.0 conditional form +
 ; v0.5.0 companion). The per-primitive bit constants are NOT imported:
 ; since issues #77/#78 they are unexported assemble-time equates that
 ; arrive via x25519.inc (SPEC §8.0 copy-the-block shape) — referenced
 ; below as plain constants, and asserted ABSENT from stub.labels by
 ; the lib-verify LIB_VERIFY_SYMS_ABSENT_ALWAYS check.
-.import LIB_X25519_SHARED_PRIMITIVES
-.import LIB_X25519_SHARED_CONSUMES
 ; §6.6 consumer-mirror footprint assert (SPEC v0.10.0): the declared
 ; pair must fit the consumer's own MAIN budget. lderror (imported
 ; operands), pair, <=, single-line — the normative form. Doubles as
@@ -162,9 +169,7 @@ public_manifest_refs:
 
 .if ::X25519_ONCHIP_MUL = 0
 ; SPEC §8.2 canonical entry point (v0.7-prep+).
-.import reu_mul_tables_init
 ; SPEC §8.2 SMC patch hook (v0.7-prep+); unlocks the #15 follow-up.
-.import reu_fetch_mul_row_bank_patch
 public_spec_82_refs:
         .addr reu_mul_tables_init
         .addr reu_fetch_mul_row_bank_patch
