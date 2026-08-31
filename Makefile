@@ -620,8 +620,9 @@ lib-verify-docs:
 # It therefore catches an INCONSISTENT edit but never a STALE PAIR.
 # Measured: 16 `nop`s injected into fe25519_add grew fe25519.o's
 # LIB_X25519_CODE 2750 -> 2766, the bytes reached the linked binary, and
-# `make lib-verify` exited 0 across all seven profiles. Per §15.1
-# (SPEC.md:1278) that made the pair "evidence only that the check ran".
+# `make lib-verify` exited 0 across all seven profiles. Per §15.1 ("A
+# check never observed to fail is not evidence that the property holds")
+# that made the pair "evidence only that the check ran".
 #
 # tools/check_footprint.py MEASURES both fields with `od65 --dump-segsize`
 # over the members `ar65 t` reports for the shipped archive, so the
@@ -677,9 +678,9 @@ lib-verify: lib-verify-docs lib $(LIB_VERIFY_PRG)
 
 # --- §15.1 negative legs for lib-verify's OWN assertions ---------------------
 #
-# `make lib-verify` is an AGGREGATE gate, and SPEC v0.17.0 §15.1
-# (SPEC.md:1286) says the evidence obligation "applies per check within
-# it, not to the gate as a whole". Every assertion inside it grades
+# `make lib-verify` is an AGGREGATE gate, and SPEC v0.17.0 §15.1 says
+# the evidence obligation "applies per check within it, not to the gate
+# as a whole" (the aggregate-gate sub-clause). Every assertion inside it grades
 # link-produced values out of stub.labels and every one of them CAN
 # report — but until now none had ever been observed reporting, which
 # §15.1 (:1278) rates as "evidence only that the check ran".
@@ -695,7 +696,7 @@ lib-verify: lib-verify-docs lib $(LIB_VERIFY_PRG)
 #   N6  the §5 resident footprint lock    (LIB_X25519_RESIDENT_BYTES)
 #   N7  the §5 cold footprint lock        (LIB_X25519_COLD_BYTES)
 #
-# GRADE, stated honestly rather than implied (§15.2, SPEC.md:1296 — "a
+# GRADE, stated honestly rather than implied (§15.2 — "a
 # negative build shows a check CAN report. It does not show that the
 # check measures the property it names"):
 #
@@ -791,7 +792,7 @@ lib-verify-negative:
 #
 # "A conformance check offered as evidence SHOULD be accompanied by a
 # demonstration that it fails when the property it checks is false."
-# (SPEC v0.17.0 §15.1, SPEC.md:1278.)
+# (SPEC v0.17.0 §15.1, opening sentence.)
 #
 # This replays the exact defect that motivated tools/check_footprint.py:
 # 16 `nop`s injected into fe25519_add, which grows LIB_X25519_CODE by 16
@@ -817,7 +818,7 @@ lib-verify-negative:
 # from the pristine build one step earlier and is never checked in; a
 # stored baseline would reintroduce the stale-literal defect the checker
 # exists to remove.
-# --- ARM SELECTION (SPEC v0.17.0 §15.1, SPEC.md:1288) ------------------------
+# --- ARM SELECTION (SPEC v0.17.0 §15.1, scoping sub-clause) -----------------
 #
 # "A demonstration is scoped to the configuration it was performed in."
 # The CHECK runs in all seven profiles (it is a step of lib-verify); the
@@ -830,17 +831,35 @@ lib-verify-negative:
 # second time rather than hand-waved:
 #
 #   onchip is the profile whose SEGMENT COMPOSITION differs most from
-#   default. COLD is 160 vs 947, the §8.2 REU members contribute nothing,
-#   and fe25519.o's own LIB_X25519_CODE is 2692 vs 2750. So default and
-#   onchip BRACKET the composition range the check has to handle: every
-#   other profile's member set and segment mix falls between them. A
+#   default. Measured on this tree, per archive member:
+#
+#     COLD           947 -> 160   (x25519_init.o's 787 B
+#                                  LIB_X25519_INIT_CODE goes away entirely;
+#                                  mul_8x8.o's 160 B is all that remains)
+#     x25519_init.o  LIB_X25519_CODE 213 -> 10   (NOT to zero -- the §8.2
+#                                  members shrink to a 10-byte residue,
+#                                  they do not vanish)
+#     fe25519.o      LIB_X25519_CODE 2750 -> 2692
+#     x25519.o       LIB_X25519_CODE  717 -> 709
+#     member count   10 -> 10     (unchanged: LIB_OBJS is a single fixed
+#                                  list, so NO profile here is member-set-
+#                                  shaped -- only the segment mix moves)
+#
+#   Those two are the ENDPOINTS of the range, which is checkable rather
+#   than asserted: across all seven profiles RESIDENT spans 8234 (onchip)
+#   to 8503 (default and shared-sqtab) and COLD spans 160 (onchip) to 947
+#   (default and shared-ct), and every remaining profile sits inside both
+#   intervals -- 1764 8355/733, shared-sqtab 8503/787, shared-reu
+#   8471/520, shared-ct 8440/947, shared-all 8408/360. So default and
+#   onchip BRACKET the composition range the check has to handle, and a
 #   demonstration at both ends shows the check fails correctly across that
 #   range rather than in one arbitrary configuration.
 #
 # STATED PLAINLY so a reader can disagree with the right thing: the
 # remaining five profiles (1764, shared-sqtab, shared-reu, shared-ct,
 # shared-all) are NOT demonstrated per-profile. Their demonstration rests
-# on the bracketing argument above, not on a run. If you do not accept the
+# on the bracketing argument above -- that their segment mix lies inside
+# the interval the two arms span -- not on a run. If you do not accept the
 # bracketing, what you are rejecting is that argument — not a claim that
 # those five were exercised, because they were not.
 #
@@ -1030,8 +1049,8 @@ lib-verify-shared:
 #          the named lderror. Fixture derived from the example cfg by
 #          sed (no second cfg to drift).
 #
-# SCOPE OF LEGS A / A2 / A3 / B (SPEC v0.17.0 §15.1, SPEC.md:1288 — "a
-# demonstration is scoped to the configuration it was performed in").
+# SCOPE OF LEGS A / A2 / A3 / B (SPEC v0.17.0 §15.1 — "A demonstration
+# is scoped to the configuration it was performed in").
 # These four are demonstrated in the DEFAULT profile only, deliberately.
 # The scope carries, and here is why rather than an assertion that it does:
 #
@@ -1134,8 +1153,8 @@ lib-verify-guards:
 # --- leg C family: §6.3 knob-invalidation ratchet, parameterised by profile --
 #
 # Split out of `lib-verify-guards` so it can be RUN MORE THAN ONCE, per
-# SPEC v0.17.0 §15.1 (SPEC.md:1288): a demonstration is scoped to the
-# configuration it was performed in, and this family — unlike legs A/A2/B,
+# SPEC v0.17.0 §15.1 ("A demonstration is scoped to the configuration it
+# was performed in"), and this family — unlike legs A/A2/B,
 # whose scope argument is in the header above — is genuinely profile-shaped.
 # It counts ca65 invocations across a knob flip and asserts the artifact
 # changed; the arm where a knob could plausibly select nothing is the one

@@ -798,16 +798,17 @@ base for L30c, and a data-dependent multiply body for L30d.
 
 ### Falsification record for `tools/ct_mul_brute_check.py`
 
-c64-lib-contract SPEC **v0.17.0 §15.1** (SPEC.md:1278): *"A conformance
+c64-lib-contract SPEC **v0.17.0 §15.1**: *"A conformance
 check offered as evidence SHOULD be accompanied by a demonstration that
 it fails when the property it checks is false. A check never observed to
 fail is not evidence that the property holds; it is evidence only that
 the check ran."* SPEC **§8.3** cites this tool **by name** as the ratchet
 pinning the `ct_mul_8x8` body shape, so it is squarely in §15 scope.
-(Cited by section, not line: an earlier cut of this section said
-`SPEC.md:1567`, which is the v0.7.4 changelog entry, not §8.3. The §15.1
-and §15.2 line numbers below were re-verified against contract `2d7f40c`
-and are correct, but section numbers are what the contract versions.)
+(Cited by section throughout, never by line. An earlier cut said
+`SPEC.md:1567`, which is the v0.7.4 changelog entry, not §8.3 — a line
+citation into a repo we do not control, drifting where we cannot see it.
+Every quotation here is verbatim against contract `2d7f40c`; the section
+number plus the sentence identifies the clause without a line offset.)
 
 Every other citation of the tool in this document — :86, :217, :227,
 :236, :930, :931, :974, :1077 — records it **passing**. That is a one-sided record,
@@ -845,7 +846,7 @@ into a gate: `0` means the check reported the mismatches, `1` means it
 stayed silent on knowingly wrong products — the failure this leg exists
 to catch. The banner it prints says which happened.
 
-**Grade, stated rather than implied.** SPEC §15.2 (SPEC.md:1296) warns
+**Grade, stated rather than implied.** SPEC §15.2 warns
 that *"a negative build shows a check CAN report. It does not show that
 the check measures the property it names — a check can be made to fail
 by breaking something adjacent to what it is for."* This leg mutates the

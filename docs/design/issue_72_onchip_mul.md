@@ -157,7 +157,9 @@ transfer); do it right once, measure, then decide.
 - Contract paperwork: adopters.md §6 cell flips to shipped (enumerate
   targets); §8/§8.0 cells gain per-profile annotations (chacha
   "Profile A/B" precedent); `docs/precalc-tables.md` rows annotated
-  per-profile (SPEC §8.0 symmetry rule, SPEC.md:252). No §4 segment
+  per-profile (SPEC §8.4 catch-loop enumeration, the doc/macro symmetry
+  rule: "An asymmetry between the two ... blocks the adopter PR"; the
+  clause sat unnumbered under §8.0 when this doc was written). No §4 segment
   split: the profile is a pure `.ifdef` swap inside existing segments.
 
 ## 5. Predicted cost (VICE-checkable, hardware-pending)

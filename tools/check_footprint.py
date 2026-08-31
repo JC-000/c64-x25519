@@ -20,7 +20,7 @@ checker existed: injecting 16 `nop`s into fe25519_add grew fe25519.o's
 LIB_X25519_CODE 2750 -> 2766, the bytes were present in the linked
 binary, and `make lib-verify` exited 0 with all seven profiles green.
 That is a check which "is not evidence that the property holds; it is
-evidence only that the check ran" (§15.1, SPEC.md:1278).
+evidence only that the check ran" (§15.1, opening sentence).
 
 This tool closes that by MEASURING the footprint from the shipped
 artifact instead of restating it:
