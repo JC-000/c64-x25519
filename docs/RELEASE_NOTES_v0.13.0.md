@@ -17,10 +17,23 @@ but was absent from the header's `.import` block — so the
 `x25519_reu_fault` contract shipped at v0.12.0 with only its *reader*
 reachable through the header. Nothing was removed or renamed.
 
-**Why ABI stays 3.** The discriminator (settled on
-[c64-lib-contract#167](https://github.com/JC-000/c64-lib-contract/issues/167))
-is: *can a consumer that was conforming before this change be broken by
-it?* The answer here is no. The only consumers affected by the header
+**Why ABI stays 3.** The discriminator — proposed on
+[c64-lib-contract#167](https://github.com/JC-000/c64-lib-contract/issues/167),
+**which is still open** — is: *can a consumer that was conforming before
+this change be broken by it?* On that reading the answer here is no. If
+#167 settles differently, this classification is revisited.
+
+The decision itself does not rest on how #167 lands. The exported
+surface is **set-identical across this release**: 138 symbols in the
+default archive on both sides, zero added and zero removed, measured
+with `od65 --dump-exports` over the ten members `ar65 t` reports and
+diffed as sets against `9e85818`. So holding ABI 3 is correct under
+every candidate rule currently on that issue. What is provisional is the rule cited below,
+not the number. Note also that this library's own `reu_fetch_mul_row`
+case is one of the cases #167 is still weighing, so we are a subject of
+that discussion rather than an authority citing its outcome.
+
+Under the proposed reading: The only consumers affected by the header
 gaining `reu_probe`, by the `.import` collision fix, or by the corrected
 register contract were consumers that were never conforming in the first
 place — they were hand-declaring a symbol the header owns, or relying on
@@ -37,8 +50,8 @@ Contract-aligned through c64-lib-contract SPEC **v0.17.0** (§14 at tag
 
 This is the one item in this release that can require a consumer to
 change code, and it is a **disclosure about code that never changed**,
-not a change we made. It is documented here rather than as an ABI event
-per contract#167.
+not a change we made. It is documented here rather than treated as an
+ABI event, on the same still-open contract#167 reading.
 
 **The condition.** `reu_fetch_mul_row` and `reu_fetch_doubled_row`
 clobber **A and C**, preserving X and Y. The carry was never preserved
@@ -86,7 +99,8 @@ routine destroyed. Concretely:
   known-good oracle will.
 
 We are naming the consequence rather than only the condition
-deliberately (the principle recorded on contract#171): a reader who is
+deliberately (the principle proposed on contract#171, also open): a
+reader who is
 told "the register contract is corrected to A and C" has to work out on
 their own that their live carry has been silently wrong for months. The
 danger is invisible from the condition, so the condition alone is not a
@@ -102,10 +116,12 @@ remains correct.
 
 ## 2. Consumer-override integrity (#121, `97f3e80`)
 
-Two instances of the shape generalised at
-[c64-lib-contract#164](https://github.com/JC-000/c64-lib-contract/issues/164):
-*a documented consumer override produces the wrong artifact and the
-build reports success.*
+Two instances of the shape described at
+[c64-lib-contract#164](https://github.com/JC-000/c64-lib-contract/issues/164)
+(open): *a documented consumer override produces the wrong artifact and
+the build reports success.* The defects below are real and fixed
+regardless of how that issue is resolved; #164 is cited for the shape,
+not as a ruling.
 
 **Mechanism 2 — the warm-tree link.** `CONTRACT_STAMP` now invalidates
 **linked outputs**, not only objects and archives. On a warm tree,
@@ -129,7 +145,7 @@ ships a `git archive` of source, not a built PRG, and `08d1fef1` is the
 correct *default* artifact.
 
 **Mechanism 1 — the header `.import` collision.** `src/x25519.inc`'s §3
-imports now take the shape contract#164 requires: guard a header
+imports now take the shape contract#164 proposes: guard a header
 `.import` **iff** the defining TU guards the definition with `.ifndef`,
 and pair the guard with an `.else` branch that asserts the override
 against the library's exported value with `lderror`.
@@ -328,5 +344,8 @@ the artifact it would be describing: a hash written here before the tag
 cannot be the hash of the archive containing it. Recording the value by
 **location** rather than by `TBD` means a reader holding only the
 tarball is pointed at the authority instead of at a placeholder
-(the resolution agreed on
-[c64-lib-contract#168](https://github.com/JC-000/c64-lib-contract/issues/168)).
+(the approach under discussion on
+[c64-lib-contract#168](https://github.com/JC-000/c64-lib-contract/issues/168),
+which is **open and not ratified** — we are adopting it ahead of that,
+deliberately, because a `TBD` in a shipped immutable artifact is worse
+than a pointer either way).
