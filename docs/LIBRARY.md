@@ -284,8 +284,8 @@ The library exports four integer equates per
 | Symbol | Current value | Semantics |
 |---|---|---|
 | `LIB_X25519_VERSION_MAJOR` | `0` | semver major (breaking ABI change) |
-| `LIB_X25519_VERSION_MINOR` | `11` | semver minor (additive ABI change) |
-| `LIB_X25519_VERSION_PATCH` | `3` | semver patch (no ABI change) |
+| `LIB_X25519_VERSION_MINOR` | `13` | semver minor (additive ABI change) |
+| `LIB_X25519_VERSION_PATCH` | `0` | semver patch (no ABI change) |
 | `LIB_X25519_ABI_VERSION`   | `3` | monotonic generation counter for the exported surface (contract v0.7.5) — bumped on any breaking export change, independent of MAJOR; the load-bearing consumer breakage gate pre-1.0. `1 → 2` at v0.10.0 (v0.9.0 `LIB_SHARED_PRIMITIVES_*` removal); `2 → 3` at v0.11.0 (phase-3 wave: bare `LIB_SHARED_REU_MUL_*` + ZP-trio removals, `poly_carry` → `mul_carry` rename) |
 
 Consumers should `.import` these and gate with `.assert`/`lderror`

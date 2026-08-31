@@ -55,7 +55,7 @@
 ; =============================================================================
 
 LIB_X25519_VERSION_MAJOR = 0
-LIB_X25519_VERSION_MINOR = 12
+LIB_X25519_VERSION_MINOR = 13
 LIB_X25519_VERSION_PATCH = 0
 LIB_X25519_ABI_VERSION   = 3
 

@@ -6,6 +6,32 @@ An optimized implementation of X25519 / Curve25519 scalar multiplication written
 
 ## Status
 
+**v0.13.0 released 2026-08-31 (DRAFT until tagged)** — [GitHub release](https://github.com/JC-000/c64-x25519/releases/tag/v0.13.0) — a
+build-integrity and evidence release. **Zero runtime change: the PRG is
+byte-identical to v0.12.0** at `08d1fef1…f333`, 8628 B — everything here
+is documentation, header, build-invalidation and verification machinery.
+Two documented consumer overrides produced the wrong artifact at exit 0
+(c64-lib-contract#164): `CONTRACT_STAMP` now invalidates **linked**
+outputs, not just objects and archives — GNU Make 3.81's whole-second
+mtime granularity let `make all` keep the previous config's PRG after a
+knob change — and the header's `.import`s take the guarded-iff-the-TU-
+guards shape, with an `.else` asserting any override against the
+library's exported value (#121). c64-lib-contract SPEC **v0.17.0 §15**
+evidence debt is discharged (#123): the §5 footprint pair is now
+**measured** with `od65` instead of being two hand-written literals
+compared against each other, `ct_mul_brute_check.py` gained `--mutate`,
+and `lib-verify` gained eight per-check negative legs plus a
+two-profile footprint demonstration. Twelve documentation defects fixed,
+including four consumer snippets that taught a `$`-valued define (which
+reaches ca65 as **0** through make, with no diagnostic anywhere) — now
+rejected by `make lib-verify-docs`. **Consumer action:**
+`reu_fetch_mul_row` / `reu_fetch_doubled_row` clobber **A and C**, not A
+only, and always have — if you JSR either directly across a live carry,
+add a `clc` and re-test (see §1 of the release notes). MINOR (`reu_probe`
+added to the header's imports); ABI stays 3. Contract-aligned through
+SPEC v0.17.0. See
+[`docs/RELEASE_NOTES_v0.13.0.md`](docs/RELEASE_NOTES_v0.13.0.md).
+
 **v0.12.0 released 2026-08-29** — [GitHub release](https://github.com/JC-000/c64-x25519/releases/tag/v0.12.0) (tarball 143,836 B, SHA256 `b6b7c930…4902`) — c64-lib-contract SPEC **v0.13.0 §8.2**
 made REU completion checking normative (contract#146; tracked here as
 #115): after every REU execute, read `$DF00`, confirm bit 6 (END OF
@@ -510,7 +536,7 @@ The tarball contains:
 - Integration guide (`docs/LIBRARY.md`) + release notes
 - `LICENSE` and `ORIGIN.txt.template` for provenance tracking
 
-Copy `ORIGIN.txt.template` → `ORIGIN.txt` in your vendored copy, fill in the `date_imported` / `local_modifications` fields, then assemble the source with `ca65` from your own build system.
+Copy `ORIGIN.txt.template` → `ORIGIN.txt` in your vendored copy, fill in every `<…>` placeholder field (upstream tag, commit SHA, tarball SHA256, import date) plus `local_modifications`, then assemble the source with `ca65` from your own build system.
 
 See [`docs/LIBRARY.md`](docs/LIBRARY.md) §4 and §4.1 for the full integration walkthrough.
 

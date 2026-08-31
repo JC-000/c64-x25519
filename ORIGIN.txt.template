@@ -2,15 +2,15 @@ c64-x25519 — vendored library provenance
 ==========================================
 
 upstream:       https://github.com/JC-000/c64-x25519
-version:        v0.3.0
+version:        <release tag you vendored, e.g. v0.13.0>
 commit:         <SHA from `git rev-parse HEAD` at release tag>
-tag:            v0.3.0
+tag:            <the same release tag, e.g. v0.13.0>
 tarball_sha256: <sha256sum of the release tarball>
 date_imported:  <ISO 8601 date the downstream consumer imported this>
 
 license:        MIT
 license_file:   LICENSE
-release_notes:  https://github.com/JC-000/c64-x25519/releases/tag/v0.3.0
+release_notes:  https://github.com/JC-000/c64-x25519/releases/tag/<the same release tag>
 
 local_modifications: none
     (if patched, list patches as "patches/000N-description.patch" below)
@@ -23,9 +23,25 @@ build_toolchain:
 
 system_requirements:
     platform:   Commodore 64 (stock 6502)
-    ram:        BASIC ROM banked out; library owns $14-$2E, $40-$7F, $FB-$FE ZP
-    reu:        REQUIRED — 1750 REU or compatible, 6 banks of 64 KB (384 KB)
-    banks_used: 0-5 (see docs/LIBRARY.md §7 for full memory map)
+    ram:        BASIC ROM banked out; library owns $14-$16, $1C, $1E-$2A,
+                $2C-$2F and $40-$7F ZP while running — 85 bytes, the value
+                of the published equate LIB_X25519_ZP_USAGE_BYTES. $FB-$FE
+                is test-harness scratch only and is explicitly NOT part of
+                the library's claimed ZP surface; do not reserve it.
+    reu:        depends on the build profile. The DEFAULT build requires a
+                512 KB REU (1750 or compatible — a window of at least 6
+                banks of 64 KB). lib-x25519-1764 lowers this to 256 KB.
+                lib-x25519-onchip requires NO REU at all: that profile
+                issues no REU traffic and runs on a stock expansion-less
+                C64. Do not record "REQUIRED" without naming the profile.
+    banks_used: the published equate LIB_X25519_REU_BANKS_USED, a bitmask
+                of banks claimed for the mul tables (shifted by
+                X25519_REU_BANK). Default $3B = banks 0, 1, 3, 4, 5 —
+                FIVE banks, 320 KB of tables. lib-x25519-1764 $03 =
+                banks 0, 1 (128 KB). lib-x25519-onchip $00 = none.
+                Bank 2 lies inside the window but is never claimed in any
+                configuration (the legacy zero stash was removed in v0.6
+                prep). See docs/LIBRARY.md §7 for the full memory map.
 
 public_api:     see src/x25519.inc for the machine-readable header
 integration:    see docs/LIBRARY.md §4 for step-by-step vendoring guide
