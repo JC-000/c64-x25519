@@ -141,6 +141,7 @@ LIBX25519 = $(LIB_DIR)/libx25519.a
 .PHONY: all clean test test-slow test-ref test-vice lib lib-verify \
         lib-verify-shared lib-app-owned lib-verify-guards lib-verify-docs \
         lib-verify-footprint lib-verify-footprint-negative \
+        lib-verify-footprint-negative-arm \
         lib-verify-negative lib-verify-guards-legc \
         dist bench-record perf-diff lib-x25519-1764 lib-x25519-onchip
 
@@ -254,7 +255,8 @@ clean:
 	# Profile targets build into their own BUILD_DIR and clean it on entry,
 	# but nothing swept them afterwards, so they lingered as untracked trees.
 	rm -rf build-1764 build-onchip build-app-owned build-guards build-shared
-	rm -rf build-fp build-guards-default build-guards-onchip
+	rm -rf build-fp build-fp-default build-fp-onchip
+	rm -rf build-guards-default build-guards-onchip
 	rm -rf build-neg build-neg-artifact
 
 # --- Relocatable library archive ---------------------------------------------
@@ -815,25 +817,77 @@ lib-verify-negative:
 # from the pristine build one step earlier and is never checked in; a
 # stored baseline would reintroduce the stale-literal defect the checker
 # exists to remove.
+# --- ARM SELECTION (SPEC v0.17.0 §15.1, SPEC.md:1288) ------------------------
+#
+# "A demonstration is scoped to the configuration it was performed in."
+# The CHECK runs in all seven profiles (it is a step of lib-verify); the
+# DEMONSTRATION is what this clause is about, and a single default-profile
+# run would leave six profiles carrying a check whose failability was shown
+# somewhere else.
+#
+# Run in TWO arms — default and onchip — and argue the rest structurally.
+# This is the same reasoning already applied to the leg C family, used a
+# second time rather than hand-waved:
+#
+#   onchip is the profile whose SEGMENT COMPOSITION differs most from
+#   default. COLD is 160 vs 947, the §8.2 REU members contribute nothing,
+#   and fe25519.o's own LIB_X25519_CODE is 2692 vs 2750. So default and
+#   onchip BRACKET the composition range the check has to handle: every
+#   other profile's member set and segment mix falls between them. A
+#   demonstration at both ends shows the check fails correctly across that
+#   range rather than in one arbitrary configuration.
+#
+# STATED PLAINLY so a reader can disagree with the right thing: the
+# remaining five profiles (1764, shared-sqtab, shared-reu, shared-ct,
+# shared-all) are NOT demonstrated per-profile. Their demonstration rests
+# on the bracketing argument above, not on a run. If you do not accept the
+# bracketing, what you are rejecting is that argument — not a claim that
+# those five were exercised, because they were not.
+#
+# Seven arms were considered and rejected on cost: each arm copies the
+# whole src/ tree and does two full builds.
+#
+# Arm name is SPACE-FREE and the defines are looked up here, for the same
+# GNU Make 3.81 MAKEFLAGS reason documented on LEGC_NAME.
+FPNEG_DEFINES_default :=
+FPNEG_DEFINES_onchip  := -D X25519_ONCHIP_MUL=1
+FPNEG_PROFILE_default := default
+FPNEG_PROFILE_onchip  := onchip
+
+FPNEG_NAME ?= default
+FPNEG_DEFINES = $(FPNEG_DEFINES_$(FPNEG_NAME))
+FPNEG_PROFILE = $(FPNEG_PROFILE_$(FPNEG_NAME))
+
 # Derived from $(LIB_VERIFY_PRG) rather than respelled, so a rename of the
 # stub or of lib_verify/ cannot silently drop this leg's rebuild step.
-FP_DIR = build-fp
+FP_DIR = build-fp-$(FPNEG_NAME)
 FP_VERIFY_PRG = $(patsubst $(BUILD_DIR)/%,$(FP_DIR)/%,$(LIB_VERIFY_PRG))
 FP_VERIFY_LABELS = $(FP_DIR)/lib_verify/stub.labels
 
 lib-verify-footprint-negative:
 	@echo "=== lib-verify-footprint-negative: §15.1 demonstration that the"
 	@echo "    derived-footprint check FAILS when the footprint is wrong ==="
+	@echo "    Two arms: default and onchip. See the ARM SELECTION comment"
+	@echo "    above for why two and not seven, and for exactly which claim"
+	@echo "    the other five profiles rest on."
+	$(MAKE) FPNEG_NAME=default lib-verify-footprint-negative-arm
+	$(MAKE) FPNEG_NAME=onchip lib-verify-footprint-negative-arm
+	@echo "OK: the footprint check is falsifiable at BOTH ends of the"
+	@echo "    profile composition range (default and onchip)"
+
+lib-verify-footprint-negative-arm:
+	@echo "=== arm [$(FPNEG_NAME)]: profile $(FPNEG_PROFILE), defines '$(FPNEG_DEFINES)' ==="
 	rm -rf $(FP_DIR); mkdir -p $(FP_DIR)/src
 	cp -R $(SRC_DIR)/. $(FP_DIR)/src/
 	@echo "--- step 1: pristine copy must PASS and emit the segment baseline"
 	$(MAKE) BUILD_DIR=$(FP_DIR) LIB_DIR=$(FP_DIR)/lib SRC_DIR=$(FP_DIR)/src \
-	        CA65FLAGS="$(CA65FLAGS)" CONTRACT_DEFINES="$(CONTRACT_DEFINES)" \
-	        CONTRACT_ZP_DEFINES="$(CONTRACT_ZP_DEFINES)" lib-verify >/dev/null
+	        CA65FLAGS="$(CA65FLAGS)" CONTRACT_ZP_DEFINES="$(CONTRACT_ZP_DEFINES)" \
+	        CONTRACT_DEFINES="$(CONTRACT_DEFINES) $(FPNEG_DEFINES)" \
+	        X25519_PROFILE=$(FPNEG_PROFILE) lib-verify >/dev/null
 	@python3 tools/check_footprint.py --archive $(FP_DIR)/lib/libx25519.a \
 	    --labels $(FP_VERIFY_LABELS) \
 	    --emit-baseline $(FP_DIR)/segmap.json >/dev/null \
-	  && echo "OK: pristine relocated-source build passes; baseline recorded" \
+	  && echo "OK: [$(FPNEG_NAME)] pristine relocated-source build passes; baseline recorded" \
 	  || (echo "FAIL: pristine build does not pass its own footprint check" && exit 1)
 	@echo "--- step 1b: the sqtab window is DERIVED and cross-checked against"
 	@echo "    the cfg region — that cross-check must itself be falsifiable"
@@ -861,7 +915,7 @@ lib-verify-footprint-negative:
 	@out=$$(python3 tools/check_footprint.py --archive $(FP_DIR)/lib/libx25519.a \
 	    --labels $(FP_DIR)/shrunk.labels 2>&1); \
 	 printf '%s\n' "$$out" | grep -q "the cfg reserves 512 bytes for the sqtab window" \
-	   && echo "OK: the window cross-check fails when the cfg region is smaller than the declared table" \
+	   && echo "OK: [$(FPNEG_NAME)] the window cross-check fails when the cfg region is smaller than the declared table" \
 	   || (echo "FAIL: an undersized sqtab region did not trip the window cross-check:" && printf '%s\n' "$$out" | tail -5 && exit 1)
 	@echo "--- step 2: inject 16 nops into fe25519_add (valid code, +16 B)"
 	@awk '{ print } /^\.proc fe25519_add$$/ { for (i = 0; i < 16; i++) print "        nop" }' \
@@ -872,26 +926,28 @@ lib-verify-footprint-negative:
 	@rm -f $(FP_DIR)/fe25519.o $(FP_DIR)/lib/fe25519.o $(FP_DIR)/lib/libx25519.a \
 	       $(FP_DIR)/lib/x25519.a $(FP_VERIFY_PRG) $(FP_VERIFY_LABELS)
 	$(MAKE) BUILD_DIR=$(FP_DIR) LIB_DIR=$(FP_DIR)/lib SRC_DIR=$(FP_DIR)/src \
-	        CA65FLAGS="$(CA65FLAGS)" CONTRACT_DEFINES="$(CONTRACT_DEFINES)" \
-	        CONTRACT_ZP_DEFINES="$(CONTRACT_ZP_DEFINES)" lib $(FP_VERIFY_PRG) >/dev/null
+	        CA65FLAGS="$(CA65FLAGS)" CONTRACT_ZP_DEFINES="$(CONTRACT_ZP_DEFINES)" \
+	        CONTRACT_DEFINES="$(CONTRACT_DEFINES) $(FPNEG_DEFINES)" \
+	        X25519_PROFILE=$(FPNEG_PROFILE) lib $(FP_VERIFY_PRG) >/dev/null
 	@echo "--- step 3: the derived check MUST now fail and NAME the segment"
 	@out=$$(python3 tools/check_footprint.py --archive $(FP_DIR)/lib/libx25519.a \
 	    --labels $(FP_VERIFY_LABELS) \
 	    --baseline $(FP_DIR)/segmap.json 2>&1); \
 	 printf '%s\n' "$$out" | sed 's/^/    /'; \
-	 printf '%s\n' "$$out" | grep -q "LIB_X25519_RESIDENT_BYTES declares" \
-	   && printf '%s\n' "$$out" | grep -q "LIB_X25519_CODE in fe25519.o: 2750 -> 2766" \
-	   && echo "OK: the derived footprint check fails and names LIB_X25519_CODE in fe25519.o" \
-	   || (echo "FAIL: the footprint check did not fail on a +16 B resident growth, or did not name the segment" && exit 1)
+	 printf '%s\n' "$$out" | grep -qE "LIB_X25519_CODE in fe25519\.o: [0-9]+ -> [0-9]+ \(\+16\)" \
+	   && printf '%s\n' "$$out" | grep -q "LIB_X25519_RESIDENT_BYTES declares" \
+	   && echo "OK: [$(FPNEG_NAME)] the derived footprint check fails and names LIB_X25519_CODE in fe25519.o" \
+	   || (echo "FAIL: [$(FPNEG_NAME)] the footprint check did not fail on a +16 B resident growth, or did not name the segment" && exit 1)
 	@echo "--- step 4: the aggregate gate (lib-verify) must fail on it too"
 	@out=$$($(MAKE) BUILD_DIR=$(FP_DIR) LIB_DIR=$(FP_DIR)/lib SRC_DIR=$(FP_DIR)/src \
-	        CA65FLAGS="$(CA65FLAGS)" CONTRACT_DEFINES="$(CONTRACT_DEFINES)" \
-	        CONTRACT_ZP_DEFINES="$(CONTRACT_ZP_DEFINES)" lib-verify 2>&1); \
+	        CA65FLAGS="$(CA65FLAGS)" CONTRACT_ZP_DEFINES="$(CONTRACT_ZP_DEFINES)" \
+	        CONTRACT_DEFINES="$(CONTRACT_DEFINES) $(FPNEG_DEFINES)" \
+	        X25519_PROFILE=$(FPNEG_PROFILE) lib-verify 2>&1); \
 	 printf '%s\n' "$$out" | grep -q "LIB_X25519_RESIDENT_BYTES declares" \
-	   && echo "OK: lib-verify now rejects the stale footprint (it exited 0 before this check existed)" \
+	   && echo "OK: [$(FPNEG_NAME)] lib-verify now rejects the stale footprint (it exited 0 before this check existed)" \
 	   || (echo "FAIL: lib-verify still passes with a 16-byte-stale footprint:" && printf '%s\n' "$$out" | tail -5 && exit 1)
 	rm -rf $(FP_DIR)
-	@echo "OK: §15.1 demonstration complete -- the footprint check is falsifiable"
+	@echo "OK: [$(FPNEG_NAME)] §15.1 demonstration complete -- the footprint check is falsifiable in this profile"
 
 # --- §8.x deferral-build linkage matrix (R6) ---------------------------------
 #
