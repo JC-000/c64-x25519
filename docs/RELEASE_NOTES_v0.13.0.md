@@ -210,10 +210,16 @@ Measured: 16 `nop`s injected into `fe25519_add` grew `fe25519.o`'s
 `make lib-verify` exited 0 across all seven profiles. The check now
 **measures** both fields with `od65 --dump-segsize` over the members
 `ar65 t` reports for the shipped archive. It is wired inside
-`lib-verify`, so all seven profiles get it (0.05 s of a ~0.3 s target),
-and exposed standalone as `make lib-verify-footprint`. It is
-load-bearing, not decorative: deleting it makes `lib-verify` exit 0 on a
-+16 B tree. The PRG is fill-padded, so its **size** stays 8628 B either
+`lib-verify`, so all seven profiles get it, and exposed standalone as
+`make lib-verify-footprint`. Cost: **~0.05–0.07 s of a ~0.25–0.30 s
+target** — measured across two machines and five runs each, and varying
+with load, so both are approximate rather than pinned. The point the
+figures support is only that the check adds a small fraction of an
+already sub-second target, which is why it is wired inside `lib-verify`
+rather than kept standalone.
+
+It is load-bearing, not decorative: deleting it makes `lib-verify` exit
+0 on a +16 B tree. The PRG is fill-padded, so its **size** stays 8628 B either
 way — no size check could ever have caught this drift.
 
 **2. `tools/ct_mul_brute_check.py --mutate`.** §8.3 cites this tool by
