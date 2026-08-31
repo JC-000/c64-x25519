@@ -67,17 +67,46 @@ LIB_DIR = $(BUILD_DIR)/lib
 # the exact staleness-shaped breakage fixed on the sibling branch
 # (measured: `make lib CONTRACT_DEFINES=...` on a clean tree died with
 # `cp: build/lib/cfg/x25519-example.cfg: No such file or directory`).
+# The invalidation deletes the LINKED outputs too, not just .o/.a, and it
+# deletes rather than re-orders dependencies. /usr/bin/make here is GNU Make
+# 3.81, whose mtime comparison has whole-second granularity: after a knob
+# change every .o reassembles, but the newest .o lands in the SAME SECOND as
+# the existing x25519.prg, so 3.81 judges the PRG up to date and ld65 never
+# runs. `make all` then exits 0 holding the PREVIOUS config's binary --
+# exactly the exit-0-wrong-artifact emission SPEC v0.11.1 §6.3 forbids, and
+# the same mtime-granularity family as issue #113 (whose no-rebuild leg
+# compared minute-granular `ls -l` and could never fail). A nonexistent
+# target is unconditionally rebuilt by every make version, so removing the
+# artifact sidesteps the comparison instead of trying to win it.
+#
+# The lib_verify globs are load-bearing on their own: without them
+# `lib-verify` grades the PRIOR config's stub PRG and stub.labels, which
+# surfaces as a spurious "symbol sqtab_init present but must be gated out"
+# under the shared-sqtab profile. Fixing the top-level PRG alone leaves that
+# defect standing.
+#
+# These three names are defined HERE, above the stamp block, and nowhere
+# else: $(shell) expands at PARSE time, so any variable the rm list names
+# must already be set at this point or it expands to empty and the rm
+# silently covers nothing. (Measured: spelling the list with $(PRG)/$(LABELS)
+# while they were still defined below left the fix a 4/4 no-op.) Naming the
+# variables rather than repeating the path literals keeps a future rename of
+# labels.txt from silently dropping out of the invalidation set.
+PRG = $(BUILD_DIR)/x25519.prg
+LABELS = $(BUILD_DIR)/labels.txt
+LIB_VERIFY_DIR = $(BUILD_DIR)/lib_verify
+
 CONTRACT_STAMP := $(BUILD_DIR)/.contract-defines.stamp
 CURRENT_KNOBS  := $(strip $(ALL_DEFINES))
 STORED_KNOBS   := $(strip $(shell cat $(CONTRACT_STAMP) 2>/dev/null))
 ifneq ($(CURRENT_KNOBS),$(STORED_KNOBS))
 $(shell mkdir -p $(BUILD_DIR); \
-        rm -f $(BUILD_DIR)/*.o $(LIB_DIR)/*.o $(LIB_DIR)/*.a; \
+        rm -f $(BUILD_DIR)/*.o $(LIB_DIR)/*.o $(LIB_DIR)/*.a \
+              $(PRG) $(LABELS) $(LABELS).raw \
+              $(LIB_VERIFY_DIR)/*.o $(LIB_VERIFY_DIR)/*.prg \
+              $(LIB_VERIFY_DIR)/*.labels; \
         printf '%s' "$(CURRENT_KNOBS)" > $(CONTRACT_STAMP))
 endif
-
-PRG = $(BUILD_DIR)/x25519.prg
-LABELS = $(BUILD_DIR)/labels.txt
 
 # Library .o set (what ships in libx25519.a — no test harness code).
 LIB_OBJS = $(BUILD_DIR)/x25519_init.o \
@@ -110,8 +139,8 @@ CA65_OBJS = $(BUILD_DIR)/main.o $(LIB_OBJS)
 LIBX25519 = $(LIB_DIR)/libx25519.a
 
 .PHONY: all clean test test-slow test-ref test-vice lib lib-verify \
-        lib-verify-shared lib-app-owned lib-verify-guards dist \
-        bench-record perf-diff lib-x25519-1764 lib-x25519-onchip
+        lib-verify-shared lib-app-owned lib-verify-guards lib-verify-docs \
+        dist bench-record perf-diff lib-x25519-1764 lib-x25519-onchip
 
 all: $(PRG)
 
@@ -267,7 +296,6 @@ $(LIB_DIR)/cfg/x25519-example.cfg: cfg/x25519-example.cfg | $(LIB_DIR)/cfg
 # non-zero and contains all the expected public symbols. This proves the
 # archive is actually usable, not just a pile of .o files in a tarball.
 
-LIB_VERIFY_DIR = $(BUILD_DIR)/lib_verify
 LIB_VERIFY_PRG = $(LIB_VERIFY_DIR)/lib_linkage_stub.prg
 LIB_VERIFY_STUB = tests/lib_linkage/lib_linkage_stub.s
 LIB_VERIFY_PROVIDER = tests/lib_linkage/shared_provider_stub.s
@@ -521,7 +549,64 @@ LIB_VERIFY_RESIDENT_EXPECT = 002137
 LIB_VERIFY_COLD_EXPECT = 0003B3
 endif
 
-lib-verify: lib $(LIB_VERIFY_PRG)
+# --- consumer-snippet hygiene (SPEC §2 / §8.1, contract v0.14.2) ---------
+#
+# `make lib-verify-docs` rejects two spellings that are broken as pasted:
+# a `$`-valued define, and cl65's `--asm-define` where it is used to set
+# one (prose *about* the flag is fine).
+#
+# The `$` rule is about make, not about `$` as such: a direct ca65
+# invocation with the value shell-quoted correctly yields 64.  But these
+# defines are documented to ride CONTRACT_DEFINES / CONTRACT_ZP_DEFINES
+# through *make*, which expands a `$`-value to 0 before ca65 ever sees
+# it -- and shell quotes in the snippet do not prevent that, because make
+# expands the recipe first.  Nothing downstream catches the zero: the
+# §8.1 page-alignment assert passes (0 & 00ff = 0 -> sqtab at 0000), and
+# zp_config.s asserts nothing about a slot being non-zero (-> the slot
+# lands on 00, the 6510 DDR).  No diagnostic from make, ca65 or ld65.
+# A make-variable reference in parens or braces is legitimate and is
+# excluded -- Makefile is itself in scope here, which is also why the
+# offending forms are described in words above rather than quoted: this
+# comment would otherwise trip the checker it documents.
+#
+# Four such snippets shipped before this guard existed: cfg/x25519.cfg,
+# cfg/x25519-example.cfg (which `make lib` copies into build/lib/cfg/),
+# src/constants.s and docs/LIBRARY.md.  Measured against the pre-fix
+# copies of those four files, the checker catches all four.  Its first
+# cut caught only three: both regexes demanded an identifier-shaped NAME,
+# so the angle-bracket metavariable form src/constants.s used -- one of
+# the four defects this checker exists for -- slipped through.  Both
+# regexes now accept an angle-bracket metavariable as well.
+# Two of the four were split across wrapped comment lines, which is why
+# the checker folds each file before matching rather than grepping
+# line-by-line.
+#
+# Wired as a prerequisite of `lib-verify` so it actually runs: it is
+# pure-python, sub-second, touches no build output and has no build
+# prerequisites of its own, so it cannot introduce a cycle or cost.
+#
+# docs/RELEASE_NOTES_*.md are deliberately out of scope, but NOT because
+# they cannot be touched -- this change set edits RELEASE_NOTES_v0.12.0.md.
+# The reason is that a shipped release note is a historical record, so a
+# broken snippet in one is ANNOTATED in place rather than rewritten: the
+# original text has to stay readable as what actually shipped. That is a
+# fix the checker cannot recognise, so scanning them would report permanent
+# hits. Two such snippets are known and are annotated where they sit:
+# docs/RELEASE_NOTES_v0.5.0.md:81 and :140.
+#
+# src/precalc_table.inc IS scanned, deliberately, even though CLAUDE.md
+# forbids hand-editing it (byte-verbatim copy of the contract's §8.4
+# macro). It is clean today; a hit there would mean the UPSTREAM macro
+# carries a broken snippet -- fix it in c64-lib-contract and re-copy the
+# file, never patch it locally. Detection is worth more than the
+# inconvenience of an escalation path.
+DOC_SNIPPET_FILES = $(wildcard cfg/*.cfg src/*.s src/*.inc) \
+                    docs/LIBRARY.md README.md Makefile
+
+lib-verify-docs:
+	@python3 tools/check_doc_snippets.py $(DOC_SNIPPET_FILES)
+
+lib-verify: lib-verify-docs lib $(LIB_VERIFY_PRG)
 	@set -e; \
 	test -s $(LIB_VERIFY_PRG) || (echo "FAIL: $(LIB_VERIFY_PRG) is empty" && exit 1); \
 	for sym in $(LIB_VERIFY_SYMS_EXPECT); do \

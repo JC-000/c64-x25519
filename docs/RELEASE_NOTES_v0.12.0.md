@@ -27,10 +27,13 @@ rerun.
 **Version 0/12/0. `LIB_X25519_ABI_VERSION` stays 3.** MINOR because the
 change is additive: one new export (`x25519_reu_fault`) and one new
 §6.2 knob (`X25519_REU_SETTLE_ITER`). No symbol was removed or renamed.
-One documented register contract tightened — `reu_fetch_mul_row` and
-`reu_fetch_doubled_row` now clobber A **and X** (see §3) — which is
-why consumers that JSR the fetch helper directly should read this
-before taking the release.
+One documented register contract corrected — `reu_fetch_mul_row` and
+`reu_fetch_doubled_row` clobber A **and the carry flag**; X and Y are
+preserved (see §3). The carry was never preserved: `reu_fetch_mul_row`
+builds its bank byte with `asl` (destroying the entry carry) and
+`adc #0` (overwriting it), and `reu_fetch_doubled_row` inherits that
+through its `jsr`. A consumer that JSRs the fetch helper directly must
+not carry a live C across the call — that, not X, is what needs saving.
 
 Contract-aligned through c64-lib-contract SPEC **v0.15.0** (tag
 `5f923db`; v0.15.0 adds the §8.4 zero-consumer carve-out for the bare
@@ -138,13 +141,26 @@ keyed on the command register at execute completion. The S3 invariant
 
 The reporter's reference implementation clobbers X (an `ldx`/`dex` spin
 counter). x25519's macro does **not**: it counts in memory, so every
-site — including the §8.2 provider-surface `reu_fetch_mul_row`, whose
-documented convention is "clobbers A" — keeps its pre-v0.12.0 register
-contract. C is never written by the macro (`lda`/`and`/`ora`/`dec`/
-branches), and the two hot callers (`fe25519_sqr` after
+site keeps its pre-v0.12.0 register contract — the settle adds no
+register cost. C is never written by the macro (`lda`/`and`/`ora`/
+`dec`/branches), and the two hot callers (`fe25519_sqr` after
 `jsr reu_fetch_doubled_row`, `fe25519_mul`'s inline fetch) `clc` before
-their next carry use anyway. A consumer that JSRs `reu_fetch_mul_row`
-directly needs no migration beyond what §8.2 v0.13.0 itself demands.
+their next carry use anyway.
+
+What the settle does **not** do is make `reu_fetch_mul_row` carry-safe,
+and the pre-v0.12.0 wording "clobbers A" was wrong about that
+independently of this release. The routine's own arithmetic destroys
+the carry: `asl` (building `a*2`) discards the entry carry and `adc #0`
+(folding bit 7 into the bank) overwrites it, so C on return is that
+add's carry-out. `reu_fetch_doubled_row` inherits it through its `jsr`.
+The accurate contract for both is **clobbers A and C, preserves X and
+Y** (`src/x25519_init.s:357-362`, `:471-472`).
+
+So a consumer that JSRs `reu_fetch_mul_row` directly **does** have a
+migration note, though not one this release created: it must not hold a
+live carry across the call. Anyone who relied on the older "clobbers A"
+wording to keep C should add a `clc` after the call and re-test. Beyond
+that, §8.2 v0.13.0's own demands are all that apply.
 
 ## 4. CT posture
 
@@ -246,7 +262,19 @@ Footprints after the combined #116 + #117 tree (od65-measured, replacing §6's #
       at both).
     - **v0.12.0 shipped bytes** (rebased #117, PRG `08d1fef1…`, 2026-08-29):
       **48 MHz PASS, 1 MHz PASS** (0/0 mismatches, KAT PASS at both; 1 MHz
-      KAT 275 s wall). Recorded honestly: the *first* 1 MHz attempt on
+      KAT 275 s wall). **Core version for this row is NOT recorded** — it
+      ran the day after the heading's 2026-08-28 / core 1.4E reading, and
+      the device has since moved: a first-hand `/v1/info` query to
+      10.43.23.81 (`unique_id` 601A96) on 2026-08-30 returned **core
+      1.4F**, fw 3.15, fpga 123. So this row sits between a 1.4E reading
+      on 08-28 and a 1.4F reading on 08-30 with no reading of its own;
+      treat it as core-unknown, and note that 601A96 can no longer
+      re-confirm 1.4E. (Upstream `59594060` is the 1.4E→1.4F REU change,
+      "Updated REU — no initial delay on U64/U64E2, because of Turbo
+      Mode".) The discriminating pair above (unfixed FAIL vs #116 PASS)
+      is unaffected: both are under the 08-28 / 1.4E heading, same device
+      and day, with the code as the only variable. Recorded honestly:
+      the *first* 1 MHz attempt on
       this PRG reported KAT=FAIL with all 32 REU rows correct; it
       coincided with another client driving the same device over UCI
       (no cross-tool locking — the harness `DeviceLock` only excludes

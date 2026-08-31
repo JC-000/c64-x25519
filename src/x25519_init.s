@@ -354,8 +354,12 @@ reu_init_b:     .byte 0
 ;
 ; Input: A = multiplier value (0-255) in mul_cached_a
 ; Fetches 512 bytes: 256 lo bytes to mul_dma_lo, 256 hi bytes to mul_dma_hi
-; Clobbers: A only (unchanged by the v0.12.0 §8.2 v0.13.0 settle: REU_SETTLE
-;           counts its bounded spin in memory). X, Y and C preserved.
+; Clobbers: A and C. X and Y are preserved (unchanged by the v0.12.0
+;           §8.2 v0.13.0 settle: REU_SETTLE counts its bounded spin in
+;           memory, not in X). The carry is NOT preserved: the `asl`
+;           below destroys the entry carry and the `adc #0` overwrites
+;           it, so C on return is the bank-add's carry-out, not the
+;           caller's.
 ;
 ; The `bank_lda` regular local label (not cheap-`@`-local because we
 ; address it from outside the proc via `proc::label` syntax, which
@@ -464,7 +468,8 @@ reu_fetch_mul_row_bank_patch := reu_fetch_mul_row::bank_lda + 1
 ; Input: A = multiplier value in mul_cached_a
 ; Fetches 512 bytes from banks 4-5 to mul_dma_lo/hi (doubled lo+hi),
 ; then 256 bytes from bank 3 to mul_dma_carry (17th-bit carry flags).
-; Clobbers: A (REU_SETTLE after each of the two DMAs clobbers A only)
+; Clobbers: A and C (C via the delegated reu_fetch_mul_row's asl/adc;
+;           REU_SETTLE itself clobbers A only). X and Y preserved.
 ; NOTE: Leaves REU registers in a non-default state; caller must restore
 ; if the regular mul-row FETCH config is needed afterward (see
 ; reu_clear_wide's autoload-restore tail, which is what fe25519_sqr

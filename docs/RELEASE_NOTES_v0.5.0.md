@@ -81,6 +81,15 @@ slot wrapped in `.ifndef <name>` / `.endif` (host-overridable via
 ca65 `-D <slot>=$<addr>`) and `.exportzp`-ed for consumer
 `.importzp`.
 
+> **Erratum (2026-08-30, not a rewrite of the v0.5.0 record).** The
+> `-D` spelling above is broken as pasted when it rides
+> through `make`, which is how this repo documents passing it: make
+> expands the `$`-value to `0` before `ca65` sees it, and nothing
+> downstream asserts a slot is non-zero, so the slot silently lands on
+> `$00` (the 6510 DDR). Use the `$`-free `0x` form —
+> `-D <slot>=0x0040`. See c64-lib-contract SPEC §2 / §8.1 and
+> `tools/check_doc_snippets.py`.
+
 **Architecture.** `src/constants.s` becomes a thin wrapper that
 `.include`s `zp_config.s` with `ZP_CONFIG_NO_EXPORTS = 1` set, so
 the transitive-include path doesn't emit duplicate `.exportzp`
@@ -131,6 +140,14 @@ KERNAL / VIC / SID / CIA / REU hardware equates).
 ca65 -D fe25519_src1='$40' -o build/zp_config.o src/zp_config.s
 # ...rebuild every library .o with the same -D, then re-archive.
 ```
+
+> **Erratum (2026-08-30, not a rewrite of the v0.5.0 record).** The
+> quoting above protects the `$` from the *shell* only. It does not
+> protect it from `make`, and these defines are documented to ride
+> `CONTRACT_ZP_DEFINES` through make, which expands `$40` to `0` before
+> the shell ever sees the quotes. Written into a Makefile this silently
+> relocates the slot to `$00`. Use `-D fe25519_src1=0x40`, which is
+> `$`-free and survives make, the shell and ca65 unchanged.
 
 ---
 

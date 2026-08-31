@@ -123,8 +123,15 @@ cassette_buf    = $0334         ; cassette buffer (safe scratch area)
 ; emits the public symbols (avoids ld65 "exported from multiple files").
 ;
 ; A host that wants to override a slot can either:
-;   - pass -D <slot>=$<addr> on the ca65 command line (every
-;     library translation unit must see the same value), OR
+;   - pass -D <slot>=0x<addr> on the ca65 command line (every
+;     library translation unit must see the same value). Use the
+;     0x form, never $-hex: this define rides CONTRACT_ZP_DEFINES
+;     through make, where `$40` and `$$40` reach ca65 as 0 (and
+;     `$$$$40` as the shell's PID). Nothing here asserts a slot is
+;     non-zero, so a $-spelled override silently lands the slot at
+;     $00 -- the 6510 data-direction register -- with no diagnostic
+;     from make, ca65 or ld65. See c64-lib-contract SPEC §2's
+;     $-hex quoting note and the v0.14.2 §8.1 parenthetical, OR
 ;   - pre-define the symbol in a wrapper .s file before .include'ing
 ;     zp_config.s directly.
 .ifndef ZP_CONFIG_NO_EXPORTS
@@ -248,8 +255,28 @@ sqtab_hi = LIB_SHARED_SQTAB_BASE + $0200
 ; at c64-x25519 #115; contract#144 / contract#146.
 ;
 ; Obligation (b) and the clock claim. The floor is bracketed at
-; >= 49 cycles at 48 MHz on an Ultimate 64 Elite fw 3.15 and is
-; UNBRACKETED at 64 MHz. On the U64E one I/O-mapped `lda reu_status`
+; >= 49 cycles at 48 MHz on an Ultimate 64 Elite, fw 3.15 -- the
+; contract#144 reporter's measurement, on U64E unique_id 601A96,
+; which is the same physical device as our 10.43.23.81. The core at
+; the time of that bracket is recorded nowhere: SPEC v0.13.0 §8.2
+; records a core for the observation but firmware only for the floor,
+; and core cannot be inferred from a firmware commit. Our own runs on
+; 601A96 read core 1.4E on 2026-08-28; the device read 1.4F on
+; 2026-08-30 (upstream 59594060 is the 1.4E->1.4F REU change). So the
+; bracket is fw-3.15-as-reported on 601A96 (/v1/info cannot distinguish
+; stock 3.15 from the locally patched build this device has carried),
+; core unknown; our confirming
+; observation is 1.4E. The hazard is NOT observable on 1.4F: an
+; unmitigated control passed 22/22 cells, ~2100 fetches, 0 wrong
+; bytes at 48 and 16 MHz (contract#144 device row, 2026-08-30).
+; That is one device and does NOT
+; license removing the settle -- 1.4E and earlier devices, real
+; 17xx REUs and other REU implementations are all out of scope of
+; it, and the obligation stands. What it does mean is that 601A96
+; can no longer re-confirm any 1.4E-era claim, this bracket
+; included: a green re-run today measures a different core.
+; §13.6 is the model that names device, firmware and core together.
+; On the U64E one I/O-mapped `lda reu_status`
 ; costs ~49 cycles at turbo, so the confirm read in (a) is what
 ; currently satisfies (b) — the contract itself calls that meeting the
 ; floor "by accident". This library does not let the accident be
@@ -303,8 +330,11 @@ sqtab_hi = LIB_SHARED_SQTAB_BASE + $0200
 ;
 ;   Registers: clobbers A ONLY, on both paths. X, Y and C are preserved
 ;   (lda/and/eor/beq/jsr and the slow proc's lda/and/ora/dec/branches
-;   never write C), so the §8.2 provider-surface convention of
-;   reu_fetch_mul_row ("clobbers A") is unchanged. The slow path keeps
+;   never write C), so the settle adds no register cost to any site it
+;   expands at. This does NOT make reu_fetch_mul_row carry-safe: that
+;   routine's own asl / adc #0 clobbers C, so its contract is "A and C,
+;   X/Y preserved" (x25519_init.s:357-362) both before and after
+;   v0.12.0. The slow path keeps
 ;   its sample and counter in two cross-TU internal bytes in
 ;   src/data.s (x25519_reu_settle_smp / _cnt — exported for linkage,
 ;   not API).
@@ -321,7 +351,7 @@ sqtab_hi = LIB_SHARED_SQTAB_BASE + $0200
 .ifndef X25519_MAX_CLOCK_MHZ
   X25519_MAX_CLOCK_MHZ = 48
 .endif
-.assert X25519_MAX_CLOCK_MHZ <= 48, error, "SPEC v0.13.0 §8.2: the REU post-execute settle is bracketed only to 48 MHz (U64E fw 3.15); claiming X25519_MAX_CLOCK_MHZ > 48 needs a measured settle bracket at that clock first (contract#144)"
+.assert X25519_MAX_CLOCK_MHZ <= 48, error, "SPEC v0.13.0 §8.2: the REU post-execute settle is bracketed only to 48 MHz (U64E fw 3.15; core at bracket time unrecorded — see src/constants.s); claiming X25519_MAX_CLOCK_MHZ > 48 needs a measured settle bracket at that clock, with device/fw/core read off the device at measurement time (contract#144)"
 
 .macro REU_SETTLE
         ; Unnamed `:` label only: a named (even `.local`) label inside
