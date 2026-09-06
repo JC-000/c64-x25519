@@ -8,15 +8,15 @@
 # sections kept their numbers, so §1 §2 §3 §4 §5 §6.1 §6.2 §6.4 §6.5 §7 §8.x
 # still resolve against the current SPEC.md and mean what they say.
 #
-# This file cites the retired ones in about forty places, and those citations
-# are NOT being rewritten. Two reasons, in order:
+# This file cites the retired ones on forty-six comment lines, and those
+# citations are NOT being rewritten. Two reasons, in order:
 #
 #   1. They still resolve. RETIRED.md makes `git show v0.17.1:SPEC.md` the
 #      permanent home of the retired text and says in terms that adopters
 #      should leave such citations alone rather than churn them.
 #
-#   2. Rewriting forty comments would be forty chances to introduce a wrong
-#      claim while fixing nothing a reader gets wrong.
+#   2. Rewriting forty-six comments would be forty-six chances to introduce a
+#      wrong claim while fixing nothing a reader gets wrong.
 #
 # What DOES need saying, once, is the status those citations no longer carry:
 #

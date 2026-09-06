@@ -6,6 +6,35 @@ An optimized implementation of X25519 / Curve25519 scalar multiplication written
 
 ## Status
 
+**v0.14.0 released 2026-09-06** — [GitHub release](https://github.com/JC-000/c64-x25519/releases/tag/v0.14.0) — a
+contract-alignment release. **Zero runtime change: the PRG is
+byte-identical to v0.12.0 and v0.13.0** at `08d1fef1…f333`, 8628 B.
+c64-lib-contract SPEC **v1.0.0** cut seven eighths of the specification's
+text and **retired §9, §12, §13, §14, §15 and sub-clauses §6.3, §6.6,
+§6.7**, changing no symbol, equate, bit value, segment name, build target
+or error code — so the conformance position did not move, but most of
+what this repo said *about* the contract described clauses that no longer
+exist. Two normative deltas adopted: §8.2's base-bank bound tightened
+`< $FE` → `< 31`, and `src/precalc_table.inc` refreshed to the v1.1.0
+verbatim copy. **The verification machinery is kept, not deleted** —
+`lib-verify-guards`, the N0–N7 negative legs, the footprint
+demonstrations and the knob-invalidation family were built for retired
+clauses and each has caught a real defect here; the contract's own
+`RETIRED.md` says *"Keep the practice; do not keep it as an obligation
+this contract imposes."* One defect found while aligning and fixed:
+x25519's §5 REU bank mask is `$3B << X25519_REU_BANK`, five banks wide,
+so a base above 26 shifted the top bank off the 32-bit mask and exported
+a claim that under-reported it — `od65`-measured (base 26 → `0xEC000000`
+correct; base 27 → `0xD8000000`, bank 32 gone), now guarded by two
+profile-aware asserts. Issue #122 closed: the Makefile guard table's
+gate citations, nine of twelve of which pointed at blank lines or prose,
+are replaced by six checked sites in `tools/check_gate_citations.py` and
+verified on every `lib-verify`. contract#167 and #164 are **closed**
+upstream — ABI stays 3, now by §7 ruling; [contract#177](https://github.com/JC-000/c64-lib-contract/issues/177)
+raised and open. **Consumer action: none.** MINOR (two new build
+targets); ABI stays 3. Aligned with SPEC v1.1.0. See
+[`docs/RELEASE_NOTES_v0.14.0.md`](docs/RELEASE_NOTES_v0.14.0.md).
+
 **v0.13.0 released 2026-08-31** — [GitHub release](https://github.com/JC-000/c64-x25519/releases/tag/v0.13.0) (tarball 151,501 B, SHA256 `22f14751…917b`) — a
 build-integrity and evidence release. **Zero runtime change: the PRG is
 byte-identical to v0.12.0** at `08d1fef1…f333`, 8628 B — everything here
