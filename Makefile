@@ -152,6 +152,7 @@ LIB_OBJS = $(BUILD_DIR)/x25519_init.o \
            $(BUILD_DIR)/fe25519.o \
            $(BUILD_DIR)/x25519.o \
            $(BUILD_DIR)/data.o \
+           $(BUILD_DIR)/mul_stage.o \
            $(BUILD_DIR)/util.o \
            $(BUILD_DIR)/lib_version.o \
            $(BUILD_DIR)/lib_manifest.o \
@@ -167,6 +168,7 @@ CA65_SRCS = $(SRC_DIR)/main.s \
             $(SRC_DIR)/fe25519.s \
             $(SRC_DIR)/x25519.s \
             $(SRC_DIR)/data.s \
+            $(SRC_DIR)/mul_stage.s \
             $(SRC_DIR)/util.s \
             $(SRC_DIR)/lib_version.s \
             $(SRC_DIR)/lib_manifest.s \
@@ -184,7 +186,7 @@ LIBX25519 = $(LIB_DIR)/libx25519.a
         lib-verify-footprint-negative-arm \
         lib-verify-negative lib-verify-guards-legc \
         lib-verify-citations lib-verify-citations-negative \
-        lib-verify-isolation \
+        lib-verify-isolation lib-verify-isolation-negative \
         dist bench-record perf-diff lib-x25519-1764 lib-x25519-onchip
 
 all: $(PRG)
@@ -367,9 +369,12 @@ ONCHIP_DEFER_DEFINES = -D SHARED_SQTAB_INIT=1 -D SHARED_REU_MUL_INIT=1 \
 X25519_PROFILE ?= default
 
 # --- §6.3 looks-reachable guard (contract v0.10.5, issue #117) --------------
-# X25519_PROFILE *names* an axis, so per §6.3's three-shape ladder it MUST
-# select that axis or fail loudly — silent exit-0 disagreement is
-# non-conformant whether or not a target exists for the combination.
+# X25519_PROFILE *names* an axis, so per §6.3's three-shape ladder it had to
+# select that axis or fail loudly — silent exit-0 disagreement WAS
+# non-conformant whether or not a target existed for the combination.
+# (Past tense deliberately: §6.3 is retired as of contract v1.0.0, so no
+# conformance claim rests on this any more. The guard is kept because the
+# hole it closes is real — see the header block at the top of this file.)
 #
 # It does not select anything on its own: it picks lib-verify EXPECTATIONS,
 # while the axis itself rides CONTRACT_DEFINES. Before this guard x25519 was
@@ -560,7 +565,7 @@ LIB_VERIFY_SYMS_ABSENT = $(LIB_VERIFY_SYMS_SQTAB_OWN)
 LIB_VERIFY_MASK_EXPECT = 000006
 LIB_VERIFY_CONSUMES_EXPECT = 000007
 LIB_VERIFY_BANKS_EXPECT = 00003B
-LIB_VERIFY_RESIDENT_EXPECT = 002137
+LIB_VERIFY_RESIDENT_EXPECT = 00213A
 LIB_VERIFY_COLD_EXPECT = 000313
 else ifeq ($(X25519_PROFILE),shared-reu)
 LIB_VERIFY_SYMS_EXPECT = $(LIB_VERIFY_SYMS_SQTAB_OWN) $(LIB_VERIFY_SYMS_COMMON) \
@@ -570,7 +575,7 @@ LIB_VERIFY_SYMS_ABSENT = $(LIB_VERIFY_SYMS_REU_OWN)
 LIB_VERIFY_MASK_EXPECT = 000005
 LIB_VERIFY_CONSUMES_EXPECT = 000007
 LIB_VERIFY_BANKS_EXPECT = 00003B
-LIB_VERIFY_RESIDENT_EXPECT = 002117
+LIB_VERIFY_RESIDENT_EXPECT = 00211A
 LIB_VERIFY_COLD_EXPECT = 000208
 else ifeq ($(X25519_PROFILE),shared-ct)
 LIB_VERIFY_SYMS_EXPECT = $(LIB_VERIFY_SYMS_SQTAB_OWN) $(LIB_VERIFY_SYMS_COMMON) \
@@ -579,7 +584,7 @@ LIB_VERIFY_SYMS_ABSENT = $(LIB_VERIFY_SYMS_CT_OWN)
 LIB_VERIFY_MASK_EXPECT = 000003
 LIB_VERIFY_CONSUMES_EXPECT = 000007
 LIB_VERIFY_BANKS_EXPECT = 00003B
-LIB_VERIFY_RESIDENT_EXPECT = 0020F8
+LIB_VERIFY_RESIDENT_EXPECT = 0020FB
 LIB_VERIFY_COLD_EXPECT = 0003B3
 else ifeq ($(X25519_PROFILE),shared-all)
 LIB_VERIFY_SYMS_EXPECT = $(LIB_VERIFY_SYMS_COMMON) \
@@ -590,7 +595,7 @@ LIB_VERIFY_SYMS_ABSENT = $(LIB_VERIFY_SYMS_CT_OWN) $(LIB_VERIFY_SYMS_REU_OWN) \
 LIB_VERIFY_MASK_EXPECT = 000000
 LIB_VERIFY_CONSUMES_EXPECT = 000007
 LIB_VERIFY_BANKS_EXPECT = 00003B
-LIB_VERIFY_RESIDENT_EXPECT = 0020D8
+LIB_VERIFY_RESIDENT_EXPECT = 0020DB
 LIB_VERIFY_COLD_EXPECT = 000168
 else
 LIB_VERIFY_SYMS_EXPECT = $(LIB_VERIFY_SYMS_SQTAB_OWN) $(LIB_VERIFY_SYMS_COMMON) \
@@ -600,7 +605,7 @@ LIB_VERIFY_SYMS_ABSENT =
 LIB_VERIFY_MASK_EXPECT = 000007
 LIB_VERIFY_CONSUMES_EXPECT = 000007
 LIB_VERIFY_BANKS_EXPECT = 00003B
-LIB_VERIFY_RESIDENT_EXPECT = 002137
+LIB_VERIFY_RESIDENT_EXPECT = 00213A
 LIB_VERIFY_COLD_EXPECT = 0003B3
 endif
 
@@ -681,6 +686,18 @@ lib-verify-docs:
 # auto-sizes to `far`, and the 6502 target has no `far` import address-size
 # hint to match. That ca65 gap is why this was a label grep in the first
 # place.
+# Non-empty sentinel for the isolation check, per profile: 3 bare names per
+# enumerated table. onchip drops reu_mul (issue #72), 1764 drops
+# reu_mul_doubled (SQR_DMA_K=0). Stated per profile so the sentinel cannot
+# be satisfied by a build that simply enumerates fewer tables.
+ifeq ($(X25519_PROFILE),onchip)
+LIB_VERIFY_BARE_PRECALC_EXPECT = 3
+else ifeq ($(X25519_PROFILE),1764)
+LIB_VERIFY_BARE_PRECALC_EXPECT = 6
+else
+LIB_VERIFY_BARE_PRECALC_EXPECT = 9
+endif
+
 LIB_VERIFY_ARCHIVE_SYMS_COMMON = LIB_PRECALC_sqtab_SIZE LIB_X25519_PRECALC_sqtab_SIZE
 LIB_VERIFY_ARCHIVE_SYMS_REU     = LIB_PRECALC_reu_mul_SIZE LIB_X25519_PRECALC_reu_mul_SIZE
 LIB_VERIFY_ARCHIVE_SYMS_DOUBLED = LIB_PRECALC_reu_mul_doubled_SIZE LIB_X25519_PRECALC_reu_mul_doubled_SIZE
@@ -701,22 +718,28 @@ endif
 # SHARED}_* aggregate. Before the split lib_manifest.o exported all of both
 # and a two-library link died on `Duplicate external identifier`.
 lib-verify-isolation: lib
-	@echo "=== member isolation (SPEC v1.2.0 §6.1): displaceable names must not ride along ==="
-	@set -e; bad=0; \
-	 for m in $$(ar65 t $(LIBX25519)); do \
-	   ex=$$(od65 --dump-exports $(LIB_DIR)/$$m 2>/dev/null | grep 'Name:' | sed 's/.*Name: *//' | tr -d '"'); \
-	   bare=$$(printf '%s\n' "$$ex" | grep -c '^LIB_PRECALC_' || true); \
-	   agg=$$(printf '%s\n' "$$ex" | grep -cE '^LIB_X25519_(ZP_USAGE_BYTES|REU_BANKS_USED|RESIDENT_BYTES|COLD_BYTES|SHARED_PRIMITIVES|SHARED_CONSUMES)$$' || true); \
-	   ver=$$(printf '%s\n' "$$ex" | grep -cE '^LIB_(VERSION_(MAJOR|MINOR|PATCH)|ABI_VERSION)$$' || true); \
-	   if [ "$$bare" -gt 0 ] && [ "$$agg" -gt 0 ]; then \
-	     echo "FAIL: $$m exports $$bare bare LIB_PRECALC_* name(s) AND $$agg §5 aggregate(s) a consumer must import"; bad=1; fi; \
-	   if [ "$$bare" -gt 0 ] && [ "$$ver" -gt 0 ]; then \
-	     echo "FAIL: $$m exports $$bare bare LIB_PRECALC_* name(s) AND $$ver bare version export(s)"; bad=1; fi; \
-	   if [ "$$ver" -gt 0 ] && [ "$$agg" -gt 0 ]; then \
-	     echo "FAIL: $$m exports $$ver bare version export(s) AND $$agg §5 aggregate(s)"; bad=1; fi; \
-	 done; \
-	 [ $$bad -eq 0 ] || (echo "member isolation violated -- see SPEC v1.2.0 §6.1 and src/precalc_manifest.s" && exit 1); \
-	 echo "OK: no archive member mixes displaceable names with names a consumer imports for another reason"
+	@python3 tools/check_member_isolation.py \
+	    --archive $(LIBX25519) --lib-dir $(LIB_DIR) \
+	    --expect-bare-precalc $(LIB_VERIFY_BARE_PRECALC_EXPECT)
+
+# Negative leg: re-run with the awk-equivalent extraction that drops
+# length-24 names. It MUST fail, and MUST say the extraction dropped names
+# rather than reporting a clean archive -- three of this library's bare
+# LIB_PRECALC_* names are exactly 24 characters, so an unsafe extraction
+# reports "6 bare names" on an archive exporting 9.
+lib-verify-isolation-negative: lib
+	@echo "=== lib-verify-isolation-negative: an unsafe export extraction must be CAUGHT ==="
+	@out=$$(python3 tools/check_member_isolation.py --archive $(LIBX25519) \
+	          --lib-dir $(LIB_DIR) \
+	          --expect-bare-precalc $(LIB_VERIFY_BARE_PRECALC_EXPECT) \
+	          --unsafe-extract 2>&1); rc=$$?; \
+	 if [ $$rc -eq 0 ]; then echo "FAIL: the unsafe extraction was not caught"; echo "$$out"; exit 1; fi; \
+	 echo "$$out" | grep -q "extraction dropped 3 of 18" \
+	   || (echo "FAIL: did not identify precalc_manifest.o's dropped names:"; echo "$$out"; exit 1); \
+	 echo "$$out" | grep -q "found 6" \
+	   || (echo "FAIL: the non-empty sentinel did not catch the undercount:"; echo "$$out"; exit 1); \
+	 echo "OK: reconciliation and sentinel both fire on a dropped-name extraction"
+
 
 
 # --- guard-table citation check (issue #122) ---------------------------------

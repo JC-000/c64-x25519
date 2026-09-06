@@ -230,7 +230,7 @@ _BASE_COLD     = 160
 .elseif SQR_DMA_K
 LIB_X25519_REU_BANKS_USED = $3B << X25519_REU_BANK
 .assert X25519_REU_BANK <= 26, error, "X25519_REU_BANK > 26 shifts the top of the 5-bank $3B window past bit 31 and the exported LIB_X25519_REU_BANKS_USED silently drops it (SPEC §5: banks 0-31)"
-_BASE_RESIDENT = 8503
+_BASE_RESIDENT = 8506
 _BASE_COLD     = 947
 .else
 LIB_X25519_REU_BANKS_USED = $03 << X25519_REU_BANK

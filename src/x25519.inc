@@ -53,7 +53,7 @@
 ; (see LIB_X25519_ABI_VERSION above):
 ;
 ;     .import LIB_X25519_ABI_VERSION
-;     .assert LIB_X25519_ABI_VERSION = 3, lderror, "c64-x25519 exported-surface generation changed; re-check the integration"
+;     .assert LIB_X25519_ABI_VERSION = 4, lderror, "c64-x25519 exported-surface generation changed; re-check the integration"
 ;
 ; The unprefixed LIB_VERSION_* / LIB_ABI_VERSION forms still exist but
 ; are deprecated (identical across every contract library, so they

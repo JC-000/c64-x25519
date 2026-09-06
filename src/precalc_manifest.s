@@ -7,13 +7,20 @@
 ; This file exists ONLY to hold the LIB_PRECALC_TABLE invocations, and it
 ; must stay that way. It is not a stylistic split.
 ;
-; c64-lib-contract SPEC v1.2.0 §6.1 "Member isolation":
+; c64-lib-contract SPEC v1.2.2 §6.1 "Member isolation" (quote the TAG you
+; conform to -- §6.1 was corrected twice on 2026-09-06 and the v1.2.0
+; wording, which lacked the prefixed-counterparts exception, would have made
+; this very file non-conformant):
 ;
-;   ld65 links whole archive members. A symbol a consumer may displace —
+;   ld65 links whole archive members. A symbol a consumer may displace --
 ;   suppress under LIB_NO_BARE_EXPORTS, or define itself under APP_OWNED
-;   (§8.0) — MUST live in a translation unit that exports nothing else a
-;   consumer may import — other displaceable names included — and defines
-;   nothing the library's own code references.
+;   (SS8.0) -- MUST live in a translation unit that exports nothing else a
+;   consumer may import -- other displaceable names included, THEIR OWN
+;   PREFIXED COUNTERPARTS EXCEPTED -- and defines nothing else the
+;   library's own code references. Otherwise the member arrives uninvited
+;   and its displaceable names collide -- with the consumer's own
+;   definitions, or with the identical bare name a sibling library exports
+;   -- and the consumer can repair neither: member surgery is banned above.
 ;
 ; The macro emits the deprecated BARE triple LIB_PRECALC_<name>_{SIZE,
 ; REGION,SHARED} unless LIB_NO_BARE_EXPORTS is defined. Those names are
@@ -27,8 +34,9 @@
 ;
 ;   ld65: Error: Duplicate external identifier: 'LIB_PRECALC_sqtab_SHARED'
 ;
-; Raised as c64-lib-contract#177 and settled there at SPEC v1.2.0, which
-; states the rule once in §6.1 and has §1 and §8.4 cite it.
+; Raised as c64-lib-contract#177, settled at SPEC v1.2.0 and corrected to
+; its final wording at v1.2.2. The rule is stated once, in §6.1, with §1
+; and §8.4 citing it rather than restating it.
 ;
 ; DO NOT add anything else to this file — no §5 equates, no §1 version
 ; equates, no code, no data. c64-nist-curves keeps the same shape in its

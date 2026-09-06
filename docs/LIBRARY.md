@@ -300,7 +300,7 @@ And the load-bearing breakage gate on the exported-surface generation:
 
 ```ca65
 .import LIB_X25519_ABI_VERSION
-.assert LIB_X25519_ABI_VERSION = 3, lderror, "c64-x25519 exported-surface generation changed; re-check the integration"
+.assert LIB_X25519_ABI_VERSION = 4, lderror, "c64-x25519 exported-surface generation changed; re-check the integration"
 ```
 
 (Snippets are deliberately single-line: ca65 rejects `\` line

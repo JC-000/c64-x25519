@@ -439,7 +439,26 @@ reu_init_b:     .byte 0
 
 .ifndef SHARED_REU_MUL_FETCH
 .proc reu_fetch_mul_row
-        lda mul_cached_a
+        ; SPEC §8.2: "The canonical per-row entry point is
+        ; reu_fetch_mul_row; A = a (row index) on entry". Until v0.15.0
+        ; this was `lda mul_cached_a` — it DISCARDED the caller's A and
+        ; read a private byte instead, so the documented entry was not
+        ; implemented (issue #127, arbitrated at contract#182).
+        ;
+        ; That is invisible standalone, because every in-tree caller set
+        ; mul_cached_a first. It bites §8.2 FETCH DEFERRAL: a deferring
+        ; build imports the provider's reu_fetch_mul_row, its callers
+        ; write THEIR private byte, the provider reads ITS OWN, both
+        ; symbols exist and the link is clean — so the fetch silently
+        ; returns whatever row the provider last cached. c64-nist-curves
+        ; had the identical defect from nistcurves_mul_cached_a.
+        ;
+        ; `sta` sets no flags, so the carry the `asl`/`adc #0` pair below
+        ; depends on is untouched, and this is the same 3 bytes / 4 cycles
+        ; the `lda` was. mul_cached_a stays written because it is NOT just
+        ; a parameter to this proc: fe25519.s reads it in the squaring
+        ; cross-term path (`sbc mul_cached_a` at :1338/:1435).
+        sta mul_cached_a       ; §8.2: A = a on entry
         asl                    ; A = multiplier * 2, carry = bit 7
         sta reu_reu_hi
 bank_lda:
@@ -565,6 +584,15 @@ reu_fetch_mul_row_bank_patch := reu_fetch_mul_row::bank_lda + 1
         ;       skipped, recreating the W2-class corruption class.
         lda #X25519_REU_BANK_DOUBLED
         sta reu_fetch_mul_row_bank_patch
+        ; CALLER AUDIT (#127), load-bearing and not belt-and-braces: at
+        ; this point A holds X25519_REU_BANK_DOUBLED, not the row index.
+        ; Before v0.15.0 that was harmless because reu_fetch_mul_row
+        ; re-loaded mul_cached_a itself; now that it honours §8.2's
+        ; `A = a` entry, passing the bank here would store the BANK into
+        ; mul_cached_a and fetch a garbage row — turning a stale-row read
+        ; into a wrong-row read. This is why the shim and the audit had to
+        ; land together.
+        lda mul_cached_a       ; §8.2: A = a on entry to reu_fetch_mul_row
         jsr reu_fetch_mul_row
         lda #X25519_REU_BANK
         sta reu_fetch_mul_row_bank_patch
