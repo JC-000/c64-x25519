@@ -283,6 +283,51 @@ LIB_X25519_SHARED_REU_MUL_STAGE_LO := LIB_SHARED_REU_MUL_STAGE_LO
 LIB_X25519_SHARED_REU_MUL_STAGE_HI := LIB_SHARED_REU_MUL_STAGE_HI
 .export LIB_X25519_SHARED_REU_MUL_STAGE_LO
 .export LIB_X25519_SHARED_REU_MUL_STAGE_HI
+
+; --- SPEC §8.2: "The exported value MUST be the value the code reads" ------
+;
+; x25519 does NOT relocate the staging buffers. `src/data.s:161-165`
+; defines mul_dma_lo/hi/carry with a plain `.res` and never consults
+; LIB_SHARED_REU_MUL_STAGE_LO/_HI; `src/fe25519.s:54` and
+; `src/x25519_init.s:50` `.import` the private labels and index them
+; directly, and x25519_init additionally bakes mul_dma_lo/hi's address
+; into the REU transfer descriptors as immediates (`lda #<(mul_dma_lo)`
+; and friends). So an override reaches the export and nothing else.
+;
+; Until v0.14.0 that meant `-D LIB_SHARED_REU_MUL_STAGE_LO=0xC000` built
+; clean, `make lib-verify` exited 0, and the archive exported
+; LIB_X25519_SHARED_REU_MUL_STAGE_LO = $C000 while every access path read
+; mul_dma_lo at $1B00 (measured in the linked image: `al 001B00
+; .mul_dma_lo`). That is precisely the export §8.2 line 391 calls a
+; certificate that certifies nothing — and it is worse than useless,
+; because the export exists so a consumer can cross-check two co-linked
+; §8.2 adopters' placements, and a false agreement is what it produced.
+;
+; These asserts make the export true by construction: it either equals
+; what the code reads, or the link fails and names the knob. An override
+; we cannot honour is now a loud error instead of a silent lie.
+;
+; NOT fixed by relocating the buffers, deliberately. Page alignment of
+; all three is a hard CT invariant (`src/data.s:175-177`), the eight
+; `adc mul_dma_*,y` sites index with a secret Y across the full 0..255
+; range, and the REU descriptors above bake the address in — so honouring
+; the knob is a real change owing VICE validation, not a doc fix. §8.2's
+; staging export is conditional ("A library that honours the staging
+; knobs SHOULD also export ..."), so pinning keeps us honestly inside the
+; SHOULD where exporting an unhonoured number did not.
+;
+; lderror, not error: mul_dma_lo/hi are link-time addresses.
+;
+; The .global pair is UNCONDITIONAL and must stay so. The one at :221/:225
+; sits inside `.ifndef LIB_SHARED_REU_MUL_STAGE_LO` — i.e. it fires only
+; when the consumer did NOT override, which is exactly the case these
+; asserts do not need to catch. Relying on it made the override fail with
+; `Error: Symbol 'mul_dma_lo' is undefined` at assemble time, naming an
+; internal label instead of the knob: a correct rejection for the wrong
+; reason, and useless to the consumer reading it.
+.global mul_dma_lo, mul_dma_hi
+.assert LIB_X25519_SHARED_REU_MUL_STAGE_LO = mul_dma_lo, lderror, "LIB_SHARED_REU_MUL_STAGE_LO override is not honoured by c64-x25519: the code reads mul_dma_lo (src/data.s). Rebuild without the override, or relocate the LIB_X25519_DATA segment in your cfg instead (SPEC §8.2: the exported value MUST be the value the code reads)"
+.assert LIB_X25519_SHARED_REU_MUL_STAGE_HI = mul_dma_hi, lderror, "LIB_SHARED_REU_MUL_STAGE_HI override is not honoured by c64-x25519: the code reads mul_dma_hi (src/data.s). Rebuild without the override, or relocate the LIB_X25519_DATA segment in your cfg instead (SPEC §8.2: the exported value MUST be the value the code reads)"
 .endif ; X25519_ONCHIP_MUL = 0 (issue #72 — §8.2 export surface)
 
 .endif ; REU_CONFIG_NO_EXPORTS

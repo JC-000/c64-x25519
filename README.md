@@ -29,10 +29,27 @@ correct; base 27 → `0xD8000000`, bank 32 gone), now guarded by two
 profile-aware asserts. Issue #122 closed: the Makefile guard table's
 gate citations, nine of twelve of which pointed at blank lines or prose,
 are replaced by six checked sites in `tools/check_gate_citations.py` and
-verified on every `lib-verify`. contract#167 and #164 are **closed**
-upstream — ABI stays 3, now by §7 ruling; [contract#177](https://github.com/JC-000/c64-lib-contract/issues/177)
-raised and open. **Consumer action: none.** MINOR (two new build
-targets); ABI stays 3. Aligned with SPEC v1.1.0. See
+verified on every `lib-verify`. contract#167 and #164 are **closed** upstream — ABI stays 3, now by §7
+ruling. [contract#177](https://github.com/JC-000/c64-lib-contract/issues/177),
+raised from here, is **settled**: §1's TU-isolation rule was defeated by
+§8.4, whose bare `LIB_PRECALC_*` triple shipped in the same member as the
+§5 aggregates a consumer must import — measured as
+`ld65: Error: Duplicate external identifier: 'LIB_PRECALC_sqtab_SHARED'`
+on a two-library link. The contract now states the mechanism once as
+**§6.1 member isolation**; discharged here by a new
+`src/precalc_manifest.s` member, with `make lib-verify-isolation`
+asserting it. Investigating that surfaced a §8.2 MUST we were violating —
+`-D LIB_SHARED_REU_MUL_STAGE_LO` reached the *exported* equate while the
+code kept reading `mul_dma_lo`, so the archive advertised a placement it
+did not use; the override now fails at link instead of lying. A second
+member-isolation violation (the staging buffers in `src/data.s`) is
+identified and fixed but **deliberately held back** — it reorders
+`LIB_X25519_DATA`, changes the PRG, and touches CT-critical page-aligned
+buffers, so it owes a full VICE suite rather than a packaging release's
+evidence. **Consumer action:** effectively none; the archive gains an
+11th member and the two staging-knob defines now fail loudly. MINOR (two
+new build targets); ABI stays 3. Aligned with SPEC v1.1.0 plus §6.1
+member isolation. See
 [`docs/RELEASE_NOTES_v0.14.0.md`](docs/RELEASE_NOTES_v0.14.0.md).
 
 **v0.13.0 released 2026-08-31** — [GitHub release](https://github.com/JC-000/c64-x25519/releases/tag/v0.13.0) (tarball 151,501 B, SHA256 `22f14751…917b`) — a

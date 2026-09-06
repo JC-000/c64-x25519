@@ -607,8 +607,22 @@ LIB_SHARED_REU_MUL_BANKS_USED = \
     (1 .shl LIB_SHARED_REU_MUL_BANK) | \
     (1 .shl (LIB_SHARED_REU_MUL_BANK + 1))
 .assert LIB_SHARED_REU_MUL_OFFSET = $0000, error, ...
-.assert LIB_SHARED_REU_MUL_BANK < $FE,    error, ...
+.assert LIB_SHARED_REU_MUL_BANK < 31,     error, ...
 ```
+
+> The base-bank bound was `< $FE` before v0.14.0. `$FE` bounded the bank
+> *number* but not the 32-bit §5 mask the number feeds, so a high base
+> exported a `LIB_X25519_REU_BANKS_USED` that omitted a bank the table
+> really claims — and a consumer's disjointness assert passed over it.
+> Contract SPEC v1.0.0 tightened it to `< 31`; x25519 adopted it at
+> v0.14.0. **This assert is not gated by profile** — it holds even under
+> `X25519_ONCHIP_MUL=1`, where the mask is computed but never exported.
+>
+> It bounds the *shared two-bank pair* only. x25519's own §5 mask spans
+> **five** banks (`$3B << X25519_REU_BANK`, i.e. base+0,1,3,4,5), so the
+> binding constraint on `X25519_REU_BANK` is `<= 26` on the default
+> profile and `<= 30` on 1764 — asserted separately in
+> `src/lib_manifest.s`. See §2.3 of `docs/RELEASE_NOTES_v0.14.0.md`.
 
 Override the base bank via `ca65 -D LIB_SHARED_REU_MUL_BANK=0x<bank>`
 (applied to every library translation unit). As of the contract-#82

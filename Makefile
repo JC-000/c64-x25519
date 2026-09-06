@@ -155,6 +155,7 @@ LIB_OBJS = $(BUILD_DIR)/x25519_init.o \
            $(BUILD_DIR)/util.o \
            $(BUILD_DIR)/lib_version.o \
            $(BUILD_DIR)/lib_manifest.o \
+           $(BUILD_DIR)/precalc_manifest.o \
            $(BUILD_DIR)/zp_config.o \
            $(BUILD_DIR)/reu_config.o
 
@@ -169,6 +170,7 @@ CA65_SRCS = $(SRC_DIR)/main.s \
             $(SRC_DIR)/util.s \
             $(SRC_DIR)/lib_version.s \
             $(SRC_DIR)/lib_manifest.s \
+            $(SRC_DIR)/precalc_manifest.s \
             $(SRC_DIR)/zp_config.s \
             $(SRC_DIR)/reu_config.s
 
@@ -182,6 +184,7 @@ LIBX25519 = $(LIB_DIR)/libx25519.a
         lib-verify-footprint-negative-arm \
         lib-verify-negative lib-verify-guards-legc \
         lib-verify-citations lib-verify-citations-negative \
+        lib-verify-isolation \
         dist bench-record perf-diff lib-x25519-1764 lib-x25519-onchip
 
 all: $(PRG)
@@ -463,8 +466,6 @@ LIB_VERIFY_SYMS_COMMON = x25519_clamp x25519_scalarmult x25519_base \
 	x25519_reu_fault \
 	LIB_X25519_SHARED_PRIMITIVES \
 	LIB_X25519_SHARED_CONSUMES \
-	LIB_PRECALC_sqtab_SIZE \
-	LIB_X25519_PRECALC_sqtab_SIZE \
 	mul_tables_init
 
 # Doubled-table surface (SQR_DMA_K > 0 only): present in the default
@@ -472,9 +473,7 @@ LIB_VERIFY_SYMS_COMMON = x25519_clamp x25519_scalarmult x25519_base \
 # SQR_DMA_K=0). The 1764 profile asserts these ABSENT — the contract
 # #62 audit found nothing had ever locked that archive's smaller
 # export set (it verified under the default expectations).
-LIB_VERIFY_SYMS_DOUBLED = reu_fetch_doubled_row \
-	LIB_PRECALC_reu_mul_doubled_SIZE \
-	LIB_X25519_PRECALC_reu_mul_doubled_SIZE
+LIB_VERIFY_SYMS_DOUBLED = reu_fetch_doubled_row
 
 # §8.x bit constants must NEVER be exported (issues #77/#78 item 3):
 # they are unprefixed names with identical values in every §8 adopter,
@@ -517,9 +516,7 @@ LIB_VERIFY_SYMS_REU_SURFACE = reu_fetch_mul_row reu_fetch_mul_row_bank_patch \
 	X25519_REU_BANK_DOUBLED X25519_REU_BANK_CARRY \
 	LIB_X25519_SHARED_REU_MUL_BANK LIB_X25519_SHARED_REU_MUL_OFFSET \
 	LIB_X25519_SHARED_REU_MUL_BANKS_USED \
-	LIB_X25519_SHARED_REU_MUL_STAGE_LO LIB_X25519_SHARED_REU_MUL_STAGE_HI \
-	LIB_PRECALC_reu_mul_SIZE \
-	LIB_X25519_PRECALC_reu_mul_SIZE
+	LIB_X25519_SHARED_REU_MUL_STAGE_LO LIB_X25519_SHARED_REU_MUL_STAGE_HI
 
 LIB_VERIFY_SYMS_REU = $(LIB_VERIFY_SYMS_REU_OWN) $(LIB_VERIFY_SYMS_REU_CANON) \
 	$(LIB_VERIFY_SYMS_REU_SURFACE)
@@ -664,6 +661,64 @@ DOC_SNIPPET_FILES = $(wildcard cfg/*.cfg src/*.s src/*.inc) \
 lib-verify-docs:
 	@python3 tools/check_doc_snippets.py $(DOC_SNIPPET_FILES)
 
+# --- §8.4 precalc exports: checked in the ARCHIVE, not the linked stub ------
+#
+# These used to be greppd out of stub.labels alongside the §5 aggregates.
+# That check passed for the WRONG REASON: precalc and §5 shared
+# src/lib_manifest.s, so importing a footprint equate dragged the precalc
+# names into the link. c64-lib-contract SPEC v1.2.0 §6.1 member isolation
+# forbids exactly that, and v0.14.0 split them into src/precalc_manifest.s
+# (contract#177). The member is now pulled only when a consumer references
+# it — which is the point — so it is correctly ABSENT from a stub that
+# references nothing in it, and a linked-binary grep can no longer be the
+# check.
+#
+# What a consumer actually relies on is that the names are EXPORTED BY THE
+# SHIPPED ARCHIVE and importable on demand. That is what is asserted here,
+# with od65 over the members `ar65 t` reports.
+#
+# The stub still cannot .import them: reu_mul's SIZE is 131072, which ca65
+# auto-sizes to `far`, and the 6502 target has no `far` import address-size
+# hint to match. That ca65 gap is why this was a label grep in the first
+# place.
+LIB_VERIFY_ARCHIVE_SYMS_COMMON = LIB_PRECALC_sqtab_SIZE LIB_X25519_PRECALC_sqtab_SIZE
+LIB_VERIFY_ARCHIVE_SYMS_REU     = LIB_PRECALC_reu_mul_SIZE LIB_X25519_PRECALC_reu_mul_SIZE
+LIB_VERIFY_ARCHIVE_SYMS_DOUBLED = LIB_PRECALC_reu_mul_doubled_SIZE LIB_X25519_PRECALC_reu_mul_doubled_SIZE
+
+ifeq ($(X25519_PROFILE),onchip)
+LIB_VERIFY_ARCHIVE_SYMS = $(LIB_VERIFY_ARCHIVE_SYMS_COMMON)
+else ifeq ($(X25519_PROFILE),1764)
+LIB_VERIFY_ARCHIVE_SYMS = $(LIB_VERIFY_ARCHIVE_SYMS_COMMON) $(LIB_VERIFY_ARCHIVE_SYMS_REU)
+else
+LIB_VERIFY_ARCHIVE_SYMS = $(LIB_VERIFY_ARCHIVE_SYMS_COMMON) $(LIB_VERIFY_ARCHIVE_SYMS_REU) \
+	$(LIB_VERIFY_ARCHIVE_SYMS_DOUBLED)
+endif
+
+# Member isolation is itself asserted (contract SPEC v1.2.0 §6.1): the TU
+# carrying the displaceable bare LIB_PRECALC_* triple must export nothing a
+# consumer imports for another reason. Measured as: no member exports both a
+# bare LIB_PRECALC_ name and a LIB_X25519_{ZP_USAGE,REU_BANKS,RESIDENT,COLD,
+# SHARED}_* aggregate. Before the split lib_manifest.o exported all of both
+# and a two-library link died on `Duplicate external identifier`.
+lib-verify-isolation: lib
+	@echo "=== member isolation (SPEC v1.2.0 §6.1): displaceable names must not ride along ==="
+	@set -e; bad=0; \
+	 for m in $$(ar65 t $(LIBX25519)); do \
+	   ex=$$(od65 --dump-exports $(LIB_DIR)/$$m 2>/dev/null | grep 'Name:' | sed 's/.*Name: *//' | tr -d '"'); \
+	   bare=$$(printf '%s\n' "$$ex" | grep -c '^LIB_PRECALC_' || true); \
+	   agg=$$(printf '%s\n' "$$ex" | grep -cE '^LIB_X25519_(ZP_USAGE_BYTES|REU_BANKS_USED|RESIDENT_BYTES|COLD_BYTES|SHARED_PRIMITIVES|SHARED_CONSUMES)$$' || true); \
+	   ver=$$(printf '%s\n' "$$ex" | grep -cE '^LIB_(VERSION_(MAJOR|MINOR|PATCH)|ABI_VERSION)$$' || true); \
+	   if [ "$$bare" -gt 0 ] && [ "$$agg" -gt 0 ]; then \
+	     echo "FAIL: $$m exports $$bare bare LIB_PRECALC_* name(s) AND $$agg §5 aggregate(s) a consumer must import"; bad=1; fi; \
+	   if [ "$$bare" -gt 0 ] && [ "$$ver" -gt 0 ]; then \
+	     echo "FAIL: $$m exports $$bare bare LIB_PRECALC_* name(s) AND $$ver bare version export(s)"; bad=1; fi; \
+	   if [ "$$ver" -gt 0 ] && [ "$$agg" -gt 0 ]; then \
+	     echo "FAIL: $$m exports $$ver bare version export(s) AND $$agg §5 aggregate(s)"; bad=1; fi; \
+	 done; \
+	 [ $$bad -eq 0 ] || (echo "member isolation violated -- see SPEC v1.2.0 §6.1 and src/precalc_manifest.s" && exit 1); \
+	 echo "OK: no archive member mixes displaceable names with names a consumer imports for another reason"
+
+
 # --- guard-table citation check (issue #122) ---------------------------------
 #
 # The _NEEDS_DEF_* / _NEEDS_VAL_* block above documents why the two switch
@@ -729,7 +784,7 @@ LIB_VERIFY_FOOTPRINT_CMD = python3 tools/check_footprint.py \
 lib-verify-footprint: lib $(LIB_VERIFY_PRG)
 	@$(LIB_VERIFY_FOOTPRINT_CMD)
 
-lib-verify: lib-verify-docs lib-verify-citations lib $(LIB_VERIFY_PRG)
+lib-verify: lib-verify-docs lib-verify-citations lib-verify-isolation lib $(LIB_VERIFY_PRG)
 	@set -e; \
 	test -s $(LIB_VERIFY_PRG) || (echo "FAIL: $(LIB_VERIFY_PRG) is empty" && exit 1); \
 	for sym in $(LIB_VERIFY_SYMS_EXPECT); do \
@@ -739,6 +794,12 @@ lib-verify: lib-verify-docs lib-verify-citations lib $(LIB_VERIFY_PRG)
 	for sym in $(LIB_VERIFY_SYMS_ABSENT) $(LIB_VERIFY_SYMS_ABSENT_ALWAYS); do \
 	  ! grep -q "\\b$$sym\\b" $(LIB_VERIFY_DIR)/stub.labels \
 	    || (echo "FAIL: symbol $$sym present but must be gated out in $(X25519_PROFILE) profile" && exit 1); \
+	done; \
+	arch_ex=$$(for m in $$(ar65 t $(LIBX25519)); do od65 --dump-exports $(LIB_DIR)/$$m 2>/dev/null; done \
+	          | grep 'Name:' | sed 's/.*Name: *//' | tr -d '"'); \
+	for sym in $(LIB_VERIFY_ARCHIVE_SYMS); do \
+	  printf '%s\n' "$$arch_ex" | grep -qx "$$sym" \
+	    || (echo "FAIL: expected §8.4 export $$sym not exported by any member of $(LIBX25519)" && exit 1); \
 	done; \
 	grep -q "^al $(LIB_VERIFY_MASK_EXPECT) \.LIB_X25519_SHARED_PRIMITIVES$$" \
 	    $(LIB_VERIFY_DIR)/stub.labels \
