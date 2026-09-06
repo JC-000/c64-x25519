@@ -754,10 +754,8 @@ lib-verify-fill-negative:
 	@printf '\n; fill-negative leg: 1 byte to knock the member off a page boundary\nfill_neg_pad: .byte 0\n' >> build-fillneg/src/data.s
 	@out=$$(cd build-fillneg && make lib-verify 2>&1); rc=$$?; \
 	 if [ $$rc -eq 0 ]; then echo "FAIL: 255 B of link fill did not trip the basis cross-check"; echo "$$out" | tail -20; rm -rf build-fillneg; exit 1; fi; \
-	 printf '%s\n' "$$out" | grep -q "LIB_X25519_DATA: object-size sum .* != placed span .* delta +255 .* UNDER-reports" \
-	   || (echo "FAIL: the check failed, but not with the named fill diagnostic:"; printf '%s\n' "$$out" | grep -iE "FAIL|delta" | head -5; rm -rf build-fillneg; exit 1); \
-	 printf '%s\n' "$$out" | grep -q "OK: LIB_X25519_CODE        object-size sum == placed span" \
-	   || (echo "FAIL: an unaffected segment was also reported -- failing for the wrong reason"; rm -rf build-fillneg; exit 1); \
+	 if ! printf '%s\n' "$$out" | grep -q "LIB_X25519_DATA: object-size sum .* != placed span .* delta +255 .* UNDER-reports"; then echo "FAIL: the check failed, but not with the named fill diagnostic:"; printf '%s\n' "$$out" | grep -iE "FAIL|delta" | head -5; rm -rf build-fillneg; exit 1; fi; \
+	 if ! printf '%s\n' "$$out" | grep -q "OK: LIB_X25519_CODE        object-size sum == placed span"; then echo "FAIL: an unaffected segment was also reported -- failing for the wrong reason"; rm -rf build-fillneg; exit 1; fi; \
 	 rm -rf build-fillneg; \
 	 echo "OK: the basis cross-check sees 255 B of ld65 fill, names LIB_X25519_DATA, and says UNDER-reports"
 
@@ -768,10 +766,8 @@ lib-verify-isolation-negative: lib
 	          --expect-bare-precalc $(LIB_VERIFY_BARE_PRECALC_EXPECT) \
 	          --unsafe-extract 2>&1); rc=$$?; \
 	 if [ $$rc -eq 0 ]; then echo "FAIL: the unsafe extraction was not caught"; echo "$$out"; exit 1; fi; \
-	 echo "$$out" | grep -q "extraction dropped 3 of 18" \
-	   || (echo "FAIL: did not identify precalc_manifest.o's dropped names:"; echo "$$out"; exit 1); \
-	 echo "$$out" | grep -q "found 6" \
-	   || (echo "FAIL: the non-empty sentinel did not catch the undercount:"; echo "$$out"; exit 1); \
+	 if ! echo "$$out" | grep -q "extraction dropped 3 of 18"; then echo "FAIL: did not identify precalc_manifest.o's dropped names:"; echo "$$out"; exit 1; fi; \
+	 if ! echo "$$out" | grep -q "found 6"; then echo "FAIL: the non-empty sentinel did not catch the undercount:"; echo "$$out"; exit 1; fi; \
 	 echo "OK: reconciliation and sentinel both fire on a dropped-name extraction"
 
 
@@ -804,10 +800,8 @@ lib-verify-citations-negative:
 	 if [ $$rc -eq 0 ]; then \
 	   echo "FAIL: a perturbed citation did not fail the check"; echo "$$out"; exit 1; \
 	 fi; \
-	 echo "$$out" | grep -q "FAIL: src/x25519_init.s:36 \[SQR_DMA_K\]" \
-	   || (echo "FAIL: the check failed, but did not name the perturbed SQR_DMA_K citation:"; echo "$$out"; exit 1); \
-	 echo "$$out" | grep -q "^  OK: src/sqtab_init.s:53" \
-	   || (echo "FAIL: the check reported an unperturbed citation as broken — it is failing for the wrong reason:"; echo "$$out"; exit 1); \
+	 if ! echo "$$out" | grep -q "FAIL: src/x25519_init.s:36 \[SQR_DMA_K\]"; then echo "FAIL: the check failed, but did not name the perturbed SQR_DMA_K citation:"; echo "$$out"; exit 1; fi; \
+	 if ! echo "$$out" | grep -q "^  OK: src/sqtab_init.s:53"; then echo "FAIL: the check reported an unperturbed citation as broken — it is failing for the wrong reason:"; echo "$$out"; exit 1; fi; \
 	 echo "OK: the citation check fails on a one-line drift and names SQR_DMA_K, while the other five stay green"
 
 # --- §5 footprint: DERIVED, not restated (contract SPEC v0.17.0 §15.1) ------
@@ -856,8 +850,7 @@ lib-verify: lib-verify-docs lib-verify-citations lib-verify-isolation lib $(LIB_
 	arch_ex=$$(for m in $$(ar65 t $(LIBX25519)); do od65 --dump-exports $(LIB_DIR)/$$m 2>/dev/null; done \
 	          | grep 'Name:' | sed 's/.*Name: *//' | tr -d '"'); \
 	for sym in $(LIB_VERIFY_ARCHIVE_SYMS); do \
-	  printf '%s\n' "$$arch_ex" | grep -qx "$$sym" \
-	    || (echo "FAIL: expected §8.4 export $$sym not exported by any member of $(LIBX25519)" && exit 1); \
+	  if ! printf '%s\n' "$$arch_ex" | grep -qx "$$sym"; then echo "FAIL: expected §8.4 export $$sym not exported by any member of $(LIBX25519)" && exit 1; fi; \
 	done; \
 	grep -q "^al $(LIB_VERIFY_MASK_EXPECT) \.LIB_X25519_SHARED_PRIMITIVES$$" \
 	    $(LIB_VERIFY_DIR)/stub.labels \
