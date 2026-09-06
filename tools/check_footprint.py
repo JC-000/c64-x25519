@@ -221,6 +221,90 @@ def read_equate(labels_path, symbol, optional=False):
     sys.exit(2)
 
 
+_MAP_SEG_RE = re.compile(
+    r"^(LIB_X25519_[A-Z_]+)\s+[0-9A-Fa-f]+\s+[0-9A-Fa-f]+\s+([0-9A-Fa-f]+)")
+
+
+def read_map_spans(map_path):
+    """{segment: placed size} from an ld65 -m map's segment list."""
+    spans = {}
+    try:
+        with open(map_path) as fh:
+            for line in fh:
+                m = _MAP_SEG_RE.match(line.strip())
+                if m:
+                    spans[m.group(1)] = int(m.group(2), 16)
+    except IOError as exc:
+        sys.stderr.write("FATAL: cannot read map %s: %s\n" % (map_path, exc))
+        sys.exit(2)
+    if not spans:
+        sys.stderr.write("FATAL: %s contained no LIB_X25519_* segment rows -- "
+                         "the map is empty or its format changed, and the "
+                         "cross-check below would pass vacuously\n" % map_path)
+        sys.exit(2)
+    return spans
+
+
+def check_link_fill(seg_map, map_path, segments):
+    """Cross-check the object-size basis against a real link's placed spans.
+
+    WHAT CLAIM THIS MAKES, precisely, because there are two available and
+    they are not the same:
+
+      * It asserts THIS TOOL'S BASIS IS CURRENTLY EXACT -- that summing
+        `od65 --dump-segsize` over the archive's members equals what ld65
+        actually placed, under the cfg this ran with.
+      * It does NOT assert a bound that holds in every consumer's cfg. A
+        placed span is cfg-specific. c64-ChaCha20-Poly1305 argues for a
+        worst-case per-segment charge on exactly that ground, and that is a
+        defensible but DIFFERENT claim. Do not let a future reader read
+        this as the bound.
+
+    WHY IT EXISTS. §5 requires the footprint equates to be safe-direction --
+    "round up, never down" -- because a consumer binds them to a budget at
+    assemble time, and an equate that understates makes that check pass
+    while the library overruns. Summing object sizes omits any padding ld65
+    inserts BETWEEN members' contributions when placing an aligned segment,
+    so the basis can understate in exactly the forbidden direction.
+    c64-ChaCha20-Poly1305 measured all five of their RESIDENT literals low
+    by 39-295 B from this (their #113).
+
+    x25519's exposure is currently ZERO -- measured exact on all three
+    segments, including after v0.15.0 gave LIB_X25519_DATA and
+    LIB_X25519_CODE two contributing members each. But that is not a
+    property anything guarantees: it holds because data.o's contribution
+    happens to end on a page boundary, being a whole number of 256-byte
+    tables after its own aligns, so mul_stage.o's `.align 256` needs no
+    fill. That is ALIGNMENT BY DERIVATION -- the same shape as
+    mul38_lo_tab inheriting its page alignment from a neighbour's size,
+    which cost an 83,342-cycle CT regression at v0.15.0 when a split spent
+    it. Same property, different quantity.
+
+    So this check is what converts that coincidence into an invariant: the
+    day a member is added, or a table's size stops being a multiple of 256,
+    the fill appears and the build fails loudly instead of the equate
+    quietly under-reporting into a consumer's budget assert.
+    """
+    spans = read_map_spans(map_path)
+    problems = []
+    for seg in segments:
+        summed = sum(sizes.get(seg, 0) for sizes in seg_map.values())
+        placed = spans.get(seg)
+        if placed is None:
+            continue          # segment absent in this profile
+        if placed != summed:
+            direction = "UNDER-reports" if summed < placed else "over-reports"
+            problems.append(
+                "  %s: object-size sum %d ($%04X) != placed span %d ($%04X), "
+                "delta %+d -- the basis %s by the link fill"
+                % (seg, summed, summed, placed, placed, placed - summed,
+                   direction))
+        else:
+            print("  OK: %-22s object-size sum == placed span (%d B, no link fill)"
+                  % (seg, summed))
+    return problems
+
+
 def total(seg_map, segments):
     return sum(sizes.get(seg, 0)
                for sizes in seg_map.values()
@@ -307,6 +391,10 @@ def main():
                     help="write the per-member/per-segment map as JSON")
     ap.add_argument("--baseline", metavar="FILE",
                     help="diff against a previously emitted map on failure")
+    ap.add_argument("--map", metavar="FILE", default=None,
+                    help="ld65 -m map of a real link. When given, each "
+                         "segment's summed object size is cross-checked "
+                         "against the placed span -- see check_link_fill().")
     ap.add_argument("--od65", default="od65")
     ap.add_argument("--ar65", default="ar65")
     args = ap.parse_args()
@@ -407,6 +495,28 @@ def main():
         "sum(LIB_X25519_INIT_CODE) %d" % init,
         cold, read_equate(args.labels, "LIB_X25519_COLD_BYTES"),
         seg_map, COLD_SEGMENTS, baseline)
+
+    # Cross-check the BASIS itself against a real link, when a map is
+    # available. See check_link_fill()'s docstring for exactly which claim
+    # this makes and which it deliberately does not.
+    if args.map:
+        print("--- basis cross-check: object-size sum vs placed span "
+              "(§5 safe-direction) ---")
+        fill_problems = check_link_fill(
+            seg_map, args.map,
+            ["LIB_X25519_CODE", "LIB_X25519_DATA", "LIB_X25519_INIT_CODE"])
+        if fill_problems:
+            print()
+            print("FAIL: this tool's basis is no longer exact -- ld65 inserted "
+                  "fill the object-size sum does not see:")
+            for line in fill_problems:
+                print(line)
+            print()
+            print("§5 requires the footprint equates to be safe-direction: "
+                  "round up, never down. An UNDER-report makes a consumer's "
+                  "budget assert pass while the library overruns. Fix the "
+                  "basis (or charge the fill); do not relax this check.")
+            ok = False
 
     if not ok:
         print()

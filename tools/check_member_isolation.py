@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Assert c64-lib-contract SPEC v1.2.2 §6.1 member isolation over a shipped archive.
+r"""Assert c64-lib-contract SPEC v1.2.2 §6.1 member isolation over a shipped archive.
 
 The clause, quoted from the TAG this conforms to. SS6.1 was corrected twice
 on 2026-09-06; the v1.2.0 wording lacked the prefixed-counterparts exception,
@@ -142,7 +142,21 @@ def members(archive):
     out = subprocess.run(["ar65", "t", str(archive)], capture_output=True, text=True)
     if out.returncode != 0:
         raise SystemExit(f"check_member_isolation: ar65 t {archive} failed:\n{out.stderr}")
-    return [m for m in out.stdout.split() if m.endswith(".o")]
+    names = [m for m in out.stdout.split() if m.endswith(".o")]
+    # POSITIVE CONTROL. Every test below is an absence assertion, and an
+    # absence assertion over an empty input passes: zero members means zero
+    # records, zero mismatches, and a clean report. Nothing else here
+    # distinguishes "looked and found none" from "looked at nothing" -- a
+    # wrong archive path, a renamed artifact or a glob that matched nothing
+    # all land here. The sentinels further down would also catch it, but
+    # they would blame the enumeration rather than the input.
+    if len(names) < 8:
+        raise SystemExit(
+            "check_member_isolation: %s reported only %d member(s) (%s). "
+            "This library ships 12+. Refusing to run -- an isolation check "
+            "over a near-empty archive passes vacuously."
+            % (archive, len(names), " ".join(names) or "none"))
+    return names
 
 
 def exports(obj_path):

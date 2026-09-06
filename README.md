@@ -6,6 +6,24 @@ An optimized implementation of X25519 / Curve25519 scalar multiplication written
 
 ## Status
 
+**v0.16.0 released 2026-09-06** — [GitHub release](https://github.com/JC-000/c64-x25519/releases/tag/v0.16.0) — the
+settling release against c64-lib-contract SPEC **v1.2.2** (frozen). ABI
+stays 4; **PRG unchanged from v0.15.0**. Closes
+[#128](https://github.com/JC-000/c64-x25519/issues/128): `mul_8x8.o`
+exported two displaceable groups dropped by *different* switches
+(`SHARED_SQTAB_INIT` and `SHARED_CT_MUL_8X8`), so a consumer owning §8.3
+while deferring §8.1 could not link the shipped archive at all —
+`Duplicate external identifier: 'smc_diff_a_imm'`. Split into
+`src/sqtab_init.s` and `src/mul_8x8.s`; red-green verified against the
+v0.14.0 archive with the same consumer object. Also hardens the §5
+footprint basis: it sums object sizes, which omits padding ld65 inserts
+*between* members of an aligned segment — our exposure is zero, but only
+because one member's contribution happens to end on a page boundary, so
+`make lib-verify` now cross-checks every segment's sum against the placed
+span from a real link map, and `lib-verify-fill-negative` proves it sees
+255 B of injected fill. **Consumer action: none.** See
+[`docs/RELEASE_NOTES_v0.16.0.md`](docs/RELEASE_NOTES_v0.16.0.md).
+
 **v0.15.0 released 2026-09-06** — [GitHub release](https://github.com/JC-000/c64-x25519/releases/tag/v0.15.0) — the
 settling release against c64-lib-contract SPEC **v1.2.2** (frozen).
 **`LIB_X25519_ABI_VERSION` moves 3 → 4** and **the PRG changes** — first

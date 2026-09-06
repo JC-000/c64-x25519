@@ -149,6 +149,7 @@ endif
 # Library .o set (what ships in libx25519.a — no test harness code).
 LIB_OBJS = $(BUILD_DIR)/x25519_init.o \
            $(BUILD_DIR)/mul_8x8.o \
+           $(BUILD_DIR)/sqtab_init.o \
            $(BUILD_DIR)/fe25519.o \
            $(BUILD_DIR)/x25519.o \
            $(BUILD_DIR)/data.o \
@@ -165,6 +166,7 @@ CA65_SRCS = $(SRC_DIR)/main.s \
             $(SRC_DIR)/constants.s \
             $(SRC_DIR)/x25519_init.s \
             $(SRC_DIR)/mul_8x8.s \
+            $(SRC_DIR)/sqtab_init.s \
             $(SRC_DIR)/fe25519.s \
             $(SRC_DIR)/x25519.s \
             $(SRC_DIR)/data.s \
@@ -187,6 +189,7 @@ LIBX25519 = $(LIB_DIR)/libx25519.a
         lib-verify-negative lib-verify-guards-legc \
         lib-verify-citations lib-verify-citations-negative \
         lib-verify-isolation lib-verify-isolation-negative \
+        lib-verify-fill-negative \
         dist bench-record perf-diff lib-x25519-1764 lib-x25519-onchip
 
 all: $(PRG)
@@ -727,6 +730,37 @@ lib-verify-isolation: lib
 # rather than reporting a clean archive -- three of this library's bare
 # LIB_PRECALC_* names are exactly 24 characters, so an unsafe extraction
 # reports "6 bare names" on an archive exporting 9.
+# --- §5 basis cross-check negative leg ------------------------------------
+#
+# The footprint basis is a SUM OF OBJECT SIZES, which omits any padding ld65
+# inserts BETWEEN members' contributions when placing an aligned segment.
+# x25519's exposure is currently zero -- but by DERIVATION, not by
+# construction: data.o's contribution happens to end on a page boundary, so
+# mul_stage.o's `.align 256` needs no fill. That is the same
+# alignment-by-derivation shape that cost an 83,342-cycle CT regression at
+# v0.15.0 when a split spent it, in a different quantity.
+#
+# So the cross-check must be shown able to see the fill. This appends ONE
+# byte to data.s's LIB_X25519_DATA contribution on a throwaway source copy,
+# which knocks the next member off its page boundary and forces ld65 to
+# insert 255 bytes. The leg requires the check to fail AND to name the
+# segment, the delta and the DIRECTION -- an over-report is harmless, an
+# under-report is the §5 violation.
+lib-verify-fill-negative:
+	@echo "=== lib-verify-fill-negative: the §5 basis cross-check must see ld65's fill ==="
+	@rm -rf build-fillneg && mkdir -p build-fillneg
+	@git ls-files -z | xargs -0 tar -c | tar -x -C build-fillneg
+	@cp src/*.s src/*.inc build-fillneg/src/ && cp tools/*.py build-fillneg/tools/ && cp Makefile build-fillneg/
+	@printf '\n; fill-negative leg: 1 byte to knock the member off a page boundary\nfill_neg_pad: .byte 0\n' >> build-fillneg/src/data.s
+	@out=$$(cd build-fillneg && make lib-verify 2>&1); rc=$$?; \
+	 if [ $$rc -eq 0 ]; then echo "FAIL: 255 B of link fill did not trip the basis cross-check"; echo "$$out" | tail -20; rm -rf build-fillneg; exit 1; fi; \
+	 printf '%s\n' "$$out" | grep -q "LIB_X25519_DATA: object-size sum .* != placed span .* delta +255 .* UNDER-reports" \
+	   || (echo "FAIL: the check failed, but not with the named fill diagnostic:"; printf '%s\n' "$$out" | grep -iE "FAIL|delta" | head -5; rm -rf build-fillneg; exit 1); \
+	 printf '%s\n' "$$out" | grep -q "OK: LIB_X25519_CODE        object-size sum == placed span" \
+	   || (echo "FAIL: an unaffected segment was also reported -- failing for the wrong reason"; rm -rf build-fillneg; exit 1); \
+	 rm -rf build-fillneg; \
+	 echo "OK: the basis cross-check sees 255 B of ld65 fill, names LIB_X25519_DATA, and says UNDER-reports"
+
 lib-verify-isolation-negative: lib
 	@echo "=== lib-verify-isolation-negative: an unsafe export extraction must be CAUGHT ==="
 	@out=$$(python3 tools/check_member_isolation.py --archive $(LIBX25519) \
@@ -772,7 +806,7 @@ lib-verify-citations-negative:
 	 fi; \
 	 echo "$$out" | grep -q "FAIL: src/x25519_init.s:36 \[SQR_DMA_K\]" \
 	   || (echo "FAIL: the check failed, but did not name the perturbed SQR_DMA_K citation:"; echo "$$out"; exit 1); \
-	 echo "$$out" | grep -q "^  OK: src/mul_8x8.s:37" \
+	 echo "$$out" | grep -q "^  OK: src/sqtab_init.s:53" \
 	   || (echo "FAIL: the check reported an unperturbed citation as broken — it is failing for the wrong reason:"; echo "$$out"; exit 1); \
 	 echo "OK: the citation check fails on a one-line drift and names SQR_DMA_K, while the other five stay green"
 
@@ -802,6 +836,7 @@ lib-verify-citations-negative:
 LIB_VERIFY_FOOTPRINT_CMD = python3 tools/check_footprint.py \
 	--archive $(LIBX25519) \
 	--labels $(LIB_VERIFY_DIR)/stub.labels \
+	--map $(LIB_VERIFY_DIR)/stub.map \
 	--profile $(X25519_PROFILE)
 
 lib-verify-footprint: lib $(LIB_VERIFY_PRG)
@@ -1555,6 +1590,7 @@ $(LIB_VERIFY_PRG): $(LIB_VERIFY_STUB) $(LIB_VERIFY_PROVIDER) $(LIBX25519) cfg/x2
 	$(CA65) $(CA65FLAGS) $(CONTRACT_DEFINES) -I $(SRC_DIR) -o $(LIB_VERIFY_DIR)/shared_provider.o $(LIB_VERIFY_PROVIDER)
 	$(LD65) -C cfg/x25519-example.cfg -o $@ \
 	    -Ln $(LIB_VERIFY_DIR)/stub.labels \
+	    -m $(LIB_VERIFY_DIR)/stub.map \
 	    $(LIB_VERIFY_DIR)/stub.o $(LIB_VERIFY_DIR)/shared_provider.o $(LIBX25519)
 
 $(LIB_VERIFY_DIR):

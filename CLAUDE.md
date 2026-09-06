@@ -6,7 +6,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 X25519 (RFC 7748) for the Commodore 64 in ca65 6502 assembly, targeting a stock C64 + 1750 REU. Differentially validated against `pyca/cryptography` driven through VICE. Designed to be **vendored as source** into downstream C64 projects, not linked as a system library.
 
-Current release: **v0.15.0** (released 2026-09-06). **ABI 3 → 4** — §8.2's documented `A = a` fetch entry is now implemented (#127, contract#182), and a consumer that reverse-engineered `mul_cached_a` breaks with no other signal. MINOR, not MAJOR: §7's "changed calling conventions" bullet means the *documented* convention, and §8.2 has said `A = a` throughout — what changed is our conformance to it, and a consumer who was passing `A` was broken before and is fixed now. **The PRG changes** at v0.15.0 (first time since v0.11.3): `LIB_X25519_DATA` is reordered by the member-isolation split, plus 3 bytes from the caller audit. Previous: **v0.14.0** (2026-09-06, tag on `e4b22eb`) — contract alignment, member isolation count 1, the §8.2 staging pin, #122; PRG byte-identical to v0.12.0 at `08d1fef1…f333`. **v0.13.0** (2026-08-31, `3ea6421`, tarball 151,501 B, SHA256 `22f14751…917b`). **v0.12.0** (2026-08-29, `ce6f8d5`, 143,836 B, `b6b7c930…4902`). Public `fe25519_*` / `x25519_*` API is semver-locked.
+Current release: **v0.16.0** (released 2026-09-06) — the settling release against c64-lib-contract SPEC **v1.2.2** (frozen). ABI stays **4**; MINOR (a member is added, no symbol added/removed/renamed). **PRG unchanged from v0.15.0** at `a17cbc81…`, 8628 B. Closes #128: `mul_8x8.o` mixed two displaceable groups dropped by *different* switches, so owning §8.3 while deferring §8.1 could not link from the shipped archive — split into `src/sqtab_init.s` (§8.1) and `src/mul_8x8.s` (§8.3). Also cross-checks the §5 footprint basis against a real link map. Previous: **v0.15.0** (member isolation count 2, §8.2's `A = a` entry, ABI 3 → 4, the CT alignment fix; PRG changed), **v0.14.0** (contract alignment, count 1, §8.2 staging pin, #122; PRG byte-identical to v0.12.0 at `08d1fef1…f333`). Public `fe25519_*` / `x25519_*` API is semver-locked.
+
+**Contract position: SPEC v1.2.2 §1–§8 satisfied; both member-isolation counts closed; #122/#127/#128 closed.** One known gap, tracked at [#130](https://github.com/JC-000/c64-x25519/issues/130) and **not** a §6.1 matter: `src/x25519.inc` imports `ct_mul_8x8` outside the `SHARED_CT_MUL_8X8` gate (the gate on the next line covers only `mul_8x8`), so a §8.3-owning consumer gets `Cannot import exported symbol` at assemble time and cannot use the header at all. #128 fixed the *archive* side; this is the *header* side. §3's guard rule is textually scoped to "an overridable equate", so a §8.3 code name is the same hazard one clause over, not a §3 breach.
+
+**Three things this repo learned the hard way today. They are cheap to state and expensive to rediscover.**
+
+1. **Alignment by derivation is everywhere, and a split spends it.** `mul38_lo_tab` was page-aligned only because it followed three exact 256-byte buffers; moving those buffers dropped it to `$1A85` and the ladder's cycle spread went 0 → 83,342 against a 17,045 threshold. Every functional test, all seven profiles and every existing alignment assert stayed green — **only `tools/test_ct_ladder_cycles.py` failed.** The same shape then turned up in the §5 footprint basis (`data.o`'s contribution ends on a page boundary *by luck*, so no link fill appears). Ask "what makes this true, and what would have to change for it to stop being true", not "does it have an `.align`" — a directive sweep finds neither unguarded case.
+2. **A negative test proves nothing until the positive control links.** Two #128 harnesses failed *before* ld65 reached member resolution, so "no duplicate reported" meant nothing. Both would have read as confirmation.
+3. **A check can be green because of the bug it sits next to.** `lib-verify` grepped the linked stub for `LIB_PRECALC_sqtab_SIZE`, which only ever resolved because the precalc names rode in on `lib_manifest.o`. Fixing the defect turned the check red. When a check goes red after a fix, ask whether it was testing the fix or the bug.
 
 **Known gap, tracked at [#128](https://github.com/JC-000/c64-x25519/issues/128), targeted at v0.16.0.** `mul_8x8.o` exports two displaceable groups dropped by *different* switches — `SHARED_SQTAB_INIT` takes `sqtab_init`/`mul_tables_init`, `SHARED_CT_MUL_8X8` takes the six §8.3 names. A consumer owning §8.3 but not §8.1 defines the second group itself and still imports `sqtab_init`; that import pulls the member, which arrives carrying the §8.3 names. Measured against the shipped v0.14.0 archive with the real example cfg: `ld65: Error: Duplicate external identifier: 'smc_diff_a_imm'`. The seam is clean — the two bodies have zero cross-references and already live in different segments — but the split moves *code*, so it changes the PRG and owes its own full VICE suite rather than riding on v0.15.0's.
 
@@ -121,12 +129,16 @@ Single test run: `python3 tools/<name>.py [--slow]`. Benches live in `tools/benc
 
 ## Architecture (big picture)
 
-The library is 12 ca65 `.o` modules (no `main.o`, which is the BASIC stub / test harness / region-guard TU — downstream supplies its own entry point and mirrors the guard; the guard was built for §6.7, retired at contract v1.0.0 and kept because the overrun it catches is real). Module layout in `src/`:
+The library is 13 ca65 `.o` modules (no `main.o`, which is the BASIC stub / test harness / region-guard TU — downstream supplies its own entry point and mirrors the guard; the guard was built for §6.7, retired at contract v1.0.0 and kept because the overrun it catches is real). Module layout in `src/`:
 
 ```
 x25519.s       Montgomery ladder, x25519_clamp / _scalarmult / _base
 fe25519.s      Field arithmetic mod p = 2^255 - 19
-mul_8x8.s      8x8→16 multiply via quarter-square table (CT); §8.1/§8.3 owner-or-defer gates
+mul_8x8.s      §8.3 ct_mul_8x8 CT multiply body ONLY — ISOLATED TU
+sqtab_init.s   §8.1 sqtab_init / mul_tables_init ONLY — ISOLATED TU
+               (split at v0.16.0, #128: the two groups are dropped by
+               DIFFERENT switches, so sharing a member made "own §8.3,
+               defer §8.1" unsatisfiable. Do not merge them back.)
 x25519_init.s  sqtab_init, reu_mul_init, REU fetch helpers; §8.2 deferral gates
 data.s         Page-aligned static buffers (CT-critical alignment)
 util.s         vic_blank/unblank, bench_start/stop (jiffy clock)
