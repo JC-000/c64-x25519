@@ -26,6 +26,12 @@ This checks two things per citation, not one:
 would still let a value-gated switch be documented by a definedness gate,
 which is precisely the confusion the guard table exists to prevent.
 
+It earned its keep on the very next change after it landed: the #128
+member split at v0.16.0 moved SHARED_SQTAB_INIT to a new file and shifted
+SHARED_CT_MUL_8X8's line, and this check failed the build that moved them
+rather than leaving two more citations quietly pointing at prose -- which
+is exactly how the nine wrong ones in #122 came to exist.
+
 Run via `make lib-verify-citations`, which `lib-verify` depends on.
 Negative leg: `make lib-verify-citations-negative`.
 """
@@ -45,8 +51,8 @@ REPO = Path(__file__).resolve().parent.parent
 # had to keep re-finding. One site per switch is what a reader needs to see
 # the shape, and one site per switch is what stays true.
 CITATIONS = [
-    ("SHARED_SQTAB_INIT",    "DEF", "src/mul_8x8.s",     37),
-    ("SHARED_CT_MUL_8X8",    "DEF", "src/mul_8x8.s",     55),
+    ("SHARED_SQTAB_INIT",    "DEF", "src/sqtab_init.s",  53),
+    ("SHARED_CT_MUL_8X8",    "DEF", "src/mul_8x8.s",     47),
     ("SHARED_REU_MUL_INIT",  "DEF", "src/x25519_init.s", 107),
     ("SHARED_REU_MUL_FETCH", "DEF", "src/x25519_init.s", 24),
     ("X25519_ONCHIP_MUL",    "VAL", "src/x25519_init.s", 20),
