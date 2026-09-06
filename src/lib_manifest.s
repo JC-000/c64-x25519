@@ -229,13 +229,42 @@ _BASE_RESIDENT = 8234
 _BASE_COLD     = 160
 .elseif SQR_DMA_K
 LIB_X25519_REU_BANKS_USED = $3B << X25519_REU_BANK
+.assert X25519_REU_BANK <= 26, error, "X25519_REU_BANK > 26 shifts the top of the 5-bank $3B window past bit 31 and the exported LIB_X25519_REU_BANKS_USED silently drops it (SPEC §5: banks 0-31)"
 _BASE_RESIDENT = 8503
 _BASE_COLD     = 947
 .else
 LIB_X25519_REU_BANKS_USED = $03 << X25519_REU_BANK
+.assert X25519_REU_BANK <= 30, error, "X25519_REU_BANK > 30 shifts the hi-half bank of the $03 window past bit 31 and the exported LIB_X25519_REU_BANKS_USED silently drops it (SPEC §5: banks 0-31)"
 _BASE_RESIDENT = 8355
 _BASE_COLD     = 733
 .endif
+
+; --- Why the two bounds above, and why they differ from §8.2's -------------
+;
+; §5 defines LIB_<X>_REU_BANKS_USED as a 32-bit mask, "bit n = bank n,
+; banks 0-31". The mask is the ONLY thing a consumer composes:
+;
+;   .assert (LIB_NISTCURVES_REU_BANKS_USED & LIB_X25519_REU_BANKS_USED) = 0, error, ...
+;
+; so a bank this library really claims but whose bit falls off the top of
+; the mask is a bank the consumer's collision assert cannot see. Measured
+; (ca65 2.19, `od65 --dump-exports` on the emitted symbol):
+;
+;   X25519_REU_BANK=26  ->  0xEC000000   banks 26,27,29,30,31   correct
+;   X25519_REU_BANK=27  ->  0xD8000000   banks 27,28,30,31      bank 32 GONE
+;
+; ca65 computes the shift in wider-than-32-bit arithmetic and only narrows
+; when it writes the export, so nothing in the assemble reports the loss.
+; The one diagnostic that does fire — "Symbol is long but exported
+; absolute" — starts at base 26, where the mask is still correct, and says
+; nothing about truncation; it is noise here, not the guard.
+;
+; SPEC §8.2's own `LIB_SHARED_REU_MUL_BANK < 31` (src/reu_config.s) is the
+; same defect one level down and does NOT subsume these: it bounds the
+; shared two-bank pair, while this library's default window is the five
+; banks of `$3B` (base+0,1,3,4,5), so the binding constraint is base+5 <= 31.
+; The 1764 profile claims only `$03` (base+0,1) and takes the looser bound;
+; the onchip profile claims none and needs no bound at all.
 
 ; §6.4 half-2 (SPEC v0.9.0): the SHARED_* deferral switches gate real
 ; code out of the archive, so the footprint equates must react to them

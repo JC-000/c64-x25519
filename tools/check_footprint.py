@@ -1,8 +1,14 @@
 #!/usr/bin/env python3
 """check_footprint.py — DERIVE the §5 footprint equates and check them.
 
-c64-lib-contract SPEC v0.17.0 §15.1 evidence duty
--------------------------------------------------
+c64-lib-contract SPEC v0.17.0 §15.1 evidence duty (RETIRED — see below)
+-----------------------------------------------------------------------
+SPEC §15 was RETIRED at contract v1.0.0 (2026-09-03); its text lives at
+tag v0.17.1 and RETIRED.md says of it: "Keep the practice; do not keep
+it as an obligation this contract imposes." The reasoning below stands
+as this repository's own policy. What no longer stands is any claim that
+the contract REQUIRES it.
+
 `make lib-verify` already asserts that LIB_X25519_RESIDENT_BYTES and
 LIB_X25519_COLD_BYTES hold specific values.  That assert compares two
 HAND-WRITTEN numbers against each other:

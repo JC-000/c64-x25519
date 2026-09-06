@@ -151,9 +151,18 @@ LIB_SHARED_REU_MUL_BANKS_USED = (1 .shl LIB_SHARED_REU_MUL_BANK) | (1 .shl (LIB_
 
 ; SPEC §8.2 assemble-time guards:
 ;   - offset $0000:  v0.x.0 row-stride constraint (start-of-bank required)
-;   - base   < $FE:  the hi-half bank lives at base+1, so $FF has no successor
+;   - base   < 31:   the hi-half bank lives at base+1, and §5's bank mask
+;                    is 32 bits wide, so base 31 shifts the hi-half bit
+;                    off the top and the mask NAMES ONLY THE LO BANK.
+;                    Tightened from `< $FE` at contract SPEC v1.0.0, which
+;                    names this line as an adopter still carrying the loose
+;                    bound: `$FE` bounded the bank NUMBER but not the mask
+;                    it feeds, so a consumer's disjointness assert passed
+;                    over a bank the table really does claim. Default bank
+;                    is 0, so nothing measurable changes here; the bound is
+;                    adopted because it is the one that guards the export.
 .assert LIB_SHARED_REU_MUL_OFFSET = $0000, error, "reu_mul must start at offset 0 within its bank pair (SPEC §8.2 v0.x.0)"
-.assert LIB_SHARED_REU_MUL_BANK < $FE,     error, "reu_mul base bank must leave room for the hi-half bank at base+1 (SPEC §8.2)"
+.assert LIB_SHARED_REU_MUL_BANK < 31,      error, "reu_mul base bank must leave room for the hi-half bank at base+1 inside the 32-bit §5 bank mask (SPEC §8.2)"
 
 ; --- SPEC §8.2 ZP scratch contract ---
 ;

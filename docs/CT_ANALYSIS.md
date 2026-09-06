@@ -798,6 +798,14 @@ base for L30c, and a data-dependent multiply body for L30d.
 
 ### Falsification record for `tools/ct_mul_brute_check.py`
 
+> **Status (contract v1.0.0, 2026-09-03).** §15 is **retired**. Its text
+> is permanent at contract tag `v0.17.1`, and `RETIRED.md` says of it:
+> *"Keep the practice; do not keep it as an obligation this contract
+> imposes."* This record therefore stays — the falsification is a fact
+> about this tool and remains the reason to trust it — but it is no
+> longer a discharge of anything the contract asks for. Nothing below
+> is retracted; only its status as an obligation is.
+
 c64-lib-contract SPEC **v0.17.0 §15.1**: *"A conformance
 check offered as evidence SHOULD be accompanied by a demonstration that
 it fails when the property it checks is false. A check never observed to

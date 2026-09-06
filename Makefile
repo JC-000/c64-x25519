@@ -1,3 +1,41 @@
+# =============================================================================
+# HOW TO READ THE CONTRACT CITATIONS IN THIS FILE
+# =============================================================================
+#
+# c64-lib-contract is at SPEC **v1.1.0** (tag `358c2b4`). Its v1.0.0 release
+# deleted roughly seven eighths of the document and RETIRED five sections and
+# three sub-clauses: §9, §12, §13, §14, §15, §6.3, §6.6, §6.7. Surviving
+# sections kept their numbers, so §1 §2 §3 §4 §5 §6.1 §6.2 §6.4 §6.5 §7 §8.x
+# still resolve against the current SPEC.md and mean what they say.
+#
+# This file cites the retired ones in about forty places, and those citations
+# are NOT being rewritten. Two reasons, in order:
+#
+#   1. They still resolve. RETIRED.md makes `git show v0.17.1:SPEC.md` the
+#      permanent home of the retired text and says in terms that adopters
+#      should leave such citations alone rather than churn them.
+#
+#   2. Rewriting forty comments would be forty chances to introduce a wrong
+#      claim while fixing nothing a reader gets wrong.
+#
+# What DOES need saying, once, is the status those citations no longer carry:
+#
+#   **A `§6.3` / `§6.6` / `§6.7` / `§15` citation below describes REPO POLICY
+#   THIS PROJECT CHOSE TO KEEP, not a live obligation the contract imposes.**
+#
+# So `lib-verify-guards`, `lib-verify-negative`, `lib-verify-footprint-negative`
+# and the CONTRACT_STAMP knob-invalidation family are kept, unchanged, because
+# they work and because they have each caught a real defect here — the leg-C
+# family caught a shipped exit-0-wrong-artifact bug (#113/#114), and the
+# footprint evidence pass caught a check that could not fail (#121). The
+# contract's own RETIRED.md reaches the same conclusion for the fleet: "Keep
+# the practice; do not keep it as an obligation this contract imposes."
+#
+# The one thing that would now be WRONG is to describe any of them as required
+# for conformance, or to cite one as discharging a duty. There is no such duty.
+# Conformance today is §1-§8 of v1.1.0, and `lib-verify` covers it.
+# =============================================================================
+
 # ca65/ld65 toolchain (cc65 suite)
 CA65 = ca65
 LD65 = ld65
@@ -143,6 +181,7 @@ LIBX25519 = $(LIB_DIR)/libx25519.a
         lib-verify-footprint lib-verify-footprint-negative \
         lib-verify-footprint-negative-arm \
         lib-verify-negative lib-verify-guards-legc \
+        lib-verify-citations lib-verify-citations-negative \
         dist bench-record perf-diff lib-x25519-1764 lib-x25519-onchip
 
 all: $(PRG)
@@ -354,22 +393,35 @@ endif
 # The switches split by GATE STYLE, and the guard must match each on its own
 # terms — demanding one spelling fleet-wide falsely rejects working builds.
 #
-#   _NEEDS_DEF_* — definedness-gated (.ifdef / .ifndef): src/mul_8x8.s:37,55,
-#     src/x25519_init.s:14,94, src/reu_config.s:118. The axis IS definedness,
-#     so EVERY spelling that defines the symbol selects it — bare
+# The gate SITES are not listed here. They live as checked data in
+# tools/check_gate_citations.py and are printed by `make lib-verify-citations`,
+# which lib-verify depends on. That is a fix for issue #122, not a stylistic
+# preference: this comment previously carried twelve hand-maintained file:line
+# citations and NINE of them pointed at blank lines, prose comments or ordinary
+# instructions. The src/fe25519.s pair was off by one and off by nine — correct
+# when written, drifted as lines were inserted above them. Nothing read them, so
+# nothing caught it. Prose that holds no line numbers cannot drift, and the
+# numbers that remain are now checked on every lib-verify.
+#
+#   _NEEDS_DEF_* — definedness-gated (.ifdef / .ifndef). The axis IS
+#     definedness, so EVERY spelling that defines the symbol selects it — bare
 #     `-D SHARED_SQTAB_INIT` as much as `=1`, and the bare form is what
 #     nist#117's example and the chacha docs use. Match the bare name, which
 #     also substring-matches the `=1` spelling our own targets pass.
 #
-#   _NEEDS_VAL_* — value-gated (.if ::NAME): src/lib_manifest.s:177,361,
-#     src/reu_config.s:177 for X25519_ONCHIP_MUL; src/x25519_init.s:25,194,456
-#     and src/fe25519.s:40,1211 for SQR_DMA_K. Here the exact value decides,
+#   _NEEDS_VAL_* — value-gated (.if ::NAME). Here the exact value decides,
 #     and ca65's bare `-D NAME` defines the symbol **= 0** (measured: `.out`
 #     prints `FOO=0` under bare `-D FOO`). For X25519_ONCHIP_MUL that is
 #     load-bearing: bare `-D X25519_ONCHIP_MUL` names the profile while
 #     selecting the DEFAULT path — precisely the shape-3 no-op this guard
 #     exists to kill — so the `=1` demand is deliberate. Do not "simplify" it
 #     to a bare-name match.
+#
+# The checker enforces the DISTINCTION, not just the existence of a gate: a
+# _NEEDS_VAL_ switch cited at a `.ifndef` line fails, and so does a _NEEDS_DEF_
+# switch cited at a `.if ::NAME` line. A check that only asked "is this line a
+# gate?" would let the two families be documented by each other's shape, which
+# is the exact confusion this block exists to prevent.
 #
 #     SQR_DMA_K=0 is the deliberate-but-stricter case: bare `-D SQR_DMA_K`
 #     would also select the 1764 axis (ca65 makes it 0, which is what 1764
@@ -612,6 +664,40 @@ DOC_SNIPPET_FILES = $(wildcard cfg/*.cfg src/*.s src/*.inc) \
 lib-verify-docs:
 	@python3 tools/check_doc_snippets.py $(DOC_SNIPPET_FILES)
 
+# --- guard-table citation check (issue #122) ---------------------------------
+#
+# The _NEEDS_DEF_* / _NEEDS_VAL_* block above documents why the two switch
+# families demand opposite spellings. Its evidence is a set of file:line
+# citations, and at v0.13.0 nine of twelve pointed at blank lines, prose
+# comments or ordinary instructions — the src/fe25519.s pair off by one and
+# off by nine, i.e. correct when written and drifted underneath.
+#
+# The numbers now live in tools/check_gate_citations.py and are checked here,
+# so a citation that drifts fails the build that moved it rather than
+# misleading the next reader indefinitely. The check discriminates gate STYLE,
+# not just gate presence: see the tool's docstring for why that is the half
+# that matters.
+lib-verify-citations:
+	@python3 tools/check_gate_citations.py
+
+# Negative leg. Not owed to anyone — SPEC §15 is retired as of contract
+# v1.0.0 — but a check added specifically to fix an unverified claim should
+# not itself arrive unverified. Perturbing a citation by one line must fail
+# AND must name which switch drifted; the +1 line here is a COMMENT that
+# mentions SQR_DMA_K, so a weaker "does this line mention the switch?" check
+# would pass it.
+lib-verify-citations-negative:
+	@echo "=== lib-verify-citations-negative: the citation check must fail, and name the switch ==="
+	@out=$$(python3 tools/check_gate_citations.py --mutate SQR_DMA_K 2>&1); rc=$$?; \
+	 if [ $$rc -eq 0 ]; then \
+	   echo "FAIL: a perturbed citation did not fail the check"; echo "$$out"; exit 1; \
+	 fi; \
+	 echo "$$out" | grep -q "FAIL: src/x25519_init.s:36 \[SQR_DMA_K\]" \
+	   || (echo "FAIL: the check failed, but did not name the perturbed SQR_DMA_K citation:"; echo "$$out"; exit 1); \
+	 echo "$$out" | grep -q "^  OK: src/mul_8x8.s:37" \
+	   || (echo "FAIL: the check reported an unperturbed citation as broken — it is failing for the wrong reason:"; echo "$$out"; exit 1); \
+	 echo "OK: the citation check fails on a one-line drift and names SQR_DMA_K, while the other five stay green"
+
 # --- §5 footprint: DERIVED, not restated (contract SPEC v0.17.0 §15.1) ------
 #
 # The `LIB_X25519_RESIDENT_BYTES` / `_COLD_BYTES` pair in the loop below
@@ -643,7 +729,7 @@ LIB_VERIFY_FOOTPRINT_CMD = python3 tools/check_footprint.py \
 lib-verify-footprint: lib $(LIB_VERIFY_PRG)
 	@$(LIB_VERIFY_FOOTPRINT_CMD)
 
-lib-verify: lib-verify-docs lib $(LIB_VERIFY_PRG)
+lib-verify: lib-verify-docs lib-verify-citations lib $(LIB_VERIFY_PRG)
 	@set -e; \
 	test -s $(LIB_VERIFY_PRG) || (echo "FAIL: $(LIB_VERIFY_PRG) is empty" && exit 1); \
 	for sym in $(LIB_VERIFY_SYMS_EXPECT); do \
