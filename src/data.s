@@ -11,7 +11,6 @@
 .export x25_scalar, x25_u, x25_result, x25_x1
 .export x25_basepoint, fe_p
 .export mul_cached_a, mul_src2_buf
-.export mul_dma_lo, mul_dma_hi, mul_dma_carry
 .export mul38_lo_tab, mul38_hi_tab
 .export sqr_lo, sqr_hi
 .export a24_b0, a24_b1, a24_b2, a24_b3
@@ -156,25 +155,20 @@ x25519_reu_settle_smp:
 mul_src2_buf:
         .res 33, 0            ; 32-byte src2 copy + 1-byte phantom slot
 
-; --- REU DMA target buffers (page-aligned for LDA abs,Y without penalty) ---
-        .align 256             ; align to next page boundary
-mul_dma_lo:
-        .res 256, 0           ; DMA target: lo bytes of a*b for current a
-mul_dma_hi:
-        .res 256, 0           ; DMA target: hi bytes of a*b for current a
-mul_dma_carry:
-        .res 256, 0           ; DMA target: 17th-bit carry of 2*a*b (0 or 1)
-
-; Page alignment of mul_dma_lo/hi is a CT invariant, not a perf hint:
-; the eight `adc mul_dma_*,y` sites in fe25519_mul (and the sqr DMA
-; bodies) index with secret Y over the full 0..255 range — an
-; unaligned base would add a data-dependent page-cross cycle. It was
-; previously asserted only indirectly via the LIB_SHARED_REU_MUL_STAGE
-; aliases in src/reu_config.s; issue #72 makes it explicit here (the
-; onchip generator also stores through abs,Y at secret indices).
-.assert (mul_dma_lo & $00FF) = 0, lderror, "mul_dma_lo must be page-aligned (CT invariant)"
-.assert (mul_dma_hi & $00FF) = 0, lderror, "mul_dma_hi must be page-aligned (CT invariant)"
-.assert (mul_dma_carry & $00FF) = 0, lderror, "mul_dma_carry must be page-aligned (CT invariant)"
+; --- REU DMA target buffers: MOVED to src/mul_stage.s at v0.14.0 ---
+;
+; mul_dma_lo / mul_dma_hi / mul_dma_carry used to live here. They are an
+; APP_OWNED surface (§8.0) — a consumer providing the §8.2 multiply tables
+; defines and places them itself — and c64-lib-contract SPEC v1.2.0 §6.1
+; member isolation requires such a symbol to live in a TU defining nothing
+; else the library's own code references. Here they shared a member with
+; the 33 names below and above, every one of them library-referenced, so
+; any reference to any of them pulled data.o in and dragged the buffers
+; along, colliding with the consumer's definitions. That is what
+; c64-nist-curves v0.12.0 shipped; it cost c64-https every configuration
+; (contract#179).
+;
+; Do not move them back, and do not add anything to src/mul_stage.s.
 
 ; (sqtab2_lo / sqtab2_hi removed after Phase 2: the branchless CT
 ;  quarter-square path in fe25519_sqr no longer needs a second
@@ -183,6 +177,28 @@ mul_dma_carry:
 ; --- mul_by_38 lookup tables ---
 ; mul38_lo_tab[i] = low byte of (i * 38)
 ; mul38_hi_tab[i] = high byte of (i * 38)
+;
+; The `.align 256` is a CT INVARIANT and is load-bearing. Both tables are
+; indexed `abs,y` with a secret byte over the full 0..255 range in
+; mul_by_38, so an unaligned base makes some indices cross a page and cost
+; an extra cycle — a data-dependent time.
+;
+; It is explicit here as of v0.15.0. Before that these two tables were
+; page-aligned only BY ACCIDENT: they followed the three exact 256-byte
+; mul_dma_* buffers, which followed a `.align 256`, so the location
+; counter happened to arrive page-aligned and no directive said so.
+; Moving the mul_dma_* block to src/mul_stage.s for §6.1 member isolation
+; dropped mul38_lo_tab to $1A85, and `tools/test_ct_ladder_cycles.py`
+; measured the ladder's cycle spread going 0 -> 83,342 against a 17,045
+; threshold. Nothing else caught it: every functional test passed, all
+; seven profiles built, and the existing page-alignment asserts covered
+; only the buffers that moved, not the table that silently lost its
+; alignment behind them.
+;
+; The asserts below now cover every secret-indexed table in this file, so
+; an alignment inherited from a neighbour can never again be silently
+; spent by an edit somewhere else.
+        .align 256
 mul38_lo_tab:
         .byte 0
         .repeat 255, i
@@ -214,6 +230,56 @@ sqr_hi:
                 .byte >(i * i)
         .endrepeat
 
+; --- CT alignment: provenance audit, not a directive sweep ---
+;
+; The durable question is not "does every secret-indexed table have an
+; .align?" but "what makes each one aligned, and what would have to change
+; for that to stop being true?" A sweep for .align directives answers
+; neither unguarded case. Audited 2026-09-06 across this file,
+; src/mul_stage.s and src/constants.s:
+;
+;   table                provenance                       guard
+;   mul38_lo_tab         .align directive                 lderror
+;   mul38_hi_tab         derived (predecessor is 256 B)   lderror
+;   sqr_lo               .align directive                 lderror
+;   sqr_hi               derived                          lderror
+;   a24_b0               .align directive                 lderror
+;   a24_b1..b3           derived                          lderror
+;   mul_dma_lo           .align directive (mul_stage.s)   lderror
+;   mul_dma_hi/carry     derived      (mul_stage.s)       lderror
+;   sqtab_lo/hi          CONSUMER EQUATE (constants.s)    error
+;
+; Two things that audit is checking, both of which a directive sweep
+; misses:
+;
+;   1. THE ABSOLUTE-LITERAL CLASS IS ABSENT HERE, and that is a finding,
+;      not an omission. A table pinned to a literal address (`tab = $6000`)
+;      is unguarded in the opposite direction from a derived one: no split
+;      can ever disturb it, so it always looks correctly placed, and it
+;      breaks on a one-character edit instead. c64-ChaCha20-Poly1305 has
+;      that shape. We do not. If anyone ever adds one, it needs an assert
+;      with `error`, not `lderror`.
+;
+;   2. THE KEYWORD IS NOT COSMETIC. For a relocatable address ca65 defers
+;      the check to ld65 whatever keyword is written, so an `error` on one
+;      of these would be a link-time check you might believe was
+;      assemble-time. For sqtab_lo/hi both sides are assemble-time
+;      constants (a consumer -D), so `error` there is genuinely
+;      assemble-time and is the right choice. Matching keyword to
+;      provenance is what makes the diagnostic honest about when it fires.
+;
+; CT alignment asserts for every secret-indexed table in this file.
+; mul38_hi_tab, sqr_hi and a24_b1..b3 carry no `.align` of their own —
+; each follows a table of exactly 256 bytes, so its alignment is DERIVED
+; from its predecessor's. That is fine and deliberate, but it is only safe
+; while it is checked: these asserts are what makes the derivation an
+; invariant rather than a coincidence. Do not delete one because the table
+; "obviously" follows an aligned one.
+.assert (mul38_lo_tab & $00FF) = 0, lderror, "mul38_lo_tab must be page-aligned (CT invariant: abs,y indexed by a secret byte in mul_by_38)"
+.assert (mul38_hi_tab & $00FF) = 0, lderror, "mul38_hi_tab must be page-aligned (CT invariant: abs,y indexed by a secret byte in mul_by_38)"
+.assert (sqr_lo & $00FF) = 0,       lderror, "sqr_lo must be page-aligned (CT invariant: abs,y indexed by a secret byte in fe25519_sqr)"
+.assert (sqr_hi & $00FF) = 0,       lderror, "sqr_hi must be page-aligned (CT invariant: abs,y indexed by a secret byte in fe25519_sqr)"
+
         .align 256
 a24_b0:
         .repeat 256, i
@@ -231,3 +297,8 @@ a24_b3:
         .repeat 256, i
                 .byte <((121665 * i) >> 24)
         .endrepeat
+
+.assert (a24_b0 & $00FF) = 0, lderror, "a24_b0 must be page-aligned (CT invariant: abs,y indexed by a secret byte in fe25519_mul_a24)"
+.assert (a24_b1 & $00FF) = 0, lderror, "a24_b1 must be page-aligned (CT invariant: abs,y indexed by a secret byte in fe25519_mul_a24)"
+.assert (a24_b2 & $00FF) = 0, lderror, "a24_b2 must be page-aligned (CT invariant: abs,y indexed by a secret byte in fe25519_mul_a24)"
+.assert (a24_b3 & $00FF) = 0, lderror, "a24_b3 must be page-aligned (CT invariant: abs,y indexed by a secret byte in fe25519_mul_a24)"

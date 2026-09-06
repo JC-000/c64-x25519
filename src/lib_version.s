@@ -55,9 +55,9 @@
 ; =============================================================================
 
 LIB_X25519_VERSION_MAJOR = 0
-LIB_X25519_VERSION_MINOR = 14
+LIB_X25519_VERSION_MINOR = 15
 LIB_X25519_VERSION_PATCH = 0
-LIB_X25519_ABI_VERSION   = 3
+LIB_X25519_ABI_VERSION   = 4
 
 ; Exported as absolute (16-bit) symbols, not zeropage. ca65 would otherwise
 ; infer zeropage size because the values fit in a byte, which then mismatches

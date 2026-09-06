@@ -6,7 +6,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 X25519 (RFC 7748) for the Commodore 64 in ca65 6502 assembly, targeting a stock C64 + 1750 REU. Differentially validated against `pyca/cryptography` driven through VICE. Designed to be **vendored as source** into downstream C64 projects, not linked as a system library.
 
-Current release: **v0.14.0** (released 2026-09-06; annotated tag `v0.14.0`). The tarball size and SHA256 live in the [GitHub Release description](https://github.com/JC-000/c64-x25519/releases/tag/v0.14.0) and in this file, never as a `TBD` inside the archive — `docs/RELEASE_NOTES_v0.14.0.md` is `git archive`d into the tarball it would be describing, so a value there cannot be its own hash. **Do not "fix" the release notes by pasting the hash into them.** v0.14.0 is a contract-alignment release: **the PRG is byte-identical to v0.12.0 and v0.13.0** at `08d1fef1…f333`, 8628 B. MINOR because it adds two make targets (`lib-verify-citations`, `lib-verify-citations-negative`); `LIB_X25519_ABI_VERSION` stays 3. Previous releases: **v0.13.0** (2026-08-31, tag on `3ea6421`, tarball 151,501 B, SHA256 `22f14751…917b`) — build-integrity and evidence; **v0.12.0** (2026-08-29, tag on `ce6f8d5`, tarball 143,836 B, SHA256 `b6b7c930…4902`) — full CT certification, catalogue L1–L32 closed. Public `fe25519_*` / `x25519_*` API is semver-locked.
+Current release: **v0.15.0** (released 2026-09-06). **ABI 3 → 4** — §8.2's documented `A = a` fetch entry is now implemented (#127, contract#182), and a consumer that reverse-engineered `mul_cached_a` breaks with no other signal. MINOR, not MAJOR: §7's "changed calling conventions" bullet means the *documented* convention, and §8.2 has said `A = a` throughout — what changed is our conformance to it, and a consumer who was passing `A` was broken before and is fixed now. **The PRG changes** at v0.15.0 (first time since v0.11.3): `LIB_X25519_DATA` is reordered by the member-isolation split, plus 3 bytes from the caller audit. Previous: **v0.14.0** (2026-09-06, tag on `e4b22eb`) — contract alignment, member isolation count 1, the §8.2 staging pin, #122; PRG byte-identical to v0.12.0 at `08d1fef1…f333`. **v0.13.0** (2026-08-31, `3ea6421`, tarball 151,501 B, SHA256 `22f14751…917b`). **v0.12.0** (2026-08-29, `ce6f8d5`, 143,836 B, `b6b7c930…4902`). Public `fe25519_*` / `x25519_*` API is semver-locked.
+
+**Known gap, tracked at [#128](https://github.com/JC-000/c64-x25519/issues/128), targeted at v0.16.0.** `mul_8x8.o` exports two displaceable groups dropped by *different* switches — `SHARED_SQTAB_INIT` takes `sqtab_init`/`mul_tables_init`, `SHARED_CT_MUL_8X8` takes the six §8.3 names. A consumer owning §8.3 but not §8.1 defines the second group itself and still imports `sqtab_init`; that import pulls the member, which arrives carrying the §8.3 names. Measured against the shipped v0.14.0 archive with the real example cfg: `ld65: Error: Duplicate external identifier: 'smc_diff_a_imm'`. The seam is clean — the two bodies have zero cross-references and already live in different segments — but the split moves *code*, so it changes the PRG and owes its own full VICE suite rather than riding on v0.15.0's.
 
 ## The contract, after the v1.0.0 cut
 
@@ -119,7 +121,7 @@ Single test run: `python3 tools/<name>.py [--slow]`. Benches live in `tools/benc
 
 ## Architecture (big picture)
 
-The library is 11 ca65 `.o` modules (no `main.o`, which is the BASIC stub / test harness / region-guard TU — downstream supplies its own entry point and mirrors the guard; the guard was built for §6.7, retired at contract v1.0.0 and kept because the overrun it catches is real). Module layout in `src/`:
+The library is 12 ca65 `.o` modules (no `main.o`, which is the BASIC stub / test harness / region-guard TU — downstream supplies its own entry point and mirrors the guard; the guard was built for §6.7, retired at contract v1.0.0 and kept because the overrun it catches is real). Module layout in `src/`:
 
 ```
 x25519.s       Montgomery ladder, x25519_clamp / _scalarmult / _base
@@ -131,6 +133,8 @@ util.s         vic_blank/unblank, bench_start/stop (jiffy clock)
 lib_version.s  Contract §1 version equates ONLY (TU-isolated; bare aliases gated)
 lib_manifest.s Contract §5 aggregates and §8.0 masks ONLY
 precalc_manifest.s  §8.4 precalc enumeration — ISOLATED TU, add nothing to it
+mul_stage.s    §8.2 staging buffers mul_dma_lo/hi/carry — ISOLATED TU, add
+               nothing to it (§6.1 member isolation; contract#179's shape)
 zp_config.s    Contract §2 ZP slot inventory (.ifndef-guarded, .exportzp'd)
 reu_config.s   Contract §3/§8.2 REU bank + placement equates and asserts
 constants.s    .include'd by every .s; never assembled alone

@@ -6,6 +6,33 @@ An optimized implementation of X25519 / Curve25519 scalar multiplication written
 
 ## Status
 
+**v0.15.0 released 2026-09-06** — [GitHub release](https://github.com/JC-000/c64-x25519/releases/tag/v0.15.0) — the
+settling release against c64-lib-contract SPEC **v1.2.2** (frozen).
+**`LIB_X25519_ABI_VERSION` moves 3 → 4** and **the PRG changes** — first
+time since v0.11.3. Two fixes. (1) **Member isolation, count 2:**
+`src/data.s` defined the §8.2 staging buffers `mul_dma_lo/hi/carry` — an
+`APP_OWNED` surface — beside 33 library-referenced names, so any reference
+to any of them pulled `data.o` in and collided with a consumer's own
+definitions. This is what cost `c64-https` all three configurations on
+`c64-nist-curves` v0.12.0. Split into `src/mul_stage.s`; red-green
+verified (`Duplicate external identifier: 'mul_dma_carry'` → links clean).
+(2) **§8.2's documented `A = a` fetch entry** (#127): `reu_fetch_mul_row`
+opened with `lda mul_cached_a`, discarding the caller's `A`, so fetch
+deferral silently returned whatever row the provider last cached. The
+caller audit shipped in the same commit and was load-bearing —
+`reu_fetch_doubled_row` reached its `jsr` with the *bank* in `A`, so a
+bare shim would have fetched a garbage row. **The split caused a
+constant-time regression, and only the cycle test caught it:** the ×38
+tables were page-aligned *by accident*, inheriting alignment from the
+buffers that moved, and the ladder's cycle spread went 0 → 83,342 against
+a 17,045 threshold while every functional test, all seven profiles and
+every existing alignment assert stayed green. Fixed with an explicit
+`.align` plus asserts over **every** secret-indexed table, audited by
+provenance rather than by directive sweep. Spread back to 0.
+**Known gap:** [#128](https://github.com/JC-000/c64-x25519/issues/128) —
+`mul_8x8.o` still mixes two displaceable groups; targeted at v0.16.0. See
+[`docs/RELEASE_NOTES_v0.15.0.md`](docs/RELEASE_NOTES_v0.15.0.md).
+
 **v0.14.0 released 2026-09-06** — [GitHub release](https://github.com/JC-000/c64-x25519/releases/tag/v0.14.0) — a
 contract-alignment release. **Zero runtime change: the PRG is
 byte-identical to v0.12.0 and v0.13.0** at `08d1fef1…f333`, 8628 B.
