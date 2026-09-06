@@ -229,13 +229,42 @@ _BASE_RESIDENT = 8234
 _BASE_COLD     = 160
 .elseif SQR_DMA_K
 LIB_X25519_REU_BANKS_USED = $3B << X25519_REU_BANK
+.assert X25519_REU_BANK <= 26, error, "X25519_REU_BANK > 26 shifts the top of the 5-bank $3B window past bit 31 and the exported LIB_X25519_REU_BANKS_USED silently drops it (SPEC §5: banks 0-31)"
 _BASE_RESIDENT = 8503
 _BASE_COLD     = 947
 .else
 LIB_X25519_REU_BANKS_USED = $03 << X25519_REU_BANK
+.assert X25519_REU_BANK <= 30, error, "X25519_REU_BANK > 30 shifts the hi-half bank of the $03 window past bit 31 and the exported LIB_X25519_REU_BANKS_USED silently drops it (SPEC §5: banks 0-31)"
 _BASE_RESIDENT = 8355
 _BASE_COLD     = 733
 .endif
+
+; --- Why the two bounds above, and why they differ from §8.2's -------------
+;
+; §5 defines LIB_<X>_REU_BANKS_USED as a 32-bit mask, "bit n = bank n,
+; banks 0-31". The mask is the ONLY thing a consumer composes:
+;
+;   .assert (LIB_NISTCURVES_REU_BANKS_USED & LIB_X25519_REU_BANKS_USED) = 0, error, ...
+;
+; so a bank this library really claims but whose bit falls off the top of
+; the mask is a bank the consumer's collision assert cannot see. Measured
+; (ca65 2.19, `od65 --dump-exports` on the emitted symbol):
+;
+;   X25519_REU_BANK=26  ->  0xEC000000   banks 26,27,29,30,31   correct
+;   X25519_REU_BANK=27  ->  0xD8000000   banks 27,28,30,31      bank 32 GONE
+;
+; ca65 computes the shift in wider-than-32-bit arithmetic and only narrows
+; when it writes the export, so nothing in the assemble reports the loss.
+; The one diagnostic that does fire — "Symbol is long but exported
+; absolute" — starts at base 26, where the mask is still correct, and says
+; nothing about truncation; it is noise here, not the guard.
+;
+; SPEC §8.2's own `LIB_SHARED_REU_MUL_BANK < 31` (src/reu_config.s) is the
+; same defect one level down and does NOT subsume these: it bounds the
+; shared two-bank pair, while this library's default window is the five
+; banks of `$3B` (base+0,1,3,4,5), so the binding constraint is base+5 <= 31.
+; The 1764 profile claims only `$03` (base+0,1) and takes the looser bound;
+; the onchip profile claims none and needs no bound at all.
 
 ; §6.4 half-2 (SPEC v0.9.0): the SHARED_* deferral switches gate real
 ; code out of the archive, so the footprint equates must react to them
@@ -368,64 +397,3 @@ LIB_X25519_SHARED_CONSUMES = LIB_SHARED_PRIMITIVES_SQTAB | _USE_REU_MUL | LIB_SH
 .export LIB_X25519_COLD_BYTES:     abs
 .export LIB_X25519_SHARED_PRIMITIVES: abs
 .export LIB_X25519_SHARED_CONSUMES:   abs
-
-; =============================================================================
-; c64-lib-contract SPEC §8.0 catch-loop: precalc-table enumeration
-; =============================================================================
-;
-; Per SPEC §8.0 step-6, every adopter MUST enumerate its precalculated
-; tables (size >= 256 B AND one of: REU-resident / hot-loop-read /
-; page-aligned) in two forms:
-;
-;   1. Doc-level — docs/precalc-tables.md (name, size, region, source,
-;      classification, rationale). The rationale field is load-bearing
-;      for the cross-adopter audit (e.g. "could c448 / Ed448 ever land
-;      with the same pre-doubling trick?").
-;   2. Assembler-level — LIB_PRECALC_TABLE macro invocations (below),
-;      each emitting the exported equates LIB_X25519_PRECALC_<name>_
-;      {SIZE,REGION,SHARED} plus, unless LIB_NO_BARE_EXPORTS is
-;      defined, the deprecated bare triple LIB_PRECALC_<name>_*.
-;      Build-time discovery via
-;      `od65 --dump-exports build/lib_manifest.o | grep _PRECALC_`.
-;      (The audit pattern is `_PRECALC_`, not `LIB_PRECALC_` — the
-;      latter silently misses every prefixed export; SPEC v0.7.0.)
-;
-; Both forms MUST stay in lock-step. Asymmetry between them blocks
-; adopter PRs per the intake-reviewer rule in c64-lib-contract
-; adopters.md step 6.
-;
-; The canonical macro source `precalc_table.inc` is copied verbatim
-; from c64-lib-contract's repo root; do not edit the local copy.
-;
-; Canonical names "sqtab" (§8.1) and "reu_mul" (§8.2) are NORMATIVE —
-; do not prefix them with library/curve names. The fifth macro argument
-; is the library prefix (SPEC v0.7.0 §8.4): it identifies the DECLARING
-; library, never the table, so a consumer linking two adopters can
-; cross-check that they agree on a shared table's shape:
-;   .assert LIB_X25519_PRECALC_sqtab_SIZE = LIB_<other>_PRECALC_sqtab_SIZE
-; =============================================================================
-
-.include "precalc_table.inc"
-
-LIB_PRECALC_TABLE "sqtab",           1024,   PRECALC_REGION_RAM, PRECALC_SHARED_YES, "X25519"
-.if ::X25519_ONCHIP_MUL = 0
-; reu_mul claim dropped under the onchip profile (issue #72): the
-; profile builds no REU table. Per the SPEC §8.0 symmetry rule the
-; matching docs/precalc-tables.md row carries a per-profile
-; annotation (see that file). sqtab stays — the onchip generator
-; reads it on every product.
-LIB_PRECALC_TABLE "reu_mul",         131072, PRECALC_REGION_REU, PRECALC_SHARED_YES, "X25519"
-.endif
-.if SQR_DMA_K
-; The pre-doubled tables (banks +3..+5) only exist in the default
-; SQR_DMA_K > 0 build; gated out in the lib-x25519-1764 variant so this
-; macro invocation does not emit LIB_PRECALC_reu_mul_doubled_* exports
-; in that build (matches the LIB_X25519_REU_BANKS_USED mask flip).
-;
-; Size = 3 × 65,536 B (one full REU bank each):
-;   bank LIB_SHARED_REU_MUL_BANK + 3: 17th-bit carry table, 256 B × 256 rows = 64 KB
-;   bank LIB_SHARED_REU_MUL_BANK + 4: doubled lo+hi, a = 0..127             = 64 KB
-;   bank LIB_SHARED_REU_MUL_BANK + 5: doubled lo+hi, a = 128..255           = 64 KB
-;                                                                  total: 196608 B
-LIB_PRECALC_TABLE "reu_mul_doubled", 196608, PRECALC_REGION_REU, PRECALC_SHARED_NO, "X25519"
-.endif

@@ -1,3 +1,41 @@
+# =============================================================================
+# HOW TO READ THE CONTRACT CITATIONS IN THIS FILE
+# =============================================================================
+#
+# c64-lib-contract is at SPEC **v1.1.0** (tag `358c2b4`). Its v1.0.0 release
+# deleted roughly seven eighths of the document and RETIRED five sections and
+# three sub-clauses: §9, §12, §13, §14, §15, §6.3, §6.6, §6.7. Surviving
+# sections kept their numbers, so §1 §2 §3 §4 §5 §6.1 §6.2 §6.4 §6.5 §7 §8.x
+# still resolve against the current SPEC.md and mean what they say.
+#
+# This file cites the retired ones on forty-six comment lines, and those
+# citations are NOT being rewritten. Two reasons, in order:
+#
+#   1. They still resolve. RETIRED.md makes `git show v0.17.1:SPEC.md` the
+#      permanent home of the retired text and says in terms that adopters
+#      should leave such citations alone rather than churn them.
+#
+#   2. Rewriting forty-six comments would be forty-six chances to introduce a
+#      wrong claim while fixing nothing a reader gets wrong.
+#
+# What DOES need saying, once, is the status those citations no longer carry:
+#
+#   **A `§6.3` / `§6.6` / `§6.7` / `§15` citation below describes REPO POLICY
+#   THIS PROJECT CHOSE TO KEEP, not a live obligation the contract imposes.**
+#
+# So `lib-verify-guards`, `lib-verify-negative`, `lib-verify-footprint-negative`
+# and the CONTRACT_STAMP knob-invalidation family are kept, unchanged, because
+# they work and because they have each caught a real defect here — the leg-C
+# family caught a shipped exit-0-wrong-artifact bug (#113/#114), and the
+# footprint evidence pass caught a check that could not fail (#121). The
+# contract's own RETIRED.md reaches the same conclusion for the fleet: "Keep
+# the practice; do not keep it as an obligation this contract imposes."
+#
+# The one thing that would now be WRONG is to describe any of them as required
+# for conformance, or to cite one as discharging a duty. There is no such duty.
+# Conformance today is §1-§8 of v1.1.0, and `lib-verify` covers it.
+# =============================================================================
+
 # ca65/ld65 toolchain (cc65 suite)
 CA65 = ca65
 LD65 = ld65
@@ -117,6 +155,7 @@ LIB_OBJS = $(BUILD_DIR)/x25519_init.o \
            $(BUILD_DIR)/util.o \
            $(BUILD_DIR)/lib_version.o \
            $(BUILD_DIR)/lib_manifest.o \
+           $(BUILD_DIR)/precalc_manifest.o \
            $(BUILD_DIR)/zp_config.o \
            $(BUILD_DIR)/reu_config.o
 
@@ -131,6 +170,7 @@ CA65_SRCS = $(SRC_DIR)/main.s \
             $(SRC_DIR)/util.s \
             $(SRC_DIR)/lib_version.s \
             $(SRC_DIR)/lib_manifest.s \
+            $(SRC_DIR)/precalc_manifest.s \
             $(SRC_DIR)/zp_config.s \
             $(SRC_DIR)/reu_config.s
 
@@ -143,6 +183,8 @@ LIBX25519 = $(LIB_DIR)/libx25519.a
         lib-verify-footprint lib-verify-footprint-negative \
         lib-verify-footprint-negative-arm \
         lib-verify-negative lib-verify-guards-legc \
+        lib-verify-citations lib-verify-citations-negative \
+        lib-verify-isolation \
         dist bench-record perf-diff lib-x25519-1764 lib-x25519-onchip
 
 all: $(PRG)
@@ -354,22 +396,35 @@ endif
 # The switches split by GATE STYLE, and the guard must match each on its own
 # terms — demanding one spelling fleet-wide falsely rejects working builds.
 #
-#   _NEEDS_DEF_* — definedness-gated (.ifdef / .ifndef): src/mul_8x8.s:37,55,
-#     src/x25519_init.s:14,94, src/reu_config.s:118. The axis IS definedness,
-#     so EVERY spelling that defines the symbol selects it — bare
+# The gate SITES are not listed here. They live as checked data in
+# tools/check_gate_citations.py and are printed by `make lib-verify-citations`,
+# which lib-verify depends on. That is a fix for issue #122, not a stylistic
+# preference: this comment previously carried twelve hand-maintained file:line
+# citations and NINE of them pointed at blank lines, prose comments or ordinary
+# instructions. The src/fe25519.s pair was off by one and off by nine — correct
+# when written, drifted as lines were inserted above them. Nothing read them, so
+# nothing caught it. Prose that holds no line numbers cannot drift, and the
+# numbers that remain are now checked on every lib-verify.
+#
+#   _NEEDS_DEF_* — definedness-gated (.ifdef / .ifndef). The axis IS
+#     definedness, so EVERY spelling that defines the symbol selects it — bare
 #     `-D SHARED_SQTAB_INIT` as much as `=1`, and the bare form is what
 #     nist#117's example and the chacha docs use. Match the bare name, which
 #     also substring-matches the `=1` spelling our own targets pass.
 #
-#   _NEEDS_VAL_* — value-gated (.if ::NAME): src/lib_manifest.s:177,361,
-#     src/reu_config.s:177 for X25519_ONCHIP_MUL; src/x25519_init.s:25,194,456
-#     and src/fe25519.s:40,1211 for SQR_DMA_K. Here the exact value decides,
+#   _NEEDS_VAL_* — value-gated (.if ::NAME). Here the exact value decides,
 #     and ca65's bare `-D NAME` defines the symbol **= 0** (measured: `.out`
 #     prints `FOO=0` under bare `-D FOO`). For X25519_ONCHIP_MUL that is
 #     load-bearing: bare `-D X25519_ONCHIP_MUL` names the profile while
 #     selecting the DEFAULT path — precisely the shape-3 no-op this guard
 #     exists to kill — so the `=1` demand is deliberate. Do not "simplify" it
 #     to a bare-name match.
+#
+# The checker enforces the DISTINCTION, not just the existence of a gate: a
+# _NEEDS_VAL_ switch cited at a `.ifndef` line fails, and so does a _NEEDS_DEF_
+# switch cited at a `.if ::NAME` line. A check that only asked "is this line a
+# gate?" would let the two families be documented by each other's shape, which
+# is the exact confusion this block exists to prevent.
 #
 #     SQR_DMA_K=0 is the deliberate-but-stricter case: bare `-D SQR_DMA_K`
 #     would also select the 1764 axis (ca65 makes it 0, which is what 1764
@@ -411,8 +466,6 @@ LIB_VERIFY_SYMS_COMMON = x25519_clamp x25519_scalarmult x25519_base \
 	x25519_reu_fault \
 	LIB_X25519_SHARED_PRIMITIVES \
 	LIB_X25519_SHARED_CONSUMES \
-	LIB_PRECALC_sqtab_SIZE \
-	LIB_X25519_PRECALC_sqtab_SIZE \
 	mul_tables_init
 
 # Doubled-table surface (SQR_DMA_K > 0 only): present in the default
@@ -420,9 +473,7 @@ LIB_VERIFY_SYMS_COMMON = x25519_clamp x25519_scalarmult x25519_base \
 # SQR_DMA_K=0). The 1764 profile asserts these ABSENT — the contract
 # #62 audit found nothing had ever locked that archive's smaller
 # export set (it verified under the default expectations).
-LIB_VERIFY_SYMS_DOUBLED = reu_fetch_doubled_row \
-	LIB_PRECALC_reu_mul_doubled_SIZE \
-	LIB_X25519_PRECALC_reu_mul_doubled_SIZE
+LIB_VERIFY_SYMS_DOUBLED = reu_fetch_doubled_row
 
 # §8.x bit constants must NEVER be exported (issues #77/#78 item 3):
 # they are unprefixed names with identical values in every §8 adopter,
@@ -465,9 +516,7 @@ LIB_VERIFY_SYMS_REU_SURFACE = reu_fetch_mul_row reu_fetch_mul_row_bank_patch \
 	X25519_REU_BANK_DOUBLED X25519_REU_BANK_CARRY \
 	LIB_X25519_SHARED_REU_MUL_BANK LIB_X25519_SHARED_REU_MUL_OFFSET \
 	LIB_X25519_SHARED_REU_MUL_BANKS_USED \
-	LIB_X25519_SHARED_REU_MUL_STAGE_LO LIB_X25519_SHARED_REU_MUL_STAGE_HI \
-	LIB_PRECALC_reu_mul_SIZE \
-	LIB_X25519_PRECALC_reu_mul_SIZE
+	LIB_X25519_SHARED_REU_MUL_STAGE_LO LIB_X25519_SHARED_REU_MUL_STAGE_HI
 
 LIB_VERIFY_SYMS_REU = $(LIB_VERIFY_SYMS_REU_OWN) $(LIB_VERIFY_SYMS_REU_CANON) \
 	$(LIB_VERIFY_SYMS_REU_SURFACE)
@@ -612,6 +661,98 @@ DOC_SNIPPET_FILES = $(wildcard cfg/*.cfg src/*.s src/*.inc) \
 lib-verify-docs:
 	@python3 tools/check_doc_snippets.py $(DOC_SNIPPET_FILES)
 
+# --- §8.4 precalc exports: checked in the ARCHIVE, not the linked stub ------
+#
+# These used to be greppd out of stub.labels alongside the §5 aggregates.
+# That check passed for the WRONG REASON: precalc and §5 shared
+# src/lib_manifest.s, so importing a footprint equate dragged the precalc
+# names into the link. c64-lib-contract SPEC v1.2.0 §6.1 member isolation
+# forbids exactly that, and v0.14.0 split them into src/precalc_manifest.s
+# (contract#177). The member is now pulled only when a consumer references
+# it — which is the point — so it is correctly ABSENT from a stub that
+# references nothing in it, and a linked-binary grep can no longer be the
+# check.
+#
+# What a consumer actually relies on is that the names are EXPORTED BY THE
+# SHIPPED ARCHIVE and importable on demand. That is what is asserted here,
+# with od65 over the members `ar65 t` reports.
+#
+# The stub still cannot .import them: reu_mul's SIZE is 131072, which ca65
+# auto-sizes to `far`, and the 6502 target has no `far` import address-size
+# hint to match. That ca65 gap is why this was a label grep in the first
+# place.
+LIB_VERIFY_ARCHIVE_SYMS_COMMON = LIB_PRECALC_sqtab_SIZE LIB_X25519_PRECALC_sqtab_SIZE
+LIB_VERIFY_ARCHIVE_SYMS_REU     = LIB_PRECALC_reu_mul_SIZE LIB_X25519_PRECALC_reu_mul_SIZE
+LIB_VERIFY_ARCHIVE_SYMS_DOUBLED = LIB_PRECALC_reu_mul_doubled_SIZE LIB_X25519_PRECALC_reu_mul_doubled_SIZE
+
+ifeq ($(X25519_PROFILE),onchip)
+LIB_VERIFY_ARCHIVE_SYMS = $(LIB_VERIFY_ARCHIVE_SYMS_COMMON)
+else ifeq ($(X25519_PROFILE),1764)
+LIB_VERIFY_ARCHIVE_SYMS = $(LIB_VERIFY_ARCHIVE_SYMS_COMMON) $(LIB_VERIFY_ARCHIVE_SYMS_REU)
+else
+LIB_VERIFY_ARCHIVE_SYMS = $(LIB_VERIFY_ARCHIVE_SYMS_COMMON) $(LIB_VERIFY_ARCHIVE_SYMS_REU) \
+	$(LIB_VERIFY_ARCHIVE_SYMS_DOUBLED)
+endif
+
+# Member isolation is itself asserted (contract SPEC v1.2.0 §6.1): the TU
+# carrying the displaceable bare LIB_PRECALC_* triple must export nothing a
+# consumer imports for another reason. Measured as: no member exports both a
+# bare LIB_PRECALC_ name and a LIB_X25519_{ZP_USAGE,REU_BANKS,RESIDENT,COLD,
+# SHARED}_* aggregate. Before the split lib_manifest.o exported all of both
+# and a two-library link died on `Duplicate external identifier`.
+lib-verify-isolation: lib
+	@echo "=== member isolation (SPEC v1.2.0 §6.1): displaceable names must not ride along ==="
+	@set -e; bad=0; \
+	 for m in $$(ar65 t $(LIBX25519)); do \
+	   ex=$$(od65 --dump-exports $(LIB_DIR)/$$m 2>/dev/null | grep 'Name:' | sed 's/.*Name: *//' | tr -d '"'); \
+	   bare=$$(printf '%s\n' "$$ex" | grep -c '^LIB_PRECALC_' || true); \
+	   agg=$$(printf '%s\n' "$$ex" | grep -cE '^LIB_X25519_(ZP_USAGE_BYTES|REU_BANKS_USED|RESIDENT_BYTES|COLD_BYTES|SHARED_PRIMITIVES|SHARED_CONSUMES)$$' || true); \
+	   ver=$$(printf '%s\n' "$$ex" | grep -cE '^LIB_(VERSION_(MAJOR|MINOR|PATCH)|ABI_VERSION)$$' || true); \
+	   if [ "$$bare" -gt 0 ] && [ "$$agg" -gt 0 ]; then \
+	     echo "FAIL: $$m exports $$bare bare LIB_PRECALC_* name(s) AND $$agg §5 aggregate(s) a consumer must import"; bad=1; fi; \
+	   if [ "$$bare" -gt 0 ] && [ "$$ver" -gt 0 ]; then \
+	     echo "FAIL: $$m exports $$bare bare LIB_PRECALC_* name(s) AND $$ver bare version export(s)"; bad=1; fi; \
+	   if [ "$$ver" -gt 0 ] && [ "$$agg" -gt 0 ]; then \
+	     echo "FAIL: $$m exports $$ver bare version export(s) AND $$agg §5 aggregate(s)"; bad=1; fi; \
+	 done; \
+	 [ $$bad -eq 0 ] || (echo "member isolation violated -- see SPEC v1.2.0 §6.1 and src/precalc_manifest.s" && exit 1); \
+	 echo "OK: no archive member mixes displaceable names with names a consumer imports for another reason"
+
+
+# --- guard-table citation check (issue #122) ---------------------------------
+#
+# The _NEEDS_DEF_* / _NEEDS_VAL_* block above documents why the two switch
+# families demand opposite spellings. Its evidence is a set of file:line
+# citations, and at v0.13.0 nine of twelve pointed at blank lines, prose
+# comments or ordinary instructions — the src/fe25519.s pair off by one and
+# off by nine, i.e. correct when written and drifted underneath.
+#
+# The numbers now live in tools/check_gate_citations.py and are checked here,
+# so a citation that drifts fails the build that moved it rather than
+# misleading the next reader indefinitely. The check discriminates gate STYLE,
+# not just gate presence: see the tool's docstring for why that is the half
+# that matters.
+lib-verify-citations:
+	@python3 tools/check_gate_citations.py
+
+# Negative leg. Not owed to anyone — SPEC §15 is retired as of contract
+# v1.0.0 — but a check added specifically to fix an unverified claim should
+# not itself arrive unverified. Perturbing a citation by one line must fail
+# AND must name which switch drifted; the +1 line here is a COMMENT that
+# mentions SQR_DMA_K, so a weaker "does this line mention the switch?" check
+# would pass it.
+lib-verify-citations-negative:
+	@echo "=== lib-verify-citations-negative: the citation check must fail, and name the switch ==="
+	@out=$$(python3 tools/check_gate_citations.py --mutate SQR_DMA_K 2>&1); rc=$$?; \
+	 if [ $$rc -eq 0 ]; then \
+	   echo "FAIL: a perturbed citation did not fail the check"; echo "$$out"; exit 1; \
+	 fi; \
+	 echo "$$out" | grep -q "FAIL: src/x25519_init.s:36 \[SQR_DMA_K\]" \
+	   || (echo "FAIL: the check failed, but did not name the perturbed SQR_DMA_K citation:"; echo "$$out"; exit 1); \
+	 echo "$$out" | grep -q "^  OK: src/mul_8x8.s:37" \
+	   || (echo "FAIL: the check reported an unperturbed citation as broken — it is failing for the wrong reason:"; echo "$$out"; exit 1); \
+	 echo "OK: the citation check fails on a one-line drift and names SQR_DMA_K, while the other five stay green"
+
 # --- §5 footprint: DERIVED, not restated (contract SPEC v0.17.0 §15.1) ------
 #
 # The `LIB_X25519_RESIDENT_BYTES` / `_COLD_BYTES` pair in the loop below
@@ -643,7 +784,7 @@ LIB_VERIFY_FOOTPRINT_CMD = python3 tools/check_footprint.py \
 lib-verify-footprint: lib $(LIB_VERIFY_PRG)
 	@$(LIB_VERIFY_FOOTPRINT_CMD)
 
-lib-verify: lib-verify-docs lib $(LIB_VERIFY_PRG)
+lib-verify: lib-verify-docs lib-verify-citations lib-verify-isolation lib $(LIB_VERIFY_PRG)
 	@set -e; \
 	test -s $(LIB_VERIFY_PRG) || (echo "FAIL: $(LIB_VERIFY_PRG) is empty" && exit 1); \
 	for sym in $(LIB_VERIFY_SYMS_EXPECT); do \
@@ -653,6 +794,12 @@ lib-verify: lib-verify-docs lib $(LIB_VERIFY_PRG)
 	for sym in $(LIB_VERIFY_SYMS_ABSENT) $(LIB_VERIFY_SYMS_ABSENT_ALWAYS); do \
 	  ! grep -q "\\b$$sym\\b" $(LIB_VERIFY_DIR)/stub.labels \
 	    || (echo "FAIL: symbol $$sym present but must be gated out in $(X25519_PROFILE) profile" && exit 1); \
+	done; \
+	arch_ex=$$(for m in $$(ar65 t $(LIBX25519)); do od65 --dump-exports $(LIB_DIR)/$$m 2>/dev/null; done \
+	          | grep 'Name:' | sed 's/.*Name: *//' | tr -d '"'); \
+	for sym in $(LIB_VERIFY_ARCHIVE_SYMS); do \
+	  printf '%s\n' "$$arch_ex" | grep -qx "$$sym" \
+	    || (echo "FAIL: expected §8.4 export $$sym not exported by any member of $(LIBX25519)" && exit 1); \
 	done; \
 	grep -q "^al $(LIB_VERIFY_MASK_EXPECT) \.LIB_X25519_SHARED_PRIMITIVES$$" \
 	    $(LIB_VERIFY_DIR)/stub.labels \

@@ -159,13 +159,29 @@ public_manifest_refs:
         .word LIB_SHARED_PRIMITIVES_SQTAB, LIB_SHARED_PRIMITIVES_REU_MUL
         .word LIB_SHARED_PRIMITIVES_CT_MUL_8X8
 
-; c64-lib-contract §8.0 catch-loop exports (v0.7-prep+) are emitted by
-; the LIB_PRECALC_TABLE macro invocations in lib_manifest.s. We do NOT
-; .import them here because the SIZE export for reu_mul (131072) is
-; auto-sized to `far` by ca65 and the 6502 target has no `far` import
-; address-size hint to match. The smoke check for these symbols lives
-; in the lib-verify shell target (grep against stub.labels), which
-; doesn't need them in a stub.o-side import to resolve.
+; c64-lib-contract §8.4 precalc exports are emitted by the
+; LIB_PRECALC_TABLE invocations, which live in their own translation
+; unit src/precalc_manifest.s as of v0.14.0 (SPEC v1.2.0 §6.1 member
+; isolation, contract#177). Because that member is now isolated, it is
+; pulled into a link ONLY when something references it -- which is the
+; whole point of the rule, and which means a stub that references
+; nothing in it will not have these symbols in stub.labels.
+;
+; So this stub opts in the way a real consumer would: it imports the
+; sqtab SIZE and cross-checks it against the §8.1 window, which both
+; proves the member is linkable on demand and keeps the sqtab-window
+; check in tools/check_footprint.py working.
+;
+; Only the sqtab one. reu_mul's SIZE is 131072, which ca65 auto-sizes to
+; `far`, and the 6502 target has no `far` import address-size hint to
+; match -- a known ca65 gap, not a library defect. The `far` exports are
+; verified at ARCHIVE level instead (LIB_VERIFY_ARCHIVE_SYMS in the
+; Makefile, od65 over the members), which is what a consumer relies on.
+.import LIB_X25519_PRECALC_sqtab_SIZE
+.import LIB_PRECALC_sqtab_SIZE
+precalc_sqtab_refs:
+        .word LIB_X25519_PRECALC_sqtab_SIZE
+        .word LIB_PRECALC_sqtab_SIZE
 
 .if ::X25519_ONCHIP_MUL = 0
 ; SPEC §8.2 canonical entry point (v0.7-prep+).

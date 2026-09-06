@@ -23,8 +23,14 @@ Usage
 Exits 0 on 0 mismatches, 1 otherwise (printing the first 5 failing
 (a, b, got, expected) tuples).
 
---mutate: the §15.1 negative leg
---------------------------------
+--mutate: the §15.1 negative leg (§15 retired; the leg is kept)
+---------------------------------------------------------------
+SPEC §15 was RETIRED at contract v1.0.0 (2026-09-03); its text lives at
+tag v0.17.1 and RETIRED.md says of it: "Keep the practice; do not keep
+it as an obligation this contract imposes." The reasoning below stands
+as this repository's own policy. What no longer stands is any claim that
+the contract REQUIRES it.
+
 c64-lib-contract SPEC v0.17.0 §15.1: "A conformance check offered as
 evidence SHOULD be accompanied by a demonstration that it fails when the
 property it checks is false. A check never observed to fail is not
