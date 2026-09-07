@@ -177,11 +177,23 @@ public_manifest_refs:
 ; match -- a known ca65 gap, not a library defect. The `far` exports are
 ; verified at ARCHIVE level instead (LIB_VERIFY_ARCHIVE_SYMS in the
 ; Makefile, od65 over the members), which is what a consumer relies on.
+;
+; The BARE spelling is gated on the same define the archive build uses
+; (issue #139): src/precalc_table.inc suppresses it under
+; -D LIB_NO_BARE_EXPORTS=1, so an ungated .import here made `make
+; lib-nobare` die on `Unresolved external 'LIB_PRECALC_sqtab_SIZE'`
+; before the archive could be graded. The PREFIXED import stays
+; unconditional -- it exists in both modes and is what forces the
+; precalc_manifest.o member pull.
 .import LIB_X25519_PRECALC_sqtab_SIZE
+.ifndef LIB_NO_BARE_EXPORTS
 .import LIB_PRECALC_sqtab_SIZE
+.endif
 precalc_sqtab_refs:
         .word LIB_X25519_PRECALC_sqtab_SIZE
+.ifndef LIB_NO_BARE_EXPORTS
         .word LIB_PRECALC_sqtab_SIZE
+.endif
 
 .if ::X25519_ONCHIP_MUL = 0
 ; SPEC §8.2 canonical entry point (v0.7-prep+).

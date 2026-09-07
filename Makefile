@@ -61,6 +61,24 @@ CONTRACT_ZP_DEFINES ?=
 CA65FLAGS ?=
 ALL_DEFINES = $(CA65FLAGS) $(CONTRACT_DEFINES) $(CONTRACT_ZP_DEFINES)
 
+# --- §1 bare-export suppression mode (issue #139) ----------------------------
+# LIB_NO_BARE_EXPORTS is the mode a consumer linking two or more contract
+# libraries builds in (contract#43). It is `.ifndef`-gated in
+# src/lib_version.s and src/precalc_table.inc, so DEFINEDNESS is the axis and
+# every spelling that defines it selects it (`-D LIB_NO_BARE_EXPORTS`,
+# `=1`, `=0`) — hence a findstring on the NAME, matching the guard table's
+# treatment of the four `.ifdef`-gated SHARED_* switches, not the value test
+# X25519_ONCHIP_MUL/SQR_DMA_K need.
+#
+# Several lib-verify expectations are stated over the BARE surface and must
+# flip with the mode, or `make lib-nobare` fails on its own expectations
+# rather than on the property. This variable is the single place that
+# decides. It reads ALL_DEFINES, not CONTRACT_DEFINES alone, so the knob is
+# seen however it is spelled -- the deprecated CA65FLAGS alias reaches the
+# same ca65 command line and would otherwise flip the archive without
+# flipping the expectations.
+LIB_NOBARE := $(if $(findstring LIB_NO_BARE_EXPORTS,$(ALL_DEFINES)),1,)
+
 SRC_DIR = src
 BUILD_DIR = build
 LIB_DIR = $(BUILD_DIR)/lib
@@ -192,6 +210,7 @@ LIBX25519 = $(LIB_DIR)/libx25519.a
         lib-verify-citations lib-verify-citations-negative \
         lib-verify-isolation lib-verify-isolation-negative \
         lib-verify-fill-negative \
+        lib-nobare lib-nobare-negative nobare-check \
         dist bench-record perf-diff lib-x25519-1764 lib-x25519-onchip
 
 all: $(PRG)
@@ -307,6 +326,10 @@ clean:
 	rm -rf build-fp build-fp-default build-fp-onchip
 	rm -rf build-guards-default build-guards-onchip build-guards-legc-negative
 	rm -rf build-neg build-neg-artifact
+	# Spelled with the variables, not literals: arm B's tree is derived from
+	# NOBARE_NEG_DIR, and a literal copy of it here drifted out of step once
+	# already (F3).
+	rm -rf $(NOBARE_DIR) $(NOBARE_NEG_DIR) $(NOBARE_NEG_B_DIR)
 
 # --- Relocatable library archive ---------------------------------------------
 #
@@ -460,13 +483,25 @@ $(foreach d,$(X25519_PROFILE_NEEDS_VAL_$(X25519_PROFILE)),\
   $(if $(findstring $(d),$(CONTRACT_DEFINES)),,\
     $(error X25519_PROFILE=$(X25519_PROFILE) does not select that axis: '-D $(d)' is missing from CONTRACT_DEFINES. This switch is value-gated (.if ::NAME), and ca65's bare `-D NAME` defines it = 0, so the explicit value spelling is required -- for X25519_ONCHIP_MUL a bare -D would silently select the DEFAULT path. Use the named target, or pass CONTRACT_DEFINES="-D $(d)". Contract v0.10.5 6.3: a knob naming an axis MUST select it or fail loudly.)))
 
+# The deprecated bare version four (§1). Present in every ordinary build and
+# asserted so; SUPPRESSED under -D LIB_NO_BARE_EXPORTS=1 (src/lib_version.s),
+# where asserting them present would fail the build on the gate working. Their
+# ABSENCE in that mode is asserted by `make lib-nobare` (the nobare-check leg),
+# together with the positive half lib-verify cannot state: that the PREFIXED
+# forms survive. Kept as one variable so the two modes cannot drift apart.
+ifeq ($(LIB_NOBARE),1)
+LIB_VERIFY_SYMS_BARE_VERSION =
+else
+LIB_VERIFY_SYMS_BARE_VERSION = LIB_VERSION_MAJOR LIB_VERSION_MINOR \
+	LIB_VERSION_PATCH LIB_ABI_VERSION
+endif
+
 LIB_VERIFY_SYMS_COMMON = x25519_clamp x25519_scalarmult x25519_base \
 	fe25519_add fe25519_sub fe25519_mul fe25519_sqr \
 	x25_scalar x25_u x25_result \
 	vic_blank vic_unblank bench_start bench_stop \
 	bench_cycles_start bench_cycles_stop bench_cycles \
-	LIB_VERSION_MAJOR LIB_VERSION_MINOR LIB_VERSION_PATCH \
-	LIB_ABI_VERSION \
+	$(LIB_VERIFY_SYMS_BARE_VERSION) \
 	LIB_X25519_VERSION_MAJOR LIB_X25519_VERSION_MINOR \
 	LIB_X25519_VERSION_PATCH LIB_X25519_ABI_VERSION \
 	fe25519_src1 fe25519_src2 fe25519_dst \
@@ -695,6 +730,15 @@ lib-verify-docs:
 # enumerated table. onchip drops reu_mul (issue #72), 1764 drops
 # reu_mul_doubled (SQR_DMA_K=0). Stated per profile so the sentinel cannot
 # be satisfied by a build that simply enumerates fewer tables.
+ifeq ($(LIB_NOBARE),1)
+# -D LIB_NO_BARE_EXPORTS=1: src/precalc_table.inc suppresses the bare
+# triple in every profile, and src/lib_version.s the bare version four.
+# Both sentinels go to 0, which asserts nothing by itself — the archive
+# still exporting the PREFIXED forms is asserted by `make lib-nobare`.
+LIB_VERIFY_BARE_PRECALC_EXPECT = 0
+LIB_VERIFY_BARE_VERSION_EXPECT = 0
+else
+LIB_VERIFY_BARE_VERSION_EXPECT = 4
 ifeq ($(X25519_PROFILE),onchip)
 LIB_VERIFY_BARE_PRECALC_EXPECT = 3
 else ifeq ($(X25519_PROFILE),1764)
@@ -702,10 +746,20 @@ LIB_VERIFY_BARE_PRECALC_EXPECT = 6
 else
 LIB_VERIFY_BARE_PRECALC_EXPECT = 9
 endif
+endif
 
+ifeq ($(LIB_NOBARE),1)
+# The bare LIB_PRECALC_* spellings are gone by construction in this mode
+# (src/precalc_table.inc), so asserting them PRESENT would fail the build
+# on the suppression working. The prefixed forms are unaffected and stay.
+LIB_VERIFY_ARCHIVE_SYMS_COMMON = LIB_X25519_PRECALC_sqtab_SIZE
+LIB_VERIFY_ARCHIVE_SYMS_REU     = LIB_X25519_PRECALC_reu_mul_SIZE
+LIB_VERIFY_ARCHIVE_SYMS_DOUBLED = LIB_X25519_PRECALC_reu_mul_doubled_SIZE
+else
 LIB_VERIFY_ARCHIVE_SYMS_COMMON = LIB_PRECALC_sqtab_SIZE LIB_X25519_PRECALC_sqtab_SIZE
 LIB_VERIFY_ARCHIVE_SYMS_REU     = LIB_PRECALC_reu_mul_SIZE LIB_X25519_PRECALC_reu_mul_SIZE
 LIB_VERIFY_ARCHIVE_SYMS_DOUBLED = LIB_PRECALC_reu_mul_doubled_SIZE LIB_X25519_PRECALC_reu_mul_doubled_SIZE
+endif
 
 ifeq ($(X25519_PROFILE),onchip)
 LIB_VERIFY_ARCHIVE_SYMS = $(LIB_VERIFY_ARCHIVE_SYMS_COMMON)
@@ -725,7 +779,8 @@ endif
 lib-verify-isolation: lib
 	@python3 tools/check_member_isolation.py \
 	    --archive $(LIBX25519) --lib-dir $(LIB_DIR) \
-	    --expect-bare-precalc $(LIB_VERIFY_BARE_PRECALC_EXPECT)
+	    --expect-bare-precalc $(LIB_VERIFY_BARE_PRECALC_EXPECT) \
+	    --expect-bare-version $(LIB_VERIFY_BARE_VERSION_EXPECT)
 
 # Negative leg: re-run with the awk-equivalent extraction that drops
 # length-24 names. It MUST fail, and MUST say the extraction dropped names
@@ -2048,6 +2103,390 @@ lib-x25519-1764:
 	@echo
 	@echo "Segment sizes (lib .o):"
 	@od65 --dump-segsize build-1764/lib/x25519_init.o build-1764/lib/fe25519.o build-1764/lib/x25519.o build-1764/lib/data.o build-1764/lib/mul_8x8.o build-1764/lib/util.o 2>&1 | awk '/^build-1764|CODE:|DATA:|LIB_X25519_INIT_CODE:/'
+
+# --- §1 nobare variant + its verification leg (issue #139) -------------------
+#
+# `make lib-nobare` builds the archive with -D LIB_NO_BARE_EXPORTS=1 — the
+# mode a consumer linking two or more contract libraries builds in, because
+# the deprecated bare names are IDENTICAL across every adopter and collide at
+# link time otherwise (contract#43). Before #139 no target in this repo ever
+# built it: src/lib_version.s's `.ifndef LIB_NO_BARE_EXPORTS` suppression had never been linked in the
+# mode it exists for, and tests/lib_linkage/lib_linkage_stub.s's
+# `.ifndef LIB_NO_BARE_EXPORTS` gate had only ever been evaluated in the
+# taken direction. This target runs the full `lib lib-verify` path in that
+# mode, so the stub is ASSEMBLED with the define and its gate is exercised in
+# the suppressed direction, and then grades the resulting archive.
+#
+# COVERAGE CLAIM, narrowed to exactly what the target builds. Invoked with no
+# arguments it builds ONE configuration: the default profile, no consumer
+# defines, no ZP defines. That is NOT either of the two `c64-wireguard`
+# configurations, which add `-D LIB_SHARED_SQTAB_BASE=<n>` and
+# `-D ZP_CONFIG_NO_EXPORTS=1` (and, for the second, `-D X25519_ONCHIP_MUL=1`).
+# An earlier revision of this comment claimed it reproduced them; it did not,
+# and the onchip one failed on our own profile-blind expectations.
+#
+# Two reasons it stops there, the second of which outlives the first.
+#
+# Why it stops there, named rather than left as a gap: reproducing either
+# wireguard configuration additionally requires the ZP-suppressed mode, and
+# tests/lib_linkage cannot link under -D ZP_CONFIG_NO_EXPORTS=1 at all — five
+# unresolved externals with that define as the only knob, on a pristine tree.
+# That is issue #143, and it predates this target. A leg written today to the
+# goal of reproducing those configurations would have to drop either the stub
+# link or the ZP define, and either route puts a false claim back in this
+# comment — which is the defect this target exists to repair, not a new plan.
+#
+# What the parameterisation does give: the expectation sets below are
+# profile-aware and every knob is forwarded, so
+#     make lib-nobare X25519_PROFILE=onchip \
+#          CONTRACT_DEFINES="-D X25519_ONCHIP_MUL=1"
+# builds and grades the onchip profile in nobare mode, and once #143 is fixed
+# the same invocation plus CONTRACT_ZP_DEFINES reaches the real consumer
+# configuration with no change here. Until then no target in this repo builds
+# either wireguard configuration, and this one does not claim to.
+#
+# The DURABLE reason, which holds even after #143 is fixed: the other define
+# both configurations pass is `-D LIB_SHARED_SQTAB_BASE=<n>`, and that value
+# is the CONSUMER's placement choice, not ours. Hard-coding wireguard's
+# current number here would pin a library-side check to one consumer's memory
+# map and turn their next relocation into our red build — a library must not
+# hold a consumer's layout still. So even with #143 closed, the right shape is
+# a parameterised target the consumer's own integration script drives with its
+# own values, not a target in this repo that names them.
+#
+# It does NOT cover `c64-https` at all, which assembles our sources with ca65
+# and archives with ar65 directly, bypassing this build system entirely — no
+# library-side make target can reproduce that path, even in principle.
+#
+# The knob rides CONTRACT_DEFINES (§6.2 defines-forwarding) like every other
+# switch, so it lands in ALL_DEFINES and CONTRACT_STAMP invalidates objects
+# AND linked outputs on it exactly as for any other knob.
+# THREE trees, counted from the recipes below and not from any prose: the
+# variant build, the negative leg's control build, and arm B's copy of it with
+# one member's object removed. All three are named here, swept by `clean` and
+# listed in .gitignore — an unnamed `$(NOBARE_NEG_B_DIR)` spelled inline was
+# missed by both (F3), which is the same way the first two were missed (F2).
+NOBARE_DIR       = build-nobare
+NOBARE_NEG_DIR   = build-nobare-neg
+NOBARE_NEG_B_DIR = $(NOBARE_NEG_DIR)-b
+
+# The exact bare names, enumerated rather than pattern-matched: a pattern
+# would silently start covering a name nobody decided to gate.
+#   version four   src/lib_version.s      (§1)
+#   precalc triple src/precalc_table.inc, one per enumerated table (§8.4)
+#
+# PROFILE-AWARE, grouped exactly like LIB_VERIFY_ARCHIVE_SYMS_* above and for
+# the same reason: the §8.4 enumeration is per profile, so reu_mul does not
+# exist under onchip and reu_mul_doubled does not exist under onchip or 1764.
+# A profile-blind list asserts a name the build was never asked to emit, and
+# then `make lib-nobare X25519_PROFILE=onchip` fails on ITS OWN EXPECTATIONS
+# rather than on the property — the failure the mode-axis comment at the top
+# of this file warns about, one axis over. The OK line counts the sets with
+# $(words …), so the reported number shrinks with them instead of over-claiming.
+NOBARE_ABSENT_SYMS_COMMON = \
+	LIB_VERSION_MAJOR LIB_VERSION_MINOR LIB_VERSION_PATCH LIB_ABI_VERSION \
+	LIB_PRECALC_sqtab_SIZE LIB_PRECALC_sqtab_REGION LIB_PRECALC_sqtab_SHARED
+NOBARE_ABSENT_SYMS_REU = \
+	LIB_PRECALC_reu_mul_SIZE LIB_PRECALC_reu_mul_REGION \
+	LIB_PRECALC_reu_mul_SHARED
+NOBARE_ABSENT_SYMS_DOUBLED = \
+	LIB_PRECALC_reu_mul_doubled_SIZE LIB_PRECALC_reu_mul_doubled_REGION \
+	LIB_PRECALC_reu_mul_doubled_SHARED
+
+# The POSITIVE half. Absence alone passes against an empty archive, a failed
+# build, or a gate that removed too much — which is the #133 shape. These are
+# the prefixed forms a composing consumer actually imports in this mode.
+NOBARE_PRESENT_SYMS_COMMON = \
+	LIB_X25519_VERSION_MAJOR LIB_X25519_VERSION_MINOR \
+	LIB_X25519_VERSION_PATCH LIB_X25519_ABI_VERSION \
+	LIB_X25519_PRECALC_sqtab_SIZE
+NOBARE_PRESENT_SYMS_REU     = LIB_X25519_PRECALC_reu_mul_SIZE
+NOBARE_PRESENT_SYMS_DOUBLED = LIB_X25519_PRECALC_reu_mul_doubled_SIZE
+
+# Why an `else` fallback is safe here, since it is the branch that would hide
+# a mistake: an unknown or empty X25519_PROFILE never reaches this chain — it
+# dies earlier at the parse-time $(error) that validates the value. That
+# matters specifically because the fallback is `else` and not
+# `ifeq (…,default)`: an unmatched value would otherwise select the WIDEST
+# rosters and read as a stricter check rather than a broken one. All seven
+# valid values are classified deliberately, and the four `shared-*` ones land
+# in `else` with the full default rosters ON PURPOSE — those switches defer
+# CODE to a provider, they do not drop §8.4 tables, so the archive still
+# enumerates sqtab, reu_mul and reu_mul_doubled. Measured: shared-all grades
+# 13 absent / 7 present over 109 export names, green.
+ifeq ($(X25519_PROFILE),onchip)
+NOBARE_ABSENT_SYMS  = $(NOBARE_ABSENT_SYMS_COMMON)
+NOBARE_PRESENT_SYMS = $(NOBARE_PRESENT_SYMS_COMMON)
+else ifeq ($(X25519_PROFILE),1764)
+NOBARE_ABSENT_SYMS  = $(NOBARE_ABSENT_SYMS_COMMON) $(NOBARE_ABSENT_SYMS_REU)
+NOBARE_PRESENT_SYMS = $(NOBARE_PRESENT_SYMS_COMMON) $(NOBARE_PRESENT_SYMS_REU)
+else
+NOBARE_ABSENT_SYMS  = $(NOBARE_ABSENT_SYMS_COMMON) $(NOBARE_ABSENT_SYMS_REU) \
+	$(NOBARE_ABSENT_SYMS_DOUBLED)
+NOBARE_PRESENT_SYMS = $(NOBARE_PRESENT_SYMS_COMMON) $(NOBARE_PRESENT_SYMS_REU) \
+	$(NOBARE_PRESENT_SYMS_DOUBLED)
+endif
+
+# Graded at the LINK too, not only in the archive: the archive half says the
+# gate suppressed the exports, the link half says the stub was assembled in
+# the same mode and still resolved the prefixed surface. Only the version
+# four are checked here — the precalc SIZEs cannot be .import'ed by the stub
+# (reu_mul's 131072 auto-sizes to `far` and the 6502 target has no matching
+# import hint), which is why they are archive-level above.
+NOBARE_PRESENT_LINK_SYMS = \
+	LIB_X25519_VERSION_MAJOR LIB_X25519_VERSION_MINOR \
+	LIB_X25519_VERSION_PATCH LIB_X25519_ABI_VERSION
+NOBARE_ABSENT_LINK_SYMS = \
+	LIB_VERSION_MAJOR LIB_VERSION_MINOR LIB_VERSION_PATCH LIB_ABI_VERSION
+
+# The check itself, parameterised by the tree it grades so the negative leg
+# below can point it at an archive built WITHOUT the define and require it to
+# report. NOBARE_CHECK_DIR must name a tree that has already run
+# `lib lib-verify`, so the archive and the linked stub map both exist.
+# NON-VACUITY, DERIVED — there is deliberately no magic minimum here. An
+# earlier revision used a floor of 100 export names, PICKED not derived, and
+# the margin it implied was not there. Measured: default profile 125 names,
+# 1764 121, onchip 103 — and wireguard's actual -D ZP_CONFIG_NO_EXPORTS=1
+# removes 18 more, taking the default build to 107 and onchip BELOW the floor,
+# i.e. it would have reddened a perfectly good archive in the consumer's own
+# configuration. It was also an AGGREGATE guard: losing one whole member's
+# dump costs fewer names than the margin, so the case it was written for would
+# have passed it.
+#
+# What replaces it reconciles against od65's OWN declared export Count, per
+# member, the way tools/check_member_isolation.py does: if the extraction reads
+# fewer names than od65 says the members export, the absence results mean
+# nothing and the check says so instead of passing. That catches the dump that
+# never happened AND the reader that silently drops names (the length-24
+# `Name:` padding trap), in every profile and define set, with no constant to
+# keep in sync.
+#
+# DO NOT REINTRODUCE A THRESHOLD. The instinct is understandable — a minimum
+# reads like rigour — but the floor removed here was not merely thin: it was
+# three names above firing on the onchip profile and BELOW firing on the
+# consumer's own -D ZP_CONFIG_NO_EXPORTS=1 build, so its first contact with a
+# real consumer configuration would have been a red build on a correct
+# archive. A guard whose failure mode is "reddens on something correct, in a
+# configuration nobody in this repo runs" is worse than no guard, because the
+# fix under time pressure is to lower the number rather than ask what it was
+# for. Both conditions above are re-run red by `make lib-nobare-negative`
+# (arms B and C), so neither is trusted on inspection.
+
+# The export-name extraction, as an overridable knob so arm C of
+# lib-nobare-negative can swap in the BROKEN reader and require the
+# reconciliation above to notice. Same idea as
+# tools/check_member_isolation.py's --unsafe-extract, same defect reproduced:
+# od65 pads `Name:` by abs(24 - namelen) spaces, so a 24-character symbol gets
+# ZERO spaces and a field-splitting reader silently loses it. Every
+# LIB_X25519_VERSION_* and LIB_PRECALC_* name here is exactly 24 characters.
+ifeq ($(NOBARE_UNSAFE_EXTRACT),1)
+NOBARE_NAME_EXTRACT = awk 'NF >= 3 { print $$1, $$3 }' | tr -d '"'
+else
+NOBARE_NAME_EXTRACT = sed 's/^\([^ ]*\) .*Name: */\1 /; s/"//g'
+endif
+
+NOBARE_CHECK_DIR  ?= $(NOBARE_DIR)
+NOBARE_CHECK_MODE ?= LIB_NO_BARE_EXPORTS=1
+
+nobare-check:
+	@lib=$(NOBARE_CHECK_DIR)/lib/libx25519.a; \
+	 labels=$(NOBARE_CHECK_DIR)/lib_verify/stub.labels; \
+	 fail=0; \
+	 if [ ! -s "$$lib" ]; then \
+	   echo "FAIL: nobare [$(NOBARE_CHECK_MODE)] — archive $$lib is missing or empty; nothing was graded"; exit 1; \
+	 fi; \
+	 if [ ! -s "$$labels" ]; then \
+	   echo "FAIL: nobare [$(NOBARE_CHECK_MODE)] — linked stub map $$labels is missing or empty; the link half graded nothing"; exit 1; \
+	 fi; \
+	 nmem=$$(ar65 t $$lib | grep -c . || true); \
+	 if [ "$$nmem" -lt 1 ]; then \
+	   echo "FAIL: nobare [$(NOBARE_CHECK_MODE)] — ar65 lists 0 members in $$lib; every absence test below would pass vacuously"; exit 1; \
+	 fi; \
+	 dump=$$(for m in $$(ar65 t $$lib); do \
+	           od65 --dump-exports $(NOBARE_CHECK_DIR)/lib/$$m 2>/dev/null \
+	           | sed "s|^|$$m |"; \
+	         done); \
+	 ex=$$(printf '%s\n' "$$dump" | grep 'Name:' | $(NOBARE_NAME_EXTRACT)); \
+	 nex=$$(printf '%s\n' "$$ex" | grep -c . || true); \
+	 ndump=$$(printf '%s\n' "$$dump" | awk '$$2 == "Count:"' | grep -c . || true); \
+	 if [ "$$ndump" != "$$nmem" ]; then \
+	   echo "FAIL: nobare [$(NOBARE_CHECK_MODE)] — ar65 lists $$nmem member(s) in $$lib but only $$ndump produced an od65 export dump from $(NOBARE_CHECK_DIR)/lib; a member that dumps nothing contributes to neither side of the reconciliation below and its names would read as absent"; exit 1; \
+	 fi; \
+	 declared=$$(printf '%s\n' "$$dump" | awk '$$2 == "Count:" { s += $$3 } END { print s+0 }'); \
+	 if [ "$$declared" -lt 1 ]; then \
+	   echo "FAIL: nobare [$(NOBARE_CHECK_MODE)] — the $$nmem member(s) of $$lib declare 0 exports between them; the dump did not happen, and every absence test below would pass vacuously"; exit 1; \
+	 fi; \
+	 if [ "$$nex" != "$$declared" ]; then \
+	   echo "FAIL: nobare [$(NOBARE_CHECK_MODE)] — extraction read $$nex export name(s) out of $$lib but od65 declares $$declared across its $$nmem member(s); the reader is dropping names (the od65 length-24 Name: padding trap), so every absence test below is untrustworthy"; exit 1; \
+	 fi; \
+	 if [ -z "$(strip $(NOBARE_PRESENT_SYMS))" ]; then \
+	   echo "FAIL: nobare [$(NOBARE_CHECK_MODE)] — the PRESENT roster (NOBARE_PRESENT_SYMS) expanded EMPTY for X25519_PROFILE=$(X25519_PROFILE); with no name to look for, the positive half asserts nothing and this check would print success. The usual cause is a misspelled group variable — an undefined \$$(NOBARE_PRESENT_SYMS_COMMMON) expands to nothing and make says nothing"; exit 1; \
+	 fi; \
+	 if [ -z "$(strip $(NOBARE_ABSENT_SYMS))" ]; then \
+	   echo "FAIL: nobare [$(NOBARE_CHECK_MODE)] — the ABSENT roster (NOBARE_ABSENT_SYMS) expanded EMPTY for X25519_PROFILE=$(X25519_PROFILE); with no name to look for, the suppression half asserts nothing and this check would print success. The usual cause is a misspelled group variable — an undefined \$$(NOBARE_ABSENT_SYMS_COMMMON) expands to nothing and make says nothing"; exit 1; \
+	 fi; \
+	 for sym in $(NOBARE_PRESENT_SYMS); do \
+	   if ! printf '%s\n' "$$ex" | awk -v s="$$sym" '$$2 == s { found = 1 } END { exit !found }'; then \
+	     echo "FAIL: nobare [$(NOBARE_CHECK_MODE)] — prefixed export $$sym is NOT exported by any member of $$lib; the gate removed a name it must keep, and a composing consumer meets it as an ld65 unresolved external"; fail=1; \
+	   fi; \
+	 done; \
+	 for sym in $(NOBARE_ABSENT_SYMS); do \
+	   who=$$(printf '%s\n' "$$ex" | awk -v s="$$sym" '$$2 == s { print $$1 }' | tr '\n' ' ' | sed 's/ *$$//'); \
+	   if [ -n "$$who" ]; then \
+	     echo "FAIL: nobare [$(NOBARE_CHECK_MODE)] — deprecated bare export $$sym IS exported by member(s) $$who of $$lib; the .ifndef LIB_NO_BARE_EXPORTS gate did not suppress it, so a consumer composing this archive with a sibling library gets ld65 'Duplicate external identifier: $$sym' (contract#43)"; fail=1; \
+	   fi; \
+	 done; \
+	 for sym in $(NOBARE_PRESENT_LINK_SYMS); do \
+	   if ! grep -q "\\b$$sym\\b" "$$labels"; then \
+	     echo "FAIL: nobare [$(NOBARE_CHECK_MODE)] — prefixed symbol $$sym did not resolve into the linked stub $$labels; the composing-mode link is missing the surface it imports"; fail=1; \
+	   fi; \
+	 done; \
+	 for sym in $(NOBARE_ABSENT_LINK_SYMS); do \
+	   if grep -q "\\b$$sym\\b" "$$labels"; then \
+	     echo "FAIL: nobare [$(NOBARE_CHECK_MODE)] — deprecated bare symbol $$sym resolved into the linked stub $$labels; either the archive still exports it or lib_linkage_stub.s's .ifndef LIB_NO_BARE_EXPORTS gate did not see the define"; fail=1; \
+	   fi; \
+	 done; \
+	 test "$$fail" = "0" || exit 1; \
+	 echo "OK: nobare [$(NOBARE_CHECK_MODE), X25519_PROFILE=$(X25519_PROFILE)] — $$lib exports none of the $(words $(NOBARE_ABSENT_SYMS)) deprecated bare names this profile enumerates, still exports all $(words $(NOBARE_PRESENT_SYMS)) prefixed forms (out of $$nex export names read), and the stub linked in this mode resolves the prefixed version four and none of the bare four"
+
+lib-nobare:
+	@echo "=== Building lib-nobare (§1: -D LIB_NO_BARE_EXPORTS=1, the mode a"
+	@echo "    consumer composing two or more contract libraries builds in) ==="
+	rm -rf $(NOBARE_DIR)
+	$(MAKE) BUILD_DIR=$(NOBARE_DIR) LIB_DIR=$(NOBARE_DIR)/lib \
+	        CA65FLAGS="$(CA65FLAGS)" CONTRACT_ZP_DEFINES="$(CONTRACT_ZP_DEFINES)" \
+	        CONTRACT_DEFINES="$(CONTRACT_DEFINES) -D LIB_NO_BARE_EXPORTS=1" \
+	        X25519_PROFILE=$(X25519_PROFILE) \
+	        lib lib-verify
+	@# X25519_PROFILE passed explicitly. BELT-AND-BRACES, not a repair of an
+	@# observed defect: a command-line value already propagates to sub-makes
+	@# through MAKEFLAGS, and an environment value survives because the
+	@# assignment is `?=`. No case was constructed where the implicit form
+	@# graded under a different profile than the build. It is spelled out
+	@# because the consequence if it ever did — grading the archive against
+	@# another profile's §8.4 roster — is silent and would look like a real
+	@# export regression.
+	$(MAKE) NOBARE_CHECK_DIR=$(NOBARE_DIR) NOBARE_CHECK_MODE=LIB_NO_BARE_EXPORTS=1 \
+	        X25519_PROFILE=$(X25519_PROFILE) \
+	        nobare-check
+	@mkdir -p build/lib
+	@cp $(NOBARE_DIR)/lib/libx25519.a build/lib/x25519-nobare.a
+	@echo "SPEC §1 archive: build/lib/x25519-nobare.a"
+	@echo "(graded: X25519_PROFILE=$(X25519_PROFILE), CONTRACT_DEFINES=\"$(CONTRACT_DEFINES) -D LIB_NO_BARE_EXPORTS=1\","
+	@echo " CONTRACT_ZP_DEFINES=\"$(CONTRACT_ZP_DEFINES)\" — that one configuration and no other."
+	@echo " NOT either c64-wireguard configuration: both add -D LIB_SHARED_SQTAB_BASE"
+	@echo " and -D ZP_CONFIG_NO_EXPORTS=1, and tests/lib_linkage cannot link under"
+	@echo " the latter at all (issue #143). NOT c64-https, which bypasses this"
+	@echo " build system entirely and cannot be covered by any target here.)"
+
+# --- The negative leg for it -------------------------------------------------
+#
+# Reproduces the DEFECT CLASS, not a broken checker: an archive built without
+# the define still exports the bare names, and the nobare assertion must
+# report that, naming the symbol and the member. Two things make this
+# evidence rather than a transcript:
+#   * the control build is a full `lib lib-verify`, asserted to SUCCEED before
+#     the check runs. A negative leg that never reached the stage under test
+#     proves less than nothing (#128's two harnesses died before ld65 reached
+#     member resolution and both read as confirmation).
+#   * the failure text is matched on the SYMBOL, so a failure for some other
+#     reason does not pass.
+lib-nobare-negative:
+	@echo "=== lib-nobare-negative: the nobare assertion must FAIL against an"
+	@echo "    archive built WITHOUT -D LIB_NO_BARE_EXPORTS=1 ==="
+	rm -rf $(NOBARE_NEG_DIR)
+	@echo "--- positive control: the bare-mode tree must BUILD and LINK first,"
+	@echo "    or 'the check reported' would just mean 'the build died'"
+	$(MAKE) BUILD_DIR=$(NOBARE_NEG_DIR) LIB_DIR=$(NOBARE_NEG_DIR)/lib \
+	        CA65FLAGS="$(CA65FLAGS)" CONTRACT_ZP_DEFINES="$(CONTRACT_ZP_DEFINES)" \
+	        CONTRACT_DEFINES="$(CONTRACT_DEFINES)" \
+	        X25519_PROFILE=$(X25519_PROFILE) \
+	        lib lib-verify >/dev/null
+	@# The two control guards below exit WITHOUT sweeping $(NOBARE_NEG_DIR),
+	@# deliberately: if the control build failed to produce an archive or a
+	@# link map, that tree is the evidence for why, and deleting it costs the
+	@# next person the diagnosis. Every other exit from this target sweeps,
+	@# and `make clean` sweeps all THREE nobare trees unconditionally
+	@# ($(NOBARE_DIR), $(NOBARE_NEG_DIR), $(NOBARE_NEG_B_DIR)).
+	@test -s $(NOBARE_NEG_DIR)/lib/libx25519.a || { echo "FAIL: the control build produced no archive"; exit 1; }
+	@test -s $(NOBARE_NEG_DIR)/lib_verify/stub.labels || { echo "FAIL: the control build produced no linked stub map"; exit 1; }
+	@echo "OK: control — bare-mode archive built and stub linked"
+	@out=$$($(MAKE) NOBARE_CHECK_DIR=$(NOBARE_NEG_DIR) \
+	        X25519_PROFILE=$(X25519_PROFILE) \
+	        NOBARE_CHECK_MODE="no define — bare mode" nobare-check 2>&1); rc=$$?; \
+	 fail=0; \
+	 if [ $$rc -eq 0 ]; then \
+	   echo "FAIL: the nobare check exited 0 against a bare-mode archive; it is inert"; fail=1; \
+	 fi; \
+	 for sym in LIB_VERSION_MAJOR LIB_VERSION_MINOR LIB_VERSION_PATCH LIB_ABI_VERSION; do \
+	   printf '%s\n' "$$out" | grep -q "deprecated bare export $$sym IS exported by member(s) lib_version.o" \
+	     || { echo "FAIL: the check did not name $$sym as exported by lib_version.o:"; printf '%s\n' "$$out" | grep '^FAIL' | head -5; fail=1; }; \
+	 done; \
+	 printf '%s\n' "$$out" | grep -q "deprecated bare export LIB_PRECALC_sqtab_SIZE IS exported by member(s) precalc_manifest.o" \
+	   || { echo "FAIL: the check did not name the §8.4 bare triple's member:"; printf '%s\n' "$$out" | grep '^FAIL' | head -5; fail=1; }; \
+	 printf '%s\n' "$$out" | grep -q "deprecated bare symbol LIB_VERSION_MAJOR resolved into the linked stub" \
+	   || { echo "FAIL: the link half did not report the bare symbol in the stub map:"; printf '%s\n' "$$out" | grep '^FAIL' | head -5; fail=1; }; \
+	 printf '%s\n' "$$out" | grep -q "prefixed export .* is NOT exported" \
+	   && { echo "FAIL: the positive half also reported; the leg is failing for the wrong reason (the prefixed forms exist in BOTH modes)"; fail=1; }; \
+	 test "$$fail" = "0" || { rm -rf $(NOBARE_NEG_DIR) $(NOBARE_NEG_B_DIR); exit 1; }; \
+	 echo "OK: arm A — the nobare check FAILS (exit $$rc) against a bare-mode archive, naming all four bare version exports and lib_version.o, the §8.4 bare triple and precalc_manifest.o, and the bare symbol in the linked stub — and the prefixed half stayed green"
+	@echo "--- arm B: a member ar65 lists but which produces NO od65 dump must be a"
+	@echo "    HARD failure. Such a member contributes to neither side of the"
+	@echo "    reconciliation, so its names would read as absent and every"
+	@echo "    absence test would pass for the wrong reason."
+	@rm -rf $(NOBARE_NEG_B_DIR)
+	@cp -R $(NOBARE_NEG_DIR) $(NOBARE_NEG_B_DIR)
+	@rm -f $(NOBARE_NEG_B_DIR)/lib/util.o
+	@out=$$($(MAKE) NOBARE_CHECK_DIR=$(NOBARE_NEG_B_DIR) \
+	        X25519_PROFILE=$(X25519_PROFILE) nobare-check 2>&1); rc=$$?; \
+	 fail=0; \
+	 if [ $$rc -eq 0 ]; then \
+	   echo "FAIL: arm B — the check exited 0 with one member's object removed; the dump-per-member guard is inert"; fail=1; \
+	 fi; \
+	 printf '%s\n' "$$out" | grep -qE "ar65 lists [0-9]+ member\(s\) .* but only [0-9]+ produced an od65 export dump" \
+	   || { echo "FAIL: arm B — the check failed, but not with the dump-per-member diagnostic:"; printf '%s\n' "$$out" | grep '^FAIL' | head -3; fail=1; }; \
+	 printf '%s\n' "$$out" | grep -q "deprecated bare export" \
+	   && { echo "FAIL: arm B — the check reached the symbol tests; it must stop at the dump guard, or a short dump is graded"; fail=1; }; \
+	 rm -rf $(NOBARE_NEG_B_DIR); \
+	 test "$$fail" = "0" || { rm -rf $(NOBARE_NEG_DIR); exit 1; }; \
+	 echo "OK: arm B — a member with no dump is a hard failure (exit $$rc), named as such, and the symbol tests are never reached"
+	@echo "--- arm C: the BROKEN export reader (od65's length-24 Name: padding"
+	@echo "    trap) must be caught by the reconciliation against od65's own"
+	@echo "    declared Count, not silently improve every absence result."
+	@out=$$($(MAKE) NOBARE_CHECK_DIR=$(NOBARE_NEG_DIR) NOBARE_UNSAFE_EXTRACT=1 \
+	        X25519_PROFILE=$(X25519_PROFILE) nobare-check 2>&1); rc=$$?; \
+	 fail=0; \
+	 if [ $$rc -eq 0 ]; then \
+	   echo "FAIL: arm C — the check exited 0 with a name-dropping reader; the reconciliation is inert"; fail=1; \
+	 fi; \
+	 printf '%s\n' "$$out" | grep -q "the reader is dropping names (the od65 length-24 Name: padding trap)" \
+	   || { echo "FAIL: arm C — the check failed, but not with the reconciliation diagnostic:"; printf '%s\n' "$$out" | grep '^FAIL' | head -3; fail=1; }; \
+	 printf '%s\n' "$$out" | grep -qE "extraction read [0-9]+ export name\(s\) .* but od65 declares [0-9]+" \
+	   || { echo "FAIL: arm C — the diagnostic did not report both counts:"; printf '%s\n' "$$out" | grep '^FAIL' | head -3; fail=1; }; \
+	 test "$$fail" = "0" || { rm -rf $(NOBARE_NEG_DIR); exit 1; }; \
+	 echo "OK: arm C — a name-dropping reader is caught by the Count reconciliation (exit $$rc) and reports both counts"
+	@echo "--- arm D: an EMPTY symbol roster must be a hard failure. Unreachable"
+	@echo "    today (every branch includes the _COMMON group), but a misspelled"
+	@echo "    group variable expands to nothing in silence, and a check with"
+	@echo "    nothing to look for prints success — the roster-side form of the"
+	@echo "    very hazard this target was built for."
+	@fail=0; \
+	 for roster in NOBARE_ABSENT_SYMS NOBARE_PRESENT_SYMS; do \
+	   out=$$($(MAKE) NOBARE_CHECK_DIR=$(NOBARE_NEG_DIR) \
+	          X25519_PROFILE=$(X25519_PROFILE) $$roster= nobare-check 2>&1); rc=$$?; \
+	   if [ $$rc -eq 0 ]; then \
+	     echo "FAIL: arm D — the check exited 0 with $$roster emptied; the roster guard is inert"; fail=1; \
+	   fi; \
+	   printf '%s\n' "$$out" | grep -q "roster ($$roster) expanded EMPTY" \
+	     || { echo "FAIL: arm D — the check failed, but did not name $$roster as the empty roster:"; printf '%s\n' "$$out" | grep '^FAIL' | head -3; fail=1; }; \
+	   printf '%s\n' "$$out" | grep -q "^OK: nobare" \
+	     && { echo "FAIL: arm D — the check reported success with $$roster emptied"; fail=1; }; \
+	   printf '%s\n' "$$out" | grep -qE "deprecated bare export|prefixed export .* is NOT exported" \
+	     && { echo "FAIL: arm D — the symbol tests ran with $$roster emptied; the guard must stop the check before them"; fail=1; }; \
+	 done; \
+	 rm -rf $(NOBARE_NEG_DIR); \
+	 test "$$fail" = "0" || exit 1; \
+	 echo "OK: arm D — either roster expanding empty is a hard failure, named by roster, and the symbol tests are never reached"
 
 # --- Performance history tracking --------------------------------------------
 #
