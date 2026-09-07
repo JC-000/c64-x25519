@@ -18,6 +18,52 @@ Current release: **v0.16.0** (released 2026-09-06) — the settling release agai
 
 **Known gap, tracked at [#128](https://github.com/JC-000/c64-x25519/issues/128), targeted at v0.16.0.** `mul_8x8.o` exports two displaceable groups dropped by *different* switches — `SHARED_SQTAB_INIT` takes `sqtab_init`/`mul_tables_init`, `SHARED_CT_MUL_8X8` takes the six §8.3 names. A consumer owning §8.3 but not §8.1 defines the second group itself and still imports `sqtab_init`; that import pulls the member, which arrives carrying the §8.3 names. Measured against the shipped v0.14.0 archive with the real example cfg: `ld65: Error: Duplicate external identifier: 'smc_diff_a_imm'`. The seam is clean — the two bodies have zero cross-references and already live in different segments — but the split moves *code*, so it changes the PRG and owes its own full VICE suite rather than riding on v0.15.0's.
 
+## How work lands here (binding, applies to every feature and issue)
+
+**Nothing lands without red-green plus an independent adversarial pass by an
+agent that did not write it.** This is repo standard, not a per-task choice —
+it applies to features, issue fixes, doc corrections and release prep alike,
+and it is why the `Agent` tool is authorized in this repo.
+
+**Roles are separated, and the separation is the point.**
+
+- **Supervisor (the main session).** Judgment, sequencing, briefs, accepting or
+  refuting findings, and holding the gate. Does *not* implement. Keeping the
+  supervisor's context on decisions rather than tool output is the whole reason
+  the structure exists.
+- **Implementer** — `.claude/agents/implementer.md`. Writes the change and its
+  red-green demonstration. Its own verification does **not** clear the gate: an
+  agent that wrote a defect can re-verify straight past it.
+- **Adversarial reviewer** — `.claude/agents/adversarial-reviewer.md`. A
+  *different* agent, briefed with the failure modes actually seen recently, not
+  "review carefully". Told plainly that "I looked for X, Y, Z and found none"
+  is an acceptable answer, so it does not manufacture findings.
+
+**The two gate conditions:**
+
+1. **Red-green.** Every new or changed check is driven to FAIL, and the failure
+   **names the right thing** — which leg, which symbol, which segment, which
+   switch. The obligation is per check inside an aggregate gate, not per gate.
+   Prefer a demonstration that reproduces the *defect class* over one that
+   merely breaks the checker. A "disable" that is always true proves nothing,
+   and a negative leg that never reached the stage under test proves less.
+2. **An independent adversarial pass** by an agent that did not implement it.
+
+**Irreversible steps — commit to a release branch, tag, push, publish, or a
+message to another repo's lane — wait behind the gate, never inside it.**
+
+**Ask for dissent explicitly.** Two agents concurring is worth far less than
+one disagreeing; the `DOUBLED`/`_CARRY` over-guarding and the contract#164
+mis-filing were both caught only because dissent was requested.
+
+**Measured, which is why it is mandatory.** Over 2026-08-30/31 the structure
+caught 13 defects before they became permanent — **five of them the
+supervisor's own**, plus a fix that was silently inert and a citation list
+broken by the very edit that added to it. In every case the authoring agent's
+own verification had already passed. On 2026-09-06 the same structure caught
+three `-negative` legs that were structurally incapable of failing, *after* the
+tag shipped — which is what the gate is for and what skipping it costs.
+
 ## The contract, after the v1.0.0 cut
 
 **Aligned with c64-lib-contract SPEC v1.1.0** (tag `358c2b4`, 2026-09-03). Read this section before citing any section number, because the document changed shape more than it changed content.
@@ -101,6 +147,11 @@ make lib-verify-footprint-negative  # 16 nops into fe25519_add on a throwaway
                      #   src copy; the derived check MUST fail and name the segment
 make lib-verify-negative            # one negative leg per assertion INSIDE
                      #   lib-verify (N0..N7); each must fail with its named message
+make lib-verify-guards-legc-negative  # leg C's C1/C2/C1b pass on a COUNT OF
+                     #   ZERO; 16 arms sabotage the step each assertion counts,
+                     #   incl. C2's stale-artifact and C1/C1b's no-rebuild
+                     #   properties. 16 of 18 leg assertions observed failing;
+                     #   the two exceptions are named in the target (#133)
 python3 tools/ct_mul_brute_check.py --mutate  # §8.3 tool's own negative leg;
                      #   must report counted mismatches, not error out (needs VICE)
 make lib-app-owned   # §6.3 all-primitives-app-owned archive (x25519-app-owned.a)
