@@ -147,6 +147,11 @@ make lib-verify-footprint-negative  # 16 nops into fe25519_add on a throwaway
                      #   src copy; the derived check MUST fail and name the segment
 make lib-verify-negative            # one negative leg per assertion INSIDE
                      #   lib-verify (N0..N7); each must fail with its named message
+make lib-verify-guards-legc-negative  # leg C's C1/C2/C1b pass on a COUNT OF
+                     #   ZERO; 16 arms sabotage the step each assertion counts,
+                     #   incl. C2's stale-artifact and C1/C1b's no-rebuild
+                     #   properties. 16 of 18 leg assertions observed failing;
+                     #   the two exceptions are named in the target (#133)
 python3 tools/ct_mul_brute_check.py --mutate  # §8.3 tool's own negative leg;
                      #   must report counted mismatches, not error out (needs VICE)
 make lib-app-owned   # §6.3 all-primitives-app-owned archive (x25519-app-owned.a)

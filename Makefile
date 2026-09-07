@@ -187,6 +187,8 @@ LIBX25519 = $(LIB_DIR)/libx25519.a
         lib-verify-footprint lib-verify-footprint-negative \
         lib-verify-footprint-negative-arm \
         lib-verify-negative lib-verify-guards-legc \
+        lib-verify-guards-legc-negative \
+        lib-verify-guards-legc-negative-arm \
         lib-verify-citations lib-verify-citations-negative \
         lib-verify-isolation lib-verify-isolation-negative \
         lib-verify-fill-negative \
@@ -303,7 +305,7 @@ clean:
 	# but nothing swept them afterwards, so they lingered as untracked trees.
 	rm -rf build-1764 build-onchip build-app-owned build-guards build-shared
 	rm -rf build-fp build-fp-default build-fp-onchip
-	rm -rf build-guards-default build-guards-onchip
+	rm -rf build-guards-default build-guards-onchip build-guards-legc-negative
 	rm -rf build-neg build-neg-artifact
 
 # --- Relocatable library archive ---------------------------------------------
@@ -1382,6 +1384,22 @@ LEGC_DIR = build-guards-$(LEGC_NAME)
 # archive) MUST be the same set, or the leg proves nothing about the flip.
 LEGC_8X3_NAMES = "(ct_mul_8x8|poly_prod_lo|poly_prod_hi|smc_sum_a_imm|smc_diff_a_imm)"
 
+# The §8.1 name set SHARED_CT_MUL_8X8 must NOT touch. Leg C2's positive
+# control: after the knob flip these two MUST still be exported by
+# sqtab_init.o, so C2's 0/5 is a measured absence rather than an empty dump.
+# It is also the #128 split invariant -- the two groups are dropped by
+# DIFFERENT switches -- so a knob that took both is named here, not silent.
+#
+# ANCHORED on od65's whole quoted Name record, and tested with `< 2` rather
+# than `!= 2`, so the control fires ONLY on the disappearance it is about. A
+# bare substring counted the object PATH line ("build-.../sqtab_init.o:")
+# -- measured 3/2 -- and it also counted any ADDED name with one of these as a
+# prefix: adding `.export sqtab_init_alias` to src/sqtab_init.s reproduced the
+# same 3/2, a FAIL whose two offered explanations both require a count BELOW
+# two. `"sqtab_init"` with its closing quote is not a prefix of
+# `"sqtab_init_alias"`, so the anchored form is immune to both.
+LEGC_8X1_NAME_RECORDS = '^ *Name: *("sqtab_init"|"mul_tables_init")$$'
+
 lib-verify-guards-legc:
 	@echo "--- leg C [$(LEGC_NAME)]: §6.3 knob staleness (contract#127) — a knob"
 	@echo "    change MUST flip the artifact, and an UNCHANGED knob MUST NOT rebuild"
@@ -1394,40 +1412,540 @@ lib-verify-guards-legc:
 	@# a sibling repo.)
 	@$(MAKE) BUILD_DIR=$(LEGC_DIR) LIB_DIR=$(LEGC_DIR)/lib \
 	         CONTRACT_DEFINES="$(CONTRACT_DEFINES) $(LEGC_DEFINES)" lib >/dev/null
-	@own=$$(od65 --dump-exports $(LEGC_DIR)/lib/mul_8x8.o 2>/dev/null | \
-	        grep -cE $(LEGC_8X3_NAMES)); \
-	  test "$$own" = "5" \
-	  && echo "OK: leg C [$(LEGC_NAME)] baseline is the owner archive (5/5 §8.3 names)" \
-	  || (echo "FAIL: leg C [$(LEGC_NAME)] baseline is not the owner archive ($$own/5)" && exit 1)
+	@# Not a zero-count leg -- it expects 5, so a broken dumper fails it
+	@# loudly -- but `2>/dev/null` used to discard the reason, leaving a
+	@# reader to hunt a library defect behind a bare "0/5". Keep the
+	@# diagnostic and print it on failure (issue #133 review item 7).
+	@own=$$(od65 --dump-exports $(LEGC_DIR)/lib/mul_8x8.o 2>$(LEGC_DIR)/c-baseline.err | \
+	        grep -cE $(LEGC_8X3_NAMES) || true); \
+	 if [ "$$own" != "5" ]; then \
+	   echo "FAIL: leg C [$(LEGC_NAME)] baseline is not the owner archive ($$own/5 §8.3 names in $(LEGC_DIR)/lib/mul_8x8.o). od65 said:"; \
+	   cat $(LEGC_DIR)/c-baseline.err; exit 1; \
+	 fi; \
+	 echo "OK: leg C [$(LEGC_NAME)] baseline is the owner archive (5/5 §8.3 names)"
 	@# C1: re-invoking with the SAME knobs must do no work at all.
 	@# Counts actual ca65 invocations rather than comparing mtimes: `ls -l`
 	@# is MINUTE-granular and the object size does not change when identical
 	@# source is recompiled, so the mtime form shipped in v0.11.3 could not
 	@# see a rebuild inside the same minute and reported this leg OK against
 	@# a stamp that wiped the tree on every invocation (issue #113).
+	@# The captured output is this leg's ONLY evidence, so a count of 0 has
+	@# to be reconciled against proof the sub-make RAN AND FINISHED: an
+	@# invocation that died before its first ca65 -- or produced no output
+	@# at all -- greps to the same 0 this leg passes on (issue #133, the
+	@# class contract#194 hit too). Two controls, both from the same
+	@# capture: the sub-make's exit status, and the `lib` recipe's closing
+	@# §6.1 banner, which names $(LEGC_DIR)/lib/x25519.a and is therefore
+	@# proof that THIS sub-make, with THIS LIB_DIR, reached the recipe's end.
 	@out=$$($(MAKE) BUILD_DIR=$(LEGC_DIR) LIB_DIR=$(LEGC_DIR)/lib \
-	         CONTRACT_DEFINES="$(CONTRACT_DEFINES) $(LEGC_DEFINES)" lib 2>&1); \
+	         CONTRACT_DEFINES="$(CONTRACT_DEFINES) $(LEGC_DEFINES)" lib 2>&1); rc=$$?; \
+	 if [ "$$rc" != "0" ]; then \
+	   echo "FAIL: leg C1 [$(LEGC_NAME)] — the re-invoked sub-make (LIB_DIR=$(LEGC_DIR)/lib) exited $$rc, so its 0 ca65 invocations mean 'make did not run to completion', not 'nothing needed rebuilding'. Output was:"; \
+	   printf '%s\n' "$$out" | tail -5; exit 1; \
+	 fi; \
+	 if ! printf '%s\n' "$$out" | grep -qF '$(LEGC_DIR)/lib/x25519.a'; then \
+	   echo "FAIL: leg C1 [$(LEGC_NAME)] — positive control: the sub-make output never names $(LEGC_DIR)/lib/x25519.a, so the ca65 count was taken over output the 'lib' recipe never produced. Output was:"; \
+	   printf '%s\n' "$$out" | tail -5; exit 1; \
+	 fi; \
 	 n=$$(printf '%s\n' "$$out" | grep -c 'ca65 ' || true); \
-	 test "$$n" = "0" \
-	  && echo "OK: leg C1 [$(LEGC_NAME)] — unchanged knobs recompiled 0 TUs" \
-	  || (echo "FAIL: leg C1 [$(LEGC_NAME)] — unchanged invocation recompiled $$n TUs, expected 0; the guard is an unconditional rebuild wearing a stamp and incremental builds are gone" && exit 1)
+	 if [ "$$n" != "0" ]; then \
+	   echo "FAIL: leg C1 [$(LEGC_NAME)] — unchanged invocation recompiled $$n TUs, expected 0; the guard is an unconditional rebuild wearing a stamp and incremental builds are gone"; exit 1; \
+	 fi; \
+	 echo "OK: leg C1 [$(LEGC_NAME)] — unchanged knobs recompiled 0 TUs (sub-make exited 0 and emitted its §6.1 banner for $(LEGC_DIR)/lib/x25519.a)"
 	@# C2: a knob change must FLIP the artifact, not merely rebuild it.
 	@$(MAKE) BUILD_DIR=$(LEGC_DIR) LIB_DIR=$(LEGC_DIR)/lib \
 	         CONTRACT_DEFINES="$(CONTRACT_DEFINES) $(LEGC_DEFINES) -D SHARED_CT_MUL_8X8=1" lib >/dev/null
-	@def=$$(od65 --dump-exports $(LEGC_DIR)/lib/mul_8x8.o 2>/dev/null | \
-	        grep -cE $(LEGC_8X3_NAMES)); \
-	  test "$$def" = "0" \
-	  && echo "OK: leg C2 [$(LEGC_NAME)] — the knob change FLIPPED the artifact (0/5 §8.3 names)" \
-	  || (echo "FAIL: leg C2 [$(LEGC_NAME)] — knob ignored, stale owner archive shipped ($$def/5 §8.3 names still exported)" && exit 1)
+	@# C2's pass condition is a count of ZERO, so without reconciliation
+	@# "the five §8.3 names are gone" and "od65 said nothing" are the SAME
+	@# result: `2>/dev/null` hid the diagnostic and `grep -cE` over an empty
+	@# dump printed the 0 the leg wanted (issue #133; contract#194 is the
+	@# same class). The leg now runs two dumps.
+	@#
+	@# DUMP 1, the object under test -- mul_8x8.o. od65 must exit 0, the
+	@# dump must name the object it was asked about, it must carry od65's
+	@# OWN `Count:` record total, that total must reconcile with the `Name:`
+	@# records parsed out of it, and only then is the 0/5 believed. (One
+	@# `Count:` line per --dump-exports over one object; verified. Two would
+	@# make `decl` a two-line string and fail as a dropped-record fault
+	@# rather than a shape fault -- not reachable, recorded as an
+	@# assumption.)
+	@#
+	@# HONEST GRADING of that reconciliation on THIS dump: it is QUIESCENT.
+	@# The deferral build's mul_8x8.o has `Count: 0` and no `Name:` records,
+	@# so the comparison is 0 == 0 in every passing configuration and 5 == 5
+	@# in the failing one. Kept as insurance against a future od65 format or
+	@# a deferral member that still exports something; it is NOT evidence
+	@# today, and the OK banner does not cite it.
+	@#
+	@# DUMP 2, the POSITIVE CONTROL -- sqtab_init.o, the §8.1 member this
+	@# knob must not touch. It runs the SAME four structural checks, plus
+	@# `Count:` > 0. That is what makes "0/5" a measured absence: a real,
+	@# non-empty export record set came back from the same dumper, at the
+	@# same step, over the same build. Here the reconciliation is 2 == 2, so
+	@# it has records it can actually lose -- a TRUNCATED dump passes a name
+	@# count and fails this.
+	@#
+	@# The control is deliberately STRUCTURAL, not a name count: pinning it
+	@# to `sqtab_init` / `mul_tables_init` would import §8.1's naming as a
+	@# dependency of leg C2, which is not leg C2's subject, and a legitimate
+	@# rename or a further member split would then redden C2 with a message
+	@# whose stated causes are both false. Those names are asserted by
+	@# `lib-verify`'s symbol list, which is where that claim belongs.
+	@#
+	@# The #128 split invariant IS still asserted, separately and
+	@# one-directionally below, so the two claims fail with two different
+	@# sentences. Its own negative demonstration for all of this is
+	@# `make lib-verify-guards-legc-negative`.
+	@dump=$(LEGC_DIR)/c2-exports.txt; err=$(LEGC_DIR)/c2-exports.err; \
+	 od65 --dump-exports $(LEGC_DIR)/lib/mul_8x8.o >$$dump 2>$$err; rc=$$?; \
+	 if [ "$$rc" != "0" ]; then \
+	   echo "FAIL: leg C2 [$(LEGC_NAME)] — 'od65 --dump-exports $(LEGC_DIR)/lib/mul_8x8.o' exited $$rc; the leg examined NOTHING, and a name count over an empty dump is the same 0 this leg passes on. od65 said:"; \
+	   if [ -s $$err ]; then cat $$err; else echo "  (od65 wrote nothing to stderr)"; fi; exit 1; \
+	 fi; \
+	 if ! grep -q 'mul_8x8\.o:' $$dump; then \
+	   echo "FAIL: leg C2 [$(LEGC_NAME)] — the od65 dump does not name mul_8x8.o, so it is not a dump of $(LEGC_DIR)/lib/mul_8x8.o. Dump began:"; \
+	   head -5 $$dump; exit 1; \
+	 fi; \
+	 decl=$$(sed -n 's/^ *Count: *\([0-9][0-9]*\) *$$/\1/p' $$dump); \
+	 if [ -z "$$decl" ]; then \
+	   echo "FAIL: leg C2 [$(LEGC_NAME)] — the od65 dump of $(LEGC_DIR)/lib/mul_8x8.o carries no export record count, so a 0/5 §8.3 name count reconciles against nothing. Dump began:"; \
+	   head -5 $$dump; exit 1; \
+	 fi; \
+	 recs=$$(grep -c '^ *Name:' $$dump || true); \
+	 if [ "$$recs" != "$$decl" ]; then \
+	   echo "FAIL: leg C2 [$(LEGC_NAME)] — od65 declares $$decl export record(s) for $(LEGC_DIR)/lib/mul_8x8.o but $$recs Name: line(s) parsed; the extraction dropped records, so the 0/5 absence test is untrustworthy"; exit 1; \
+	 fi; \
+	 cdump=$(LEGC_DIR)/c2-control.txt; cerr=$(LEGC_DIR)/c2-control.err; \
+	 od65 --dump-exports $(LEGC_DIR)/lib/sqtab_init.o >$$cdump 2>$$cerr; crc=$$?; \
+	 if [ "$$crc" != "0" ]; then \
+	   echo "FAIL: leg C2 [$(LEGC_NAME)] — positive control: 'od65 --dump-exports $(LEGC_DIR)/lib/sqtab_init.o' exited $$crc, so the dumper is not working at this step and mul_8x8.o's 0/5 is not evidence of anything. od65 said:"; \
+	   if [ -s $$cerr ]; then cat $$cerr; else echo "  (od65 wrote nothing to stderr)"; fi; exit 1; \
+	 fi; \
+	 if ! grep -q 'sqtab_init\.o:' $$cdump; then \
+	   echo "FAIL: leg C2 [$(LEGC_NAME)] — positive control: the dump does not name sqtab_init.o, so it is not a dump of $(LEGC_DIR)/lib/sqtab_init.o. Dump began:"; \
+	   head -5 $$cdump; exit 1; \
+	 fi; \
+	 cdecl=$$(sed -n 's/^ *Count: *\([0-9][0-9]*\) *$$/\1/p' $$cdump); \
+	 if [ -z "$$cdecl" ] || [ "$$cdecl" -lt 1 ]; then \
+	   echo "FAIL: leg C2 [$(LEGC_NAME)] — positive control: $(LEGC_DIR)/lib/sqtab_init.o dumped $${cdecl:-no} export record(s). The dumper returned nothing non-empty at this step, so mul_8x8.o's 0/5 cannot be told apart from an empty dump. Dump began:"; \
+	   head -5 $$cdump; exit 1; \
+	 fi; \
+	 crecs=$$(grep -c '^ *Name:' $$cdump || true); \
+	 if [ "$$crecs" != "$$cdecl" ]; then \
+	   echo "FAIL: leg C2 [$(LEGC_NAME)] — positive control: od65 declares $$cdecl export record(s) for $(LEGC_DIR)/lib/sqtab_init.o but $$crecs Name: line(s) parsed; the dump is truncated or the extraction drops records, so nothing measured at this step is trustworthy"; exit 1; \
+	 fi; \
+	 ctl=$$(grep -cE $(LEGC_8X1_NAME_RECORDS) $$cdump || true); \
+	 if [ "$$ctl" -lt 2 ]; then \
+	   echo "FAIL: leg C2 [$(LEGC_NAME)] — the §8.1 group is incomplete in $(LEGC_DIR)/lib/sqtab_init.o ($$ctl of sqtab_init, mul_tables_init present in a dump of $$cdecl record(s)). SHARED_CT_MUL_8X8 took it — the #128 defect the member split fixed — or a rename/further split moved a name; check lib-verify's symbol list first"; exit 1; \
+	 fi; \
+	 def=$$(grep -cE $(LEGC_8X3_NAMES) $$dump || true); \
+	 if [ "$$def" != "0" ]; then \
+	   echo "FAIL: leg C2 [$(LEGC_NAME)] — knob ignored, stale owner archive shipped ($$def/5 §8.3 names still exported by $(LEGC_DIR)/lib/mul_8x8.o)"; exit 1; \
+	 fi; \
+	 echo "OK: leg C2 [$(LEGC_NAME)] — the knob change FLIPPED the artifact (od65 read $(LEGC_DIR)/lib/mul_8x8.o and reported 0/5 §8.3 names, against a same-step control dump of sqtab_init.o reconciling $$crecs/$$cdecl records)"
 	@# C1b: the no-rebuild property must hold AFTER a knob change too, not
 	@# only from a freshly-stamped baseline.
+	@# Same two controls as C1: a 0 here must come from a sub-make that ran
+	@# to the end of the `lib` recipe, not from output that never existed.
 	@out=$$($(MAKE) BUILD_DIR=$(LEGC_DIR) LIB_DIR=$(LEGC_DIR)/lib \
-	         CONTRACT_DEFINES="$(CONTRACT_DEFINES) $(LEGC_DEFINES) -D SHARED_CT_MUL_8X8=1" lib 2>&1); \
+	         CONTRACT_DEFINES="$(CONTRACT_DEFINES) $(LEGC_DEFINES) -D SHARED_CT_MUL_8X8=1" lib 2>&1); rc=$$?; \
+	 if [ "$$rc" != "0" ]; then \
+	   echo "FAIL: leg C1b [$(LEGC_NAME)] — the re-invoked sub-make (LIB_DIR=$(LEGC_DIR)/lib, SHARED_CT_MUL_8X8=1) exited $$rc, so its 0 ca65 invocations mean 'make did not run to completion', not 'nothing needed rebuilding'. Output was:"; \
+	   printf '%s\n' "$$out" | tail -5; exit 1; \
+	 fi; \
+	 if ! printf '%s\n' "$$out" | grep -qF '$(LEGC_DIR)/lib/x25519.a'; then \
+	   echo "FAIL: leg C1b [$(LEGC_NAME)] — positive control: the sub-make output never names $(LEGC_DIR)/lib/x25519.a, so the ca65 count was taken over output the 'lib' recipe never produced. Output was:"; \
+	   printf '%s\n' "$$out" | tail -5; exit 1; \
+	 fi; \
 	 n=$$(printf '%s\n' "$$out" | grep -c 'ca65 ' || true); \
-	 test "$$n" = "0" \
-	  && echo "OK: leg C1b [$(LEGC_NAME)] — unchanged knobs recompiled 0 TUs after a knob change" \
-	  || (echo "FAIL: leg C1b [$(LEGC_NAME)] — unchanged invocation recompiled $$n TUs after a knob change, expected 0" && exit 1)
+	 if [ "$$n" != "0" ]; then \
+	   echo "FAIL: leg C1b [$(LEGC_NAME)] — unchanged invocation recompiled $$n TUs after a knob change, expected 0"; exit 1; \
+	 fi; \
+	 echo "OK: leg C1b [$(LEGC_NAME)] — unchanged knobs recompiled 0 TUs after a knob change (sub-make exited 0 and emitted its §6.1 banner for $(LEGC_DIR)/lib/x25519.a)"
 	rm -rf $(LEGC_DIR)
+
+# --- leg C family's own negative demonstration (issue #133) ------------------
+#
+# Not owed to anyone -- SPEC §15 is retired at contract v1.0.0 -- but three
+# legs of the leg C family pass on a COUNT OF ZERO, and a step that examined
+# NOTHING counts zero too. The controls added above are only worth what a
+# demonstration of them failing is worth, so this target reproduces the defect
+# class per leg, re-runnably, in the style of `lib-verify-citations-negative`
+# and `lib-verify-footprint-negative`.
+#
+# It perturbs the STEP each leg draws its evidence from, never the assertion:
+# tools/legc_negative_shim.sh stands in for one tool, execs the real one for
+# the earlier invocations, and from a nominated invocation on misbehaves in the
+# way that arm is about (see the shim's SHIM_MODE table). Which invocation is
+# which is fixed by the leg-C recipe's own order:
+#
+#   $(MAKE) invocations   1 = baseline build, 2 = C1's count,
+#                         3 = C2's knob-change build, 4 = C1b's count
+#   od65   invocations    1 = leg C's 5/5 baseline dump, 2 = C2's dump
+#
+# `make` is selected by overriding MAKE= on the sub-make command line (the
+# Makefile calls it through $(MAKE), never by name); `od65` by a PATH prefix
+# (the Makefile calls it bare).
+#
+# The arms, because leg C2 has several failure branches worth separating and one
+# of them is the leg's ORIGINAL property rather than a #133 control:
+#
+#   C-baseline  od65, silent-fail  @1  -> leg C's own `own != 5` baseline. Not
+#                                          a zero-count leg, so it was on
+#                                          nobody's gap list; armable with the
+#                                          shim already here, so it is armed.
+#   C1          make, silent-fail  @2  -> C1's sub-make exit-status control
+#   C2-nodump   od65, silent-fail  @2  -> C2's od65 exit-status control (the
+#                                         harness from the issue itself)
+#   C2-noobject od65, substitute   @2  -> od65 handed a path that exists and is
+#                                         not an object. MEASURED: od65 prints
+#                                         "<path>: (no xo65 object file)" and
+#                                         EXITS 0, so the rc check and the
+#                                         filename grep both pass and only the
+#                                         record-count check catches it.
+#   C2-stale    make, strip-arg    @3  -> -D SHARED_CT_MUL_8X8=1 is stripped out
+#                                         of C2's build, so a stale OWNER
+#                                         archive reaches the leg. This is leg
+#                                         C2's original property and the actual
+#                                         #113/#114 defect, reproduced rather
+#                                         than simulated: the knob change does
+#                                         not reach the artifact.
+#   C1b         make, silent-fail  @4  -> C1b's sub-make exit-status control
+#   C1-nobanner  make, silent-ok   @2  -> C1's §6.1-banner control: a sub-make
+#   C1b-nobanner make, silent-ok   @4     that EXITS 0 and prints nothing passes
+#                                         the exit-status check, so only the
+#                                         banner grep stands between "compiled
+#                                         nothing" and "produced no output"
+#   C2-wrongobj od65, substitute-last @2 -> DUMP 1's "names mul_8x8.o:" check,
+#                                         via the sqtab_init.o decoy. (The
+#                                         C2-noobject decoy is itself NAMED
+#                                         mul_8x8.o, so it sails past this
+#                                         check to the -z decl branch.)
+#
+# and, because the reviewer's structural control is now the LOAD-BEARING
+# evidence in C2 -- the OK banner quotes its record reconciliation -- it is
+# armed too, on od65 invocation 3:
+#
+#   C2ctl-nodump     od65, silent-fail     @3 -> control's exit-status check
+#   C2ctl-wrongobj   od65, substitute-last @3 -> control's "names sqtab_init.o:"
+#                                                check, via a decoy named
+#                                                mul_8x8.o
+#   C2ctl-norecords  od65, substitute-last @3 -> control's Count:-present check,
+#                                                via a decoy NAMED sqtab_init.o
+#                                                that is not an object, so the
+#                                                dump names the right file and
+#                                                still carries no record count
+#   C2ctl-zeroexports od65, substitute-last @3 -> the control's `cdecl < 1`
+#                                                half, via a ca65-built object
+#                                                with ZERO exports named
+#                                                sqtab_init.o. Not an exotic
+#                                                shape: the deferral mul_8x8.o
+#                                                leg C2 judges three lines later
+#                                                is itself Count: 0.
+#   C2ctl-split      od65, substitute-last @3 -> the #128 SPLIT INVARIANT, the
+#                                                sentence deliberately separated
+#                                                from the structural control. A
+#                                                REAL object (util.s assembled)
+#                                                named sqtab_init.o passes rc,
+#                                                the name grep, Count: >= 1 and
+#                                                the 8 == 8 reconciliation, and
+#                                                lands on ctl = 0 < 2.
+#
+# NOT REACHABLE with these modes, and left as an acknowledged gap rather than
+# armed artificially: the control's `crecs != cdecl` reconciliation. Driving it
+# needs a dump whose `Count:` disagrees with its own `Name:` records, which no
+# sabotage of an existing tool produces -- it would take a mode that rewrites
+# od65's output, i.e. an arm firing for a reason other than the one it names.
+#
+# And C1/C1b's OWN property -- "an unchanged knob must not rebuild" -- is armed
+# too, so the legs' original assertions are falsified alongside the controls
+# this change added:
+#
+#   C1-rebuild   make, touch-then-exec @2 -> touches fe25519.s in a COPY of
+#   C1b-rebuild  make, touch-then-exec @4    src/, so a TU really recompiles and
+#                                            the leg's ca65 count is non-zero
+#
+# WHAT IS AND IS NOT OBSERVED. Two counts appear below and they count DIFFERENT
+# things, on opposite sides of the boundary drawn further down; neither
+# contradicts the other:
+#
+#   * 16 of 18 -- assertions the LEGS make. This paragraph. It does NOT include
+#     anything the arm asserts about itself.
+#   * 6 of 6, plus one unobserved setup guard -- assertions the ARM makes about
+#     its own sabotage. The "WHERE THE REGRESS STOPS" paragraph. These are NOT
+#     part of the 18.
+#
+# Legs C, C1, C2 and C1b make **18** assertions between them (leg C baseline 1;
+# C1 3; C2 dump 1 5, counting `def != 0`; C2 control dump 6, counting
+# `ctl < 2`; C1b 3). **16 of the 18 have been observed failing here**, one arm
+# each. Every assertion in those four legs is armed
+# EXCEPT two, both documented at their sites as insurance rather than evidence,
+# and both named here rather than generalised over:
+#
+#   1. DUMP 1's `recs != decl`. QUIESCENT by construction -- `Count: 0` in the
+#      passing configuration, 5 == 5 in the failing one -- so it has nothing to
+#      lose on today's artifact. The OK banner does not cite it.
+#   2. the control dump's `crecs != cdecl`. Reachable only by truncating od65's
+#      OUTPUT, which no arm does. Checked rather than assumed: truncating a real
+#      sqtab_init.o at seven lengths (30%-95%) gives od65 rc=1, no `Count:` and
+#      0 records every time, so a damaged OBJECT cannot produce a
+#      Count-without-records dump. Reaching it would take a mode that rewrites
+#      od65's output mid-stream -- an arm firing for a reason other than the one
+#      it names, which is worse than a named gap.
+#
+# That claim is checkable by counting the arms above against the recipe below --
+# counting CONDITIONS, not `if` statements: the control block has five `if`s but
+# six counted conditions, because `-z "$$cdecl"` and `"$$cdecl" -lt 1` share one
+# `if` and one message while failing for different reasons and being armed by
+# different arms (C2ctl-norecords and C2ctl-zeroexports). Counting sites gives
+# 17. That re-derivation is the property a generic adjective never has. An earlier revision of
+# this comment carried such an adjective -- "this target ships no check that has
+# never been observed failing" -- and it was FALSE while the two banner controls
+# were unarmed. It is deleted rather than repaired: the arm table is the claim.
+#
+# WHERE THE REGRESS STOPS, drawn deliberately rather than overlooked. THIS IS
+# THE OTHER SIDE OF THE BOUNDARY: none of what follows is counted in the 18
+# above, because the harness asserting about itself is a separate layer from
+# the legs asserting about the artifact.
+#
+# The arm's OWN six meta-assertions (exit status non-zero, the `FAIL: leg X`
+# line, NAMES, REACHED, trace line count, trace last line) have ALL been
+# observed failing IN ISOLATION -- five by the second review pass, and REACHED
+# by the third, against an arm keyed to a leg the run never reaches, where it
+# was the only one of the six to fire.
+#
+# A separate and WEAKER event, kept because it is what produced the `grep -qF`
+# now in every arm assertion: a pre-`-qF` revision made REACHED MISFIRE on a
+# correct run, `grep -q` having read `[default]` as a bracket expression. That
+# is not the same demonstration. An assertion firing red for the wrong reason
+# is no more evidence than one passing green for the wrong reason -- which is
+# this issue's whole thesis -- and the same bug tripped the NAMES and
+# `FAIL: leg X` checks in the same breath, so it isolated nothing.
+#
+# The arm's seventh check, the `command -v` setup guard, has not been observed
+# at all. And all of these observations live in transcripts, not in a
+# re-runnable leg: building a negative-negative for the harness is where this
+# stops.
+#
+# Nothing here touches the real build tree: leg C already builds only into
+# build-guards-<name>, and the shim lives in its own throwaway directory, swept
+# on BOTH the success and the failure path (a failing arm used to leave an
+# executable named `make` on disk).
+LEGC_NEG_DIR = build-guards-legc-negative
+
+# Arm defaults; each arm line below overrides what it needs.
+LEGCNEG_MODE       ?= silent-fail
+LEGCNEG_SUBSTITUTE ?=
+LEGCNEG_STRIP      ?=
+LEGCNEG_TOUCH      ?=
+LEGCNEG_SRC        ?=
+
+lib-verify-guards-legc-negative:
+	@echo "=== lib-verify-guards-legc-negative: legs C1, C2 and C1b each pass on a"
+	@echo "    COUNT OF ZERO, so each must be shown to FAIL when the step it counts"
+	@echo "    produced nothing at all -- and C2 must ALSO fail when the artifact"
+	@echo "    itself is stale, which is the defect it was built for (issue #133) ==="
+	$(MAKE) LEGCNEG_ARM=C-baseline LEGCNEG_LEG=C LEGCNEG_TOOL=od65 LEGCNEG_FAIL_AT=1 \
+	        LEGCNEG_REACHED="change MUST flip the artifact" \
+	        LEGCNEG_NAMES="baseline is not the owner archive (0/5" \
+	        LEGC_NAME=default lib-verify-guards-legc-negative-arm
+	$(MAKE) LEGCNEG_ARM=C1 LEGCNEG_LEG=C1 LEGCNEG_TOOL=make LEGCNEG_FAIL_AT=2 \
+	        LEGCNEG_REACHED="OK: leg C [default] baseline" \
+	        LEGCNEG_NAMES="LIB_DIR=build-guards-default/lib" \
+	        LEGC_NAME=default lib-verify-guards-legc-negative-arm
+	@# The expected string must DISCRIMINATE: a bare object path appears in
+	@# every failure message of its dump block, so an arm keyed on one passes
+	@# while a different branch fires. Measured by the second review pass on
+	@# this very arm. Key on the branch's own words instead.
+	$(MAKE) LEGCNEG_ARM=C2-nodump LEGCNEG_LEG=C2 LEGCNEG_TOOL=od65 LEGCNEG_FAIL_AT=2 \
+	        LEGCNEG_REACHED="OK: leg C1 [default]" \
+	        LEGCNEG_NAMES="the leg examined NOTHING" \
+	        LEGC_NAME=default lib-verify-guards-legc-negative-arm
+	$(MAKE) LEGCNEG_ARM=C2-noobject LEGCNEG_LEG=C2 LEGCNEG_TOOL=od65 LEGCNEG_FAIL_AT=2 \
+	        LEGCNEG_MODE=substitute-last \
+	        LEGCNEG_SUBSTITUTE=$(CURDIR)/$(LEGC_NEG_DIR)/decoy/mul_8x8.o \
+	        LEGCNEG_REACHED="OK: leg C1 [default]" \
+	        LEGCNEG_NAMES="carries no export record count" \
+	        LEGC_NAME=default lib-verify-guards-legc-negative-arm
+	$(MAKE) LEGCNEG_ARM=C2-wrongobj LEGCNEG_LEG=C2 LEGCNEG_TOOL=od65 LEGCNEG_FAIL_AT=2 \
+	        LEGCNEG_MODE=substitute-last \
+	        LEGCNEG_SUBSTITUTE=$(CURDIR)/$(LEGC_NEG_DIR)/decoy/sqtab_init.o \
+	        LEGCNEG_REACHED="OK: leg C1 [default]" \
+	        LEGCNEG_NAMES="the od65 dump does not name mul_8x8.o" \
+	        LEGC_NAME=default lib-verify-guards-legc-negative-arm
+	$(MAKE) LEGCNEG_ARM=C2-stale LEGCNEG_LEG=C2 LEGCNEG_TOOL=make LEGCNEG_FAIL_AT=3 \
+	        LEGCNEG_MODE=strip-arg \
+	        LEGCNEG_STRIP="-D SHARED_CT_MUL_8X8=1" \
+	        LEGCNEG_REACHED="OK: leg C1 [default]" \
+	        LEGCNEG_NAMES="stale owner archive shipped (5/5" \
+	        LEGC_NAME=default lib-verify-guards-legc-negative-arm
+	$(MAKE) LEGCNEG_ARM=C2ctl-nodump LEGCNEG_LEG=C2 LEGCNEG_TOOL=od65 LEGCNEG_FAIL_AT=3 \
+	        LEGCNEG_REACHED="OK: leg C1 [default]" \
+	        LEGCNEG_NAMES="so the dumper is not working at this step" \
+	        LEGC_NAME=default lib-verify-guards-legc-negative-arm
+	$(MAKE) LEGCNEG_ARM=C2ctl-wrongobj LEGCNEG_LEG=C2 LEGCNEG_TOOL=od65 LEGCNEG_FAIL_AT=3 \
+	        LEGCNEG_MODE=substitute-last \
+	        LEGCNEG_SUBSTITUTE=$(CURDIR)/$(LEGC_NEG_DIR)/decoy/mul_8x8.o \
+	        LEGCNEG_REACHED="OK: leg C1 [default]" \
+	        LEGCNEG_NAMES="the dump does not name sqtab_init.o" \
+	        LEGC_NAME=default lib-verify-guards-legc-negative-arm
+	$(MAKE) LEGCNEG_ARM=C2ctl-norecords LEGCNEG_LEG=C2 LEGCNEG_TOOL=od65 LEGCNEG_FAIL_AT=3 \
+	        LEGCNEG_MODE=substitute-last \
+	        LEGCNEG_SUBSTITUTE=$(CURDIR)/$(LEGC_NEG_DIR)/decoy/sqtab_init.o \
+	        LEGCNEG_REACHED="OK: leg C1 [default]" \
+	        LEGCNEG_NAMES="dumped no export record(s)" \
+	        LEGC_NAME=default lib-verify-guards-legc-negative-arm
+	$(MAKE) LEGCNEG_ARM=C2ctl-zeroexports LEGCNEG_LEG=C2 LEGCNEG_TOOL=od65 LEGCNEG_FAIL_AT=3 \
+	        LEGCNEG_MODE=substitute-last \
+	        LEGCNEG_SUBSTITUTE=$(CURDIR)/$(LEGC_NEG_DIR)/emptydecoy/sqtab_init.o \
+	        LEGCNEG_REACHED="OK: leg C1 [default]" \
+	        LEGCNEG_NAMES="dumped 0 export record(s)" \
+	        LEGC_NAME=default lib-verify-guards-legc-negative-arm
+	$(MAKE) LEGCNEG_ARM=C2ctl-split LEGCNEG_LEG=C2 LEGCNEG_TOOL=od65 LEGCNEG_FAIL_AT=3 \
+	        LEGCNEG_MODE=substitute-last \
+	        LEGCNEG_SUBSTITUTE=$(CURDIR)/$(LEGC_NEG_DIR)/realdecoy/sqtab_init.o \
+	        LEGCNEG_REACHED="OK: leg C1 [default]" \
+	        LEGCNEG_NAMES="the §8.1 group is incomplete in" \
+	        LEGC_NAME=default lib-verify-guards-legc-negative-arm
+	$(MAKE) LEGCNEG_ARM=C1-nobanner LEGCNEG_LEG=C1 LEGCNEG_TOOL=make LEGCNEG_FAIL_AT=2 \
+	        LEGCNEG_MODE=silent-ok \
+	        LEGCNEG_REACHED="OK: leg C [default] baseline" \
+	        LEGCNEG_NAMES="never names build-guards-default/lib/x25519.a" \
+	        LEGC_NAME=default lib-verify-guards-legc-negative-arm
+	$(MAKE) LEGCNEG_ARM=C1b-nobanner LEGCNEG_LEG=C1b LEGCNEG_TOOL=make LEGCNEG_FAIL_AT=4 \
+	        LEGCNEG_MODE=silent-ok \
+	        LEGCNEG_REACHED="OK: leg C2 [default]" \
+	        LEGCNEG_NAMES="never names build-guards-default/lib/x25519.a" \
+	        LEGC_NAME=default lib-verify-guards-legc-negative-arm
+	$(MAKE) LEGCNEG_ARM=C1b LEGCNEG_LEG=C1b LEGCNEG_TOOL=make LEGCNEG_FAIL_AT=4 \
+	        LEGCNEG_REACHED="OK: leg C2 [default]" \
+	        LEGCNEG_NAMES="LIB_DIR=build-guards-default/lib" \
+	        LEGC_NAME=default lib-verify-guards-legc-negative-arm
+	$(MAKE) LEGCNEG_ARM=C1-rebuild LEGCNEG_LEG=C1 LEGCNEG_TOOL=make LEGCNEG_FAIL_AT=2 \
+	        LEGCNEG_MODE=touch-then-exec \
+	        LEGCNEG_TOUCH=$(CURDIR)/$(LEGC_NEG_DIR)/src/fe25519.s \
+	        LEGCNEG_SRC=SRC_DIR=$(CURDIR)/$(LEGC_NEG_DIR)/src \
+	        LEGCNEG_REACHED="OK: leg C [default] baseline" \
+	        LEGCNEG_NAMES="recompiled 1 TUs, expected 0" \
+	        LEGC_NAME=default lib-verify-guards-legc-negative-arm
+	$(MAKE) LEGCNEG_ARM=C1b-rebuild LEGCNEG_LEG=C1b LEGCNEG_TOOL=make LEGCNEG_FAIL_AT=4 \
+	        LEGCNEG_MODE=touch-then-exec \
+	        LEGCNEG_TOUCH=$(CURDIR)/$(LEGC_NEG_DIR)/src/fe25519.s \
+	        LEGCNEG_SRC=SRC_DIR=$(CURDIR)/$(LEGC_NEG_DIR)/src \
+	        LEGCNEG_REACHED="OK: leg C2 [default]" \
+	        LEGCNEG_NAMES="recompiled 1 TUs after a knob change, expected 0" \
+	        LEGC_NAME=default lib-verify-guards-legc-negative-arm
+	@echo "--- GREEN: with no sabotage the whole target must still pass, in BOTH"
+	@echo "    profiles leg C runs for"
+	$(MAKE) LEGC_NAME=default lib-verify-guards-legc
+	$(MAKE) LEGC_NAME=onchip  lib-verify-guards-legc
+	@echo "OK: every assertion in legs C, C1, C2 and C1b has been observed"
+	@echo "    FAILING except two, each named in the comment above this target"
+	@echo "    and documented at its site as insurance rather than evidence:"
+	@echo "    dump 1's record reconciliation (quiescent — Count: 0 in the"
+	@echo "    passing configuration) and the control dump's (reachable only by"
+	@echo "    truncating od65's output, which no arm does). 16 of 18, one arm"
+	@echo "    each. The unsabotaged target passes for default and onchip."
+
+lib-verify-guards-legc-negative-arm:
+	@# HARD GUARD, and it runs before anything is deleted. This arm is
+	@# default-profile only by construction -- it sweeps build-guards-default
+	@# and greps for "[default]" literals -- but it is a public .PHONY target
+	@# a reader can invoke directly, where another profile would delete the
+	@# DEFAULT tree and then assert against lines that never appear. The
+	@# parent passes LEGC_NAME=default on each arm's own command line, which
+	@# wins over an inherited one, so `make LEGC_NAME=onchip
+	@# lib-verify-guards-legc-negative` still runs the arms correctly.
+	@if [ "$(LEGC_NAME)" != "default" ]; then \
+	   echo "FAIL: lib-verify-guards-legc-negative-arm is DEFAULT-PROFILE ONLY, got LEGC_NAME=$(LEGC_NAME). It sweeps build-guards-default and greps for '[default]' literals, so this profile would delete the DEFAULT tree and assert against lines that never appear. Run 'make lib-verify-guards-legc-negative' instead — the defect class is profile-independent, and that target's GREEN half is what covers both profiles."; \
+	   exit 1; \
+	 fi
+	@echo "--- arm [$(LEGCNEG_ARM)]: '$(LEGCNEG_TOOL)' misbehaves ($(LEGCNEG_MODE)) from"
+	@echo "    invocation $(LEGCNEG_FAIL_AT) on; leg $(LEGCNEG_LEG) must FAIL and name '$(LEGCNEG_NAMES)'"
+	rm -rf $(LEGC_NEG_DIR) build-guards-default
+	mkdir -p $(LEGC_NEG_DIR)/bin $(LEGC_NEG_DIR)/decoy
+	cp tools/legc_negative_shim.sh $(LEGC_NEG_DIR)/bin/$(LEGCNEG_TOOL)
+	chmod +x $(LEGC_NEG_DIR)/bin/$(LEGCNEG_TOOL)
+	@# Files that EXIST, are named like the objects under test, and are not
+	@# xo65 objects. Only the substitute-last arms read them: the mul_8x8.o
+	@# decoy makes a dump that names the WRONG object, the sqtab_init.o one
+	@# makes a dump that names the RIGHT object and still has no record count.
+	@echo "not an xo65 object file" > $(LEGC_NEG_DIR)/decoy/mul_8x8.o
+	@echo "not an xo65 object file" > $(LEGC_NEG_DIR)/decoy/sqtab_init.o
+	@# And a REAL xo65 object under the name sqtab_init.o, for the arm that
+	@# must pass every structural check and fail only the #128 invariant.
+	@# util.s is the standalone module here; assembled, it exports 8 names,
+	@# none of them §8.1.
+	@mkdir -p $(LEGC_NEG_DIR)/realdecoy
+	@$(CA65) -I $(SRC_DIR) -o $(LEGC_NEG_DIR)/realdecoy/sqtab_init.o $(SRC_DIR)/util.s
+	@# And a real object with ZERO exports, for the `cdecl < 1` branch. This
+	@# shape is not exotic -- the deferral mul_8x8.o leg C2 judges three lines
+	@# later is itself `Count: 0` -- it just has to arrive under the name
+	@# sqtab_init.o, which one ca65 invocation provides.
+	@mkdir -p $(LEGC_NEG_DIR)/emptydecoy
+	@printf '.setcpu "6502"\n.segment "CODE"\n        nop\n' > $(LEGC_NEG_DIR)/emptydecoy/empty.s
+	@$(CA65) -o $(LEGC_NEG_DIR)/emptydecoy/sqtab_init.o $(LEGC_NEG_DIR)/emptydecoy/empty.s
+	@# The touch-then-exec arms make a TU newer than the objects. They do it
+	@# in a COPY of src/ -- the real tree's mtimes are never touched.
+	@if [ -n "$(LEGCNEG_TOUCH)" ]; then \
+	   mkdir -p $(LEGC_NEG_DIR)/src && cp -R $(SRC_DIR)/. $(LEGC_NEG_DIR)/src/; \
+	 fi
+	@# `command -v` runs BEFORE the shim directory is on PATH, so it always
+	@# resolves the real tool. For the make arms that need not be the same
+	@# binary $(MAKE) would otherwise name (here /usr/bin/make vs Xcode's;
+	@# both GNU Make 3.81) -- the shim only has to BE a working make.
+	@#
+	@# $$ovr is expanded UNQUOTED on purpose: it is empty for the od65 arms
+	@# and must vanish rather than become an empty argument. The cost is that
+	@# a CURDIR containing a space would split it and stop the sabotage --
+	@# which the assertions below then catch, loudly.
+	@#
+	@# This arm is DEFAULT-PROFILE ONLY by construction: it sweeps
+	@# build-guards-default and greps for "[default]" literals. The defect
+	@# class is profile-independent (same recipe, LEGC_DIR substituted), so
+	@# one profile is the demonstration; the GREEN half of the parent target
+	@# is what runs both. Do not invoke this arm with LEGC_NAME=onchip.
+	@real=$$(command -v $(LEGCNEG_TOOL)); \
+	 if [ -z "$$real" ]; then \
+	   echo "FAIL: arm [$(LEGCNEG_ARM)] cannot locate the real $(LEGCNEG_TOOL); the arm would prove nothing"; exit 1; \
+	 fi; \
+	 if [ "$(LEGCNEG_TOOL)" = "make" ]; then ovr="MAKE=$(CURDIR)/$(LEGC_NEG_DIR)/bin/make"; else ovr=""; fi; \
+	 trace=$(CURDIR)/$(LEGC_NEG_DIR)/trace; \
+	 out=$$(env SHIM_REAL="$$real" SHIM_FAIL_AT=$(LEGCNEG_FAIL_AT) \
+	            SHIM_MODE=$(LEGCNEG_MODE) \
+	            SHIM_SUBSTITUTE="$(LEGCNEG_SUBSTITUTE)" \
+	            SHIM_STRIP="$(LEGCNEG_STRIP)" \
+	            SHIM_TOUCH="$(LEGCNEG_TOUCH)" \
+	            SHIM_COUNT_FILE=$(CURDIR)/$(LEGC_NEG_DIR)/count \
+	            SHIM_TRACE_FILE="$$trace" \
+	            PATH="$(CURDIR)/$(LEGC_NEG_DIR)/bin:$$PATH" \
+	            $(MAKE) LEGC_NAME=default $$ovr $(LEGCNEG_SRC) lib-verify-guards-legc 2>&1); rc=$$?; \
+	 fail=0; \
+	 printf '%s\n' "$$out" | sed 's/^/    /'; \
+	 echo "    [shim trace]"; sed 's/^/      /' "$$trace" 2>&1; \
+	 echo "    [make exit status] $$rc"; \
+	 if [ "$$rc" = "0" ]; then \
+	   echo "FAIL: arm [$(LEGCNEG_ARM)] — the sabotaged target EXITED 0; leg $(LEGCNEG_LEG) still passes when its evidence was never produced"; fail=1; \
+	 fi; \
+	 if ! printf '%s\n' "$$out" | grep -qF "FAIL: leg $(LEGCNEG_LEG) [default]"; then \
+	   echo "FAIL: arm [$(LEGCNEG_ARM)] — no 'FAIL: leg $(LEGCNEG_LEG) [default]' line; the target failed somewhere else, so this arm did not demonstrate leg $(LEGCNEG_LEG)"; fail=1; \
+	 fi; \
+	 if ! printf '%s\n' "$$out" | grep -qF "$(LEGCNEG_NAMES)"; then \
+	   echo "FAIL: arm [$(LEGCNEG_ARM)] — the failure text does not contain '$(LEGCNEG_NAMES)'; a leg that cannot say WHAT it could not trust is not actionable"; fail=1; \
+	 fi; \
+	 if ! printf '%s\n' "$$out" | grep -qF "$(LEGCNEG_REACHED)"; then \
+	   echo "FAIL: arm [$(LEGCNEG_ARM)] — '$(LEGCNEG_REACHED)' never appeared, so the run never reached leg $(LEGCNEG_LEG); the arm proves nothing about it"; fail=1; \
+	 fi; \
+	 tl=$$(wc -l < "$$trace" 2>/dev/null | tr -d ' '); \
+	 if [ "$$tl" != "$(LEGCNEG_FAIL_AT)" ]; then \
+	   echo "FAIL: arm [$(LEGCNEG_ARM)] — the shim trace holds $${tl:-no} line(s), expected exactly $(LEGCNEG_FAIL_AT); the sabotage did not land where this arm says it did, so leg $(LEGCNEG_LEG) failed for some other reason"; fail=1; \
+	 fi; \
+	 if ! tail -1 "$$trace" 2>/dev/null | grep -qF "$(LEGCNEG_TOOL) invocation $(LEGCNEG_FAIL_AT):"; then \
+	   echo "FAIL: arm [$(LEGCNEG_ARM)] — the last shim trace line is not '$(LEGCNEG_TOOL) invocation $(LEGCNEG_FAIL_AT)'; the sabotaged invocation is not the one this arm names"; fail=1; \
+	 fi; \
+	 rm -rf $(LEGC_NEG_DIR) build-guards-default; \
+	 test "$$fail" = "0" || exit 1; \
+	 echo "OK: arm [$(LEGCNEG_ARM)] — leg $(LEGCNEG_LEG) FAILS (make exit $$rc) and names '$(LEGCNEG_NAMES)', after the earlier legs passed and with the sabotage landing on $(LEGCNEG_TOOL) invocation $(LEGCNEG_FAIL_AT)"
 
 # --- §6.3 app-owned variant (contract SPEC v0.9.0) ---------------------------
 #
