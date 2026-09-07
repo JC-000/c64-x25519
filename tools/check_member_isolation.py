@@ -187,6 +187,17 @@ def main():
         "evidence of isolation, it is evidence of an empty dump.",
     )
     ap.add_argument(
+        "--expect-bare-version",
+        type=int,
+        default=4,
+        help="how many bare version exports (LIB_VERSION_MAJOR/MINOR/PATCH, "
+        "LIB_ABI_VERSION) the archive must export. 4 in a normal build; 0 in a "
+        "-D LIB_NO_BARE_EXPORTS=1 build, where src/lib_version.s suppresses "
+        "them. A 0 here asserts nothing on its own -- the archive being "
+        "non-empty and still exporting the PREFIXED forms is asserted by "
+        "`make lib-nobare`, which is what keeps the 0 from being vacuous.",
+    )
+    ap.add_argument(
         "--unsafe-extract",
         action="store_true",
         help="negative leg: re-run using the awk-equivalent extraction that "
@@ -284,11 +295,12 @@ def main():
                 f"the extraction is dropping names, in which case the isolation "
                 f"result above means nothing."
             )
-    if total_bare_version != 4:
+    if total_bare_version != args.expect_bare_version:
         failures.append(
-            f"sentinel: expected the 4 bare version exports "
-            f"(LIB_VERSION_MAJOR/MINOR/PATCH, LIB_ABI_VERSION), found "
-            f"{total_bare_version}. §1 requires them until a future MAJOR."
+            f"sentinel: expected {args.expect_bare_version} bare version "
+            f"export(s) (LIB_VERSION_MAJOR/MINOR/PATCH, LIB_ABI_VERSION), found "
+            f"{total_bare_version}. §1 requires them until a future MAJOR, "
+            f"except under -D LIB_NO_BARE_EXPORTS=1 (--expect-bare-version 0)."
         )
 
     if failures:

@@ -1,7 +1,8 @@
 build/
 # One per profile target's BUILD_DIR; keep in sync with the Makefile's
 # `rm -rf` list (lib-x25519-1764, lib-x25519-onchip, lib-app-owned,
-# lib-verify-guards, lib-verify-shared, lib-verify-guards-legc-negative).
+# lib-verify-guards, lib-verify-shared, lib-verify-guards-legc-negative,
+# lib-nobare, lib-nobare-negative).
 build-1764/
 build-onchip/
 build-app-owned/
@@ -15,6 +16,9 @@ build-fp-default/
 build-fp-onchip/
 build-neg/
 build-neg-artifact/
+build-nobare/
+build-nobare-neg/
+build-nobare-neg-b/
 __pycache__/
 *.pyc
 .DS_Store
