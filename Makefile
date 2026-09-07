@@ -2203,6 +2203,17 @@ NOBARE_PRESENT_SYMS_COMMON = \
 NOBARE_PRESENT_SYMS_REU     = LIB_X25519_PRECALC_reu_mul_SIZE
 NOBARE_PRESENT_SYMS_DOUBLED = LIB_X25519_PRECALC_reu_mul_doubled_SIZE
 
+# Why an `else` fallback is safe here, since it is the branch that would hide
+# a mistake: an unknown or empty X25519_PROFILE never reaches this chain — it
+# dies earlier at the parse-time $(error) that validates the value. That
+# matters specifically because the fallback is `else` and not
+# `ifeq (…,default)`: an unmatched value would otherwise select the WIDEST
+# rosters and read as a stricter check rather than a broken one. All seven
+# valid values are classified deliberately, and the four `shared-*` ones land
+# in `else` with the full default rosters ON PURPOSE — those switches defer
+# CODE to a provider, they do not drop §8.4 tables, so the archive still
+# enumerates sqtab, reu_mul and reu_mul_doubled. Measured: shared-all grades
+# 13 absent / 7 present over 109 export names, green.
 ifeq ($(X25519_PROFILE),onchip)
 NOBARE_ABSENT_SYMS  = $(NOBARE_ABSENT_SYMS_COMMON)
 NOBARE_PRESENT_SYMS = $(NOBARE_PRESENT_SYMS_COMMON)
@@ -2308,6 +2319,12 @@ nobare-check:
 	 if [ "$$nex" != "$$declared" ]; then \
 	   echo "FAIL: nobare [$(NOBARE_CHECK_MODE)] — extraction read $$nex export name(s) out of $$lib but od65 declares $$declared across its $$nmem member(s); the reader is dropping names (the od65 length-24 Name: padding trap), so every absence test below is untrustworthy"; exit 1; \
 	 fi; \
+	 if [ -z "$(strip $(NOBARE_PRESENT_SYMS))" ]; then \
+	   echo "FAIL: nobare [$(NOBARE_CHECK_MODE)] — the PRESENT roster (NOBARE_PRESENT_SYMS) expanded EMPTY for X25519_PROFILE=$(X25519_PROFILE); with no name to look for, the positive half asserts nothing and this check would print success. The usual cause is a misspelled group variable — an undefined \$$(NOBARE_PRESENT_SYMS_COMMMON) expands to nothing and make says nothing"; exit 1; \
+	 fi; \
+	 if [ -z "$(strip $(NOBARE_ABSENT_SYMS))" ]; then \
+	   echo "FAIL: nobare [$(NOBARE_CHECK_MODE)] — the ABSENT roster (NOBARE_ABSENT_SYMS) expanded EMPTY for X25519_PROFILE=$(X25519_PROFILE); with no name to look for, the suppression half asserts nothing and this check would print success. The usual cause is a misspelled group variable — an undefined \$$(NOBARE_ABSENT_SYMS_COMMMON) expands to nothing and make says nothing"; exit 1; \
+	 fi; \
 	 for sym in $(NOBARE_PRESENT_SYMS); do \
 	   if ! printf '%s\n' "$$ex" | awk -v s="$$sym" '$$2 == s { found = 1 } END { exit !found }'; then \
 	     echo "FAIL: nobare [$(NOBARE_CHECK_MODE)] — prefixed export $$sym is NOT exported by any member of $$lib; the gate removed a name it must keep, and a composing consumer meets it as an ld65 unresolved external"; fail=1; \
@@ -2341,9 +2358,14 @@ lib-nobare:
 	        CONTRACT_DEFINES="$(CONTRACT_DEFINES) -D LIB_NO_BARE_EXPORTS=1" \
 	        X25519_PROFILE=$(X25519_PROFILE) \
 	        lib lib-verify
-	@# X25519_PROFILE passed explicitly, not left to MAKEFLAGS: the profile
-	@# selects which §8.4 tables the archive enumerates, so a check run under
-	@# a different profile than the build grades the wrong expectation set.
+	@# X25519_PROFILE passed explicitly. BELT-AND-BRACES, not a repair of an
+	@# observed defect: a command-line value already propagates to sub-makes
+	@# through MAKEFLAGS, and an environment value survives because the
+	@# assignment is `?=`. No case was constructed where the implicit form
+	@# graded under a different profile than the build. It is spelled out
+	@# because the consequence if it ever did — grading the archive against
+	@# another profile's §8.4 roster — is silent and would look like a real
+	@# export regression.
 	$(MAKE) NOBARE_CHECK_DIR=$(NOBARE_DIR) NOBARE_CHECK_MODE=LIB_NO_BARE_EXPORTS=1 \
 	        X25519_PROFILE=$(X25519_PROFILE) \
 	        nobare-check
@@ -2441,9 +2463,30 @@ lib-nobare-negative:
 	   || { echo "FAIL: arm C — the check failed, but not with the reconciliation diagnostic:"; printf '%s\n' "$$out" | grep '^FAIL' | head -3; fail=1; }; \
 	 printf '%s\n' "$$out" | grep -qE "extraction read [0-9]+ export name\(s\) .* but od65 declares [0-9]+" \
 	   || { echo "FAIL: arm C — the diagnostic did not report both counts:"; printf '%s\n' "$$out" | grep '^FAIL' | head -3; fail=1; }; \
+	 test "$$fail" = "0" || { rm -rf $(NOBARE_NEG_DIR); exit 1; }; \
+	 echo "OK: arm C — a name-dropping reader is caught by the Count reconciliation (exit $$rc) and reports both counts"
+	@echo "--- arm D: an EMPTY symbol roster must be a hard failure. Unreachable"
+	@echo "    today (every branch includes the _COMMON group), but a misspelled"
+	@echo "    group variable expands to nothing in silence, and a check with"
+	@echo "    nothing to look for prints success — the roster-side form of the"
+	@echo "    very hazard this target was built for."
+	@fail=0; \
+	 for roster in NOBARE_ABSENT_SYMS NOBARE_PRESENT_SYMS; do \
+	   out=$$($(MAKE) NOBARE_CHECK_DIR=$(NOBARE_NEG_DIR) \
+	          X25519_PROFILE=$(X25519_PROFILE) $$roster= nobare-check 2>&1); rc=$$?; \
+	   if [ $$rc -eq 0 ]; then \
+	     echo "FAIL: arm D — the check exited 0 with $$roster emptied; the roster guard is inert"; fail=1; \
+	   fi; \
+	   printf '%s\n' "$$out" | grep -q "roster ($$roster) expanded EMPTY" \
+	     || { echo "FAIL: arm D — the check failed, but did not name $$roster as the empty roster:"; printf '%s\n' "$$out" | grep '^FAIL' | head -3; fail=1; }; \
+	   printf '%s\n' "$$out" | grep -q "^OK: nobare" \
+	     && { echo "FAIL: arm D — the check reported success with $$roster emptied"; fail=1; }; \
+	   printf '%s\n' "$$out" | grep -qE "deprecated bare export|prefixed export .* is NOT exported" \
+	     && { echo "FAIL: arm D — the symbol tests ran with $$roster emptied; the guard must stop the check before them"; fail=1; }; \
+	 done; \
 	 rm -rf $(NOBARE_NEG_DIR); \
 	 test "$$fail" = "0" || exit 1; \
-	 echo "OK: arm C — a name-dropping reader is caught by the Count reconciliation (exit $$rc) and reports both counts"
+	 echo "OK: arm D — either roster expanding empty is a hard failure, named by roster, and the symbol tests are never reached"
 
 # --- Performance history tracking --------------------------------------------
 #
