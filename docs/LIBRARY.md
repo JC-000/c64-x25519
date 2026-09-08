@@ -149,6 +149,8 @@ and a linker-config fragment:
 make lib                # produces build/lib/
 make lib-verify         # smoke-tests the archive links against a stub
 make lib-verify-shared  # same, for the four §8.x SHARED_* deferral builds
+make lib-verify-app-owned-header  # x25519.inc must be includable by a TU
+                        #   that OWNS a §8.x primitive (SPEC §8.0 APP_OWNED)
 ```
 
 `make lib` produces `build/lib/`:
@@ -467,9 +469,17 @@ When a multi-lib PRG wants exactly one of the linked libraries to own
 the table-build, pass `-D SHARED_SQTAB_INIT=1` to every c64-x25519
 translation unit at build time. With that define set:
 
-- c64-x25519's `sqtab_init` / `mul_tables_init` body collapses to an
-  immediate `rts`. The public symbol still resolves, so existing
-  callers don't break.
+- c64-x25519's `sqtab_init` / `mul_tables_init` body is dropped, and
+  `sqtab_init.o` exports **nothing at all** — it `.import`s the
+  provider's `mul_tables_init` instead. This is SPEC v0.9.0's
+  import-never-stub rule: a deferring build must not export a stub,
+  because two exported canonical inits in one composed link is a defect,
+  and x25519's old `rts` stub was the clause's measured example. So a
+  caller that says `jsr sqtab_init` in a deferral build gets
+  `Error: Symbol 'sqtab_init' is undefined` — use the canonical
+  `mul_tables_init`, which resolves against the provider. (Measured with
+  `od65 --dump-exports`: 0 exports under the switch, `mul_tables_init` +
+  `sqtab_init` without it.)
 - The host program is responsible for calling some other library's
   `mul_tables_init` (e.g., c64-https's canonical implementation)
   before any c64-x25519 field op runs.
@@ -477,6 +487,88 @@ translation unit at build time. With that define set:
 Standalone builds (no `-D SHARED_SQTAB_INIT`) build the table
 themselves, as before. **This is the default**; nothing changes for a
 single-lib consumer.
+
+### §8.x canonical names and `x25519.inc` (#130)
+
+The four canonical §8.x names are declared with **`.global`**, not
+`.import`:
+
+| name | declared as | §8.x clause |
+|---|---|---|
+| `mul_tables_init` | `.global` | §8.1 |
+| `reu_mul_tables_init` | `.global` | §8.2 |
+| `reu_fetch_mul_row_bank_patch` | `.global` | §8.2 (fetch half) |
+| `ct_mul_8x8` | `.global` | §8.3 |
+
+The reason is that a deferral switch does not say *who* provides the
+primitive. SPEC §8.0 allows either a sibling adopter or the consumer's
+own TU (`APP_OWNED`), and `make lib-app-owned` spells both with the same
+`SHARED_*` defines — so no gate on those switches can serve both, and an
+`.import` serves only one:
+
+- **You own the primitive** (your own TU defines `ct_mul_8x8` and
+  friends). `.global` becomes an **export** record, and you can
+  `.include "x25519.inc"` in that same TU. Until #130 was fixed you could
+  not: ca65 refuses to import a name the current TU exports, so the
+  include died with `Cannot import exported symbol 'ct_mul_8x8'` and the
+  only workaround was to give up the entire public API surface.
+- **You defer to a sibling library** and only *call* the name. `.global`
+  becomes an **import** record, exactly as the old `.import` did, and
+  resolves against the provider. Nothing changes for you.
+- **You neither define nor reference it.** `.global` emits no record at
+  all, so it adds no phantom dependency.
+
+`make lib-verify-app-owned-header` covers the first case (one arm per
+ownership group); `make lib-verify-shared` covers the second.
+
+The **back-compat aliases** beside them — `sqtab_init`, `reu_mul_init`,
+`mul_8x8` — remain gated `.import`s, unchanged. They are x25519-own names
+that a deferral build genuinely does not export and that no consumer
+defines, so referencing one in a deferral build is still
+`Symbol 'sqtab_init' is undefined`; use the canonical name.
+
+**One behaviour change to know about.** If you define a canonical name
+and *forget* the matching `-D SHARED_*`, the collision with the archive's
+own body is now reported by ld65 rather than ca65:
+
+```
+ld65: Error: Duplicate external identifier: 'ct_mul_8x8'
+```
+
+It was `ca65: Error: Symbol 'ct_mul_8x8' is already an import` before.
+Same defect, one stage later. The same applies if you use one of the four
+names as a *private* label: `.global` promotes it to an export.
+
+Beside each `.global` sits an `.ifdef SHARED_* … .endif` block
+cross-checking the switch against the archive's §8.0 ownership mask, so
+building the header for a deferral the archive did not actually defer is
+a named `lderror`:
+
+```
+ld65: Error: src/x25519.inc(<line>): SHARED_CT_MUL_8X8 was defined for
+this header, but the archive it links against still owns the 8.3 primitive
+```
+
+**That is not always the first diagnostic.** Measured against an owner
+archive, one row per clause:
+
+| clause | you *define* the name | you only *call* it |
+|---|---|---|
+| §8.1 `mul_tables_init` | named `lderror` | named `lderror` |
+| §8.2 `reu_mul_tables_init` | `Duplicate external identifier` | named `lderror` |
+| §8.3 `ct_mul_8x8` | `Duplicate external identifier` | named `lderror` |
+
+The two duplicates are not a hole in the check. An `APP_OWNED` consumer
+pulls `x25519_init.o` regardless — `reu_clear_wide` is on the field-op
+path — and that member exports `reu_mul_tables_init` and imports
+`ct_mul_8x8`, so both members are in the link carrying the names you just
+defined, and ld65 reports the collision before evaluating asserts.
+`sqtab_init.o` is pulled only by the §8.1 names themselves, which is why
+that row wins both ways. The mismatch is caught in every cell; only the
+wording differs.
+
+`SHARED_REU_MUL_FETCH` has no mask check: §8.0's mask carries no bit for
+the fetch half, so there is no archive-side value to disagree with.
 
 ### `LIB_X25519_SHARED_PRIMITIVES` manifest
 
@@ -841,15 +933,20 @@ Rules:
    shared-primitive surface in any profile.
 4. Deferral builds (`SHARED_SQTAB_INIT` and/or `SHARED_REU_MUL_INIT`)
    shrink or empty the segment; `optional = yes` keeps such links
-   working. Gate asymmetry to know: under `SHARED_SQTAB_INIT` the
-   library still exports `sqtab_init`/`mul_tables_init` as an `rts`
-   stub, but under `SHARED_REU_MUL_INIT` the `reu_mul_init`/
-   `reu_mul_tables_init` exports are gated out entirely — your
+   working. The two switches behave the SAME way on exports, and any
+   claim of an asymmetry here is stale: since SPEC v0.9.0's
+   import-never-stub rule, a deferring build exports nothing of the
+   deferred group under either switch. Under `SHARED_SQTAB_INIT`,
+   `sqtab_init.o` exports nothing and imports the provider's
+   `mul_tables_init`; under `SHARED_REU_MUL_INIT` the `reu_mul_init` /
+   `reu_mul_tables_init` exports are likewise gated out entirely, along
+   with the `LIB_SHARED_REU_MUL_ZP_INIT_A/B` alias equates, and your
    shared-primitives module provides the canonical
-   `reu_mul_tables_init` (and the `LIB_SHARED_REU_MUL_ZP_INIT_A/B`
-   equates, which the deferral build no longer exports) instead, per
-   §4.8; the x25519-private `reu_mul_init` name is not part of the
-   deferral surface at all. `make lib-verify-shared` proves each
+   `reu_mul_tables_init` instead, per §4.8. The x25519-private
+   `reu_mul_init` name is not part of the deferral surface at all. What
+   does differ is internal only: `src/sqtab_init.s` keeps
+   `sqtab_init := mul_tables_init` as an unexported link-time alias so
+   in-repo callers still build, and §8.2 has no equivalent. `make lib-verify-shared` proves each
    deferral build links in exactly this composed shape: it links the
    stub against a stand-in provider
    (`tests/lib_linkage/shared_provider_stub.s`), asserts the deferred

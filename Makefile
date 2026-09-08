@@ -210,6 +210,9 @@ LIBX25519 = $(LIB_DIR)/libx25519.a
         lib-verify-citations lib-verify-citations-negative \
         lib-verify-isolation lib-verify-isolation-negative \
         lib-verify-fill-negative \
+        lib-verify-app-owned-header lib-verify-app-owned-header-arm \
+        lib-verify-app-owned-header-negative \
+        lib-verify-app-owned-header-negative-arm \
         lib-nobare lib-nobare-negative nobare-check \
         dist bench-record perf-diff lib-x25519-1764 lib-x25519-onchip
 
@@ -323,6 +326,7 @@ clean:
 	# Profile targets build into their own BUILD_DIR and clean it on entry,
 	# but nothing swept them afterwards, so they lingered as untracked trees.
 	rm -rf build-1764 build-onchip build-app-owned build-guards build-shared
+	rm -rf build-app-owned-header build-aoh-neg
 	rm -rf build-fp build-fp-default build-fp-onchip
 	rm -rf build-guards-default build-guards-onchip build-guards-legc-negative
 	rm -rf build-neg build-neg-artifact
@@ -1223,6 +1227,151 @@ lib-verify-footprint-negative-arm:
 	rm -rf $(FP_DIR)
 	@echo "OK: [$(FPNEG_NAME)] §15.1 demonstration complete -- the footprint check is falsifiable in this profile"
 
+# --- §8.0 APP_OWNED header includability (issue #130) -------------------------
+#
+# `make lib-verify-shared` covers ONE of SPEC §8.0's three states: the
+# consumer that DEFERS a §8.x primitive to a sibling library. The other
+# state -- APP_OWNED, where the consumer's own TU defines the primitive --
+# fails one step EARLIER than any link check can reach, so no amount of
+# linkage matrix could have caught #130: ca65 refuses to import a name the
+# current TU exports, so an `.import` of a canonical §8.x name makes the
+# header un-includable by that primitive's owner. Measured before the fix,
+# one per name:
+#
+#   src/x25519.inc(377): Error: Cannot import exported symbol 'mul_tables_init'
+#   src/x25519.inc(393): Error: Cannot import exported symbol 'reu_mul_tables_init'
+#   src/x25519.inc(397): Error: Cannot import exported symbol 'ct_mul_8x8'
+#   src/x25519.inc(405): Error: Cannot import exported symbol 'reu_fetch_mul_row_bank_patch'
+#
+# The fix is `.global` on those four names, NOT a switch gate. A gate was
+# tried and rejected on evidence: the deferral switches do not say WHO
+# provides the primitive (a sibling, or the consumer itself -- both are
+# spelled with the same defines, see lib-app-owned), so gating on them
+# takes the declaration away from the sibling-deferral consumer, and
+# tests/lib_linkage/lib_linkage_stub.s is exactly that consumer and broke
+# on `Symbol 'mul_tables_init' is undefined`. `.global` emits an export
+# record when the including TU defines the name and an import record when
+# it merely references it, so it serves both without a second knob.
+#
+# ASSEMBLE-ONLY, deliberately. The property is that the header assembles
+# against a TU that owns the primitive; the composed LINK shape is already
+# `make lib-app-owned`, and the sibling-deferral link is
+# `make lib-verify-shared`. Adding a link here would test ld65 twice and
+# ca65 never, which is the wrong way round for this defect.
+#
+# COVERAGE BOUNDARY, stated so the next reader does not assume otherwise:
+# tools/check_gate_citations.py cannot see this header. Its citation table
+# names gates in src/*.s only, so nothing there covers x25519.inc's §8.x
+# declarations -- this leg and its negative are the only coverage they have.
+#
+# Four arms, one per OWNERSHIP GROUP rather than one per switch: a
+# half-fix that fixes one name and leaves its neighbour an `.import` is
+# caught by the arm for the neighbour, and the fourth arm is the
+# all-switch set `make lib-app-owned` uses. SHARED_REU_MUL_INIT and
+# SHARED_REU_MUL_FETCH share an arm because SPEC v0.9.1 §8.2 requires them
+# to move together and src/reu_config.s:118-127 makes either alone a hard
+# `.error` -- an arm passing one without the other would assemble here
+# only because this harness never reaches reu_config.s, i.e. it would be
+# testing a configuration the library refuses to build.
+AOH_STUB = tests/lib_linkage/app_owned_header_stub.s
+AOH_DIR  = build-app-owned-header
+
+# Arm names are SPACE-FREE and the defines looked up here, for the same
+# GNU Make 3.81 MAKEFLAGS reason documented on LEGC_NAME.
+AOH_DEFINES_sqtab := -D SHARED_SQTAB_INIT
+AOH_DEFINES_reu   := -D SHARED_REU_MUL_INIT -D SHARED_REU_MUL_FETCH
+AOH_DEFINES_ct    := -D SHARED_CT_MUL_8X8
+AOH_DEFINES_all   := -D SHARED_SQTAB_INIT -D SHARED_REU_MUL_INIT \
+                     -D SHARED_REU_MUL_FETCH -D SHARED_CT_MUL_8X8
+
+AOH_NAME ?= ct
+AOH_DEFINES = $(AOH_DEFINES_$(AOH_NAME))
+
+lib-verify-app-owned-header:
+	@echo "=== lib-verify-app-owned-header: SPEC §8.0 APP_OWNED -- x25519.inc"
+	@echo "    must be includable BY THE OWNER of each §8.x primitive (#130) ==="
+	$(MAKE) AOH_NAME=sqtab lib-verify-app-owned-header-arm
+	$(MAKE) AOH_NAME=reu   lib-verify-app-owned-header-arm
+	$(MAKE) AOH_NAME=ct    lib-verify-app-owned-header-arm
+	$(MAKE) AOH_NAME=all   lib-verify-app-owned-header-arm
+	@rm -rf $(AOH_DIR)
+	@echo "OK: every canonical §8.x name x25519.inc declares is declared in a"
+	@echo "    form the primitive's OWNER can include (.global, not .import),"
+	@echo "    so SPEC §8.0's APP_OWNED consumer keeps the public API surface"
+
+lib-verify-app-owned-header-arm:
+	@mkdir -p $(AOH_DIR)
+	@$(CA65) $(CA65FLAGS) $(CONTRACT_DEFINES) $(AOH_DEFINES) -I $(SRC_DIR) \
+	    -o $(AOH_DIR)/$(AOH_NAME).o $(AOH_STUB) \
+	  && echo "OK: arm [$(AOH_NAME)] -- a consumer defining this group itself can .include x25519.inc ($(AOH_DEFINES))" \
+	  || (echo "FAIL: arm [$(AOH_NAME)] -- x25519.inc is not includable by the owner of this §8.x group ($(AOH_DEFINES))" && exit 1)
+
+# Negative leg. Perturbs the SOURCE, not the assertion: one canonical
+# name's `.global` is turned back into an `.import` in a throwaway copy of
+# src/, which IS the pre-#130 defect, and the harness must then fail AND
+# name that symbol. Four arms, one per canonical name, because the defect
+# is per-name -- #130 shipped with all four wrong while the back-compat
+# aliases right beside them were correct.
+AOHNEG_SYM_sqtab     := mul_tables_init
+AOHNEG_DEFINES_sqtab := -D SHARED_SQTAB_INIT
+AOHNEG_SYM_reu       := reu_mul_tables_init
+AOHNEG_DEFINES_reu   := -D SHARED_REU_MUL_INIT -D SHARED_REU_MUL_FETCH
+AOHNEG_SYM_fetch     := reu_fetch_mul_row_bank_patch
+AOHNEG_DEFINES_fetch := -D SHARED_REU_MUL_INIT -D SHARED_REU_MUL_FETCH
+AOHNEG_SYM_ct        := ct_mul_8x8
+AOHNEG_DEFINES_ct    := -D SHARED_CT_MUL_8X8
+
+AOHNEG_NAME ?= ct
+AOHNEG_SYM     = $(AOHNEG_SYM_$(AOHNEG_NAME))
+AOHNEG_DEFINES = $(AOHNEG_DEFINES_$(AOHNEG_NAME))
+AOHNEG_DIR     = build-aoh-neg
+AOHNEG_INC     = $(AOHNEG_DIR)/src/x25519.inc
+
+lib-verify-app-owned-header-negative:
+	@echo "=== lib-verify-app-owned-header-negative: the APP_OWNED check must"
+	@echo "    FAIL when a canonical §8.x name goes back to a bare .import ==="
+	$(MAKE) AOHNEG_NAME=sqtab lib-verify-app-owned-header-negative-arm
+	$(MAKE) AOHNEG_NAME=reu   lib-verify-app-owned-header-negative-arm
+	$(MAKE) AOHNEG_NAME=fetch lib-verify-app-owned-header-negative-arm
+	$(MAKE) AOHNEG_NAME=ct    lib-verify-app-owned-header-negative-arm
+	@echo "OK: the APP_OWNED check is falsifiable for all four canonical"
+	@echo "    §8.x names, one at a time"
+
+lib-verify-app-owned-header-negative-arm:
+	@echo "=== arm [$(AOHNEG_NAME)]: symbol $(AOHNEG_SYM), built with $(AOHNEG_DEFINES) ==="
+	@rm -rf $(AOHNEG_DIR); mkdir -p $(AOHNEG_DIR)/src
+	@cp -R $(SRC_DIR)/. $(AOHNEG_DIR)/src/
+	@echo "--- step 1: POSITIVE CONTROL -- the pristine copy must assemble."
+	@echo "    Without this a 'no error' reading below would be meaningless,"
+	@echo "    and a 'still fails' reading could be any unrelated breakage."
+	@$(CA65) $(CA65FLAGS) $(CONTRACT_DEFINES) $(AOHNEG_DEFINES) \
+	    -I $(AOHNEG_DIR)/src -o $(AOHNEG_DIR)/pristine.o $(AOH_STUB) \
+	  && echo "OK: [$(AOHNEG_NAME)] pristine relocated-source copy assembles" \
+	  || (echo "FAIL: the pristine copy does not assemble; the leg would prove nothing" && exit 1)
+	@echo "--- step 2: turn '.global $(AOHNEG_SYM)' back into '.import $(AOHNEG_SYM)'"
+	@sed 's/^\.global $(AOHNEG_SYM)\([^_a-zA-Z0-9]\)/.import $(AOHNEG_SYM)\1/' \
+	    $(AOHNEG_INC) > $(AOHNEG_DIR)/mutated.inc
+	@mv $(AOHNEG_DIR)/mutated.inc $(AOHNEG_INC)
+	@# Fixture guard: the mutation must have LANDED. A sed that matches
+	@# nothing exits 0 and would leave this leg passing vacuously -- the
+	@# #121 shape, a check structurally incapable of failing.
+	@a=$$(grep -c '^\.import $(AOHNEG_SYM)[^_a-zA-Z0-9]' $(AOHNEG_INC)); \
+	 b=$$(grep -c '^\.global $(AOHNEG_SYM)[^_a-zA-Z0-9]' $(AOHNEG_INC)); \
+	 test "$$a" = "1" && test "$$b" = "0" \
+	   && echo "OK: [$(AOHNEG_NAME)] mutated header now .imports $(AOHNEG_SYM) (.global occurrences left: $$b)" \
+	   || (echo "FAIL: fixture did not convert the .global (import=$$a global=$$b); the leg would prove nothing" && exit 1)
+	@echo "--- step 3: the APP_OWNED harness MUST now fail and NAME the symbol"
+	@out=$$($(CA65) $(CA65FLAGS) $(CONTRACT_DEFINES) $(AOHNEG_DEFINES) \
+	    -I $(AOHNEG_DIR)/src -o $(AOHNEG_DIR)/mutated.o $(AOH_STUB) 2>&1); \
+	 rc=$$?; \
+	 printf '%s\n' "$$out" | sed 's/^/    /'; \
+	 test $$rc -ne 0 \
+	   && printf '%s\n' "$$out" | grep -q "Cannot import exported symbol '$(AOHNEG_SYM)'" \
+	   && echo "OK: [$(AOHNEG_NAME)] ca65 exits $$rc and names $(AOHNEG_SYM)" \
+	   || (echo "FAIL: [$(AOHNEG_NAME)] a bare .import $(AOHNEG_SYM) did not break the APP_OWNED consumer (ca65 exit $$rc)" && exit 1)
+	@rm -rf $(AOHNEG_DIR)
+	@echo "OK: [$(AOHNEG_NAME)] demonstration complete"
+
 # --- §8.x deferral-build linkage matrix (R6) ---------------------------------
 #
 # `make lib-verify-shared` proves each c64-lib-contract SHARED_*
@@ -1238,7 +1387,11 @@ lib-verify-footprint-negative-arm:
 # NOTE: always -D SWITCH=1 — a bare ca65 -D defines the symbol as 0,
 # which .ifdef still sees as defined, but keep the idiom uniform with
 # X25519_ONCHIP_MUL (where bare -D silently selects the WRONG profile).
-lib-verify-shared:
+# Depends on the APP_OWNED header check: this target covers SPEC §8.0's
+# DEFER state and that one covers the OWN state, and #130 was invisible
+# to every deferral leg because it fails at assemble time in the
+# consumer's own TU, which no linkage matrix assembles.
+lib-verify-shared: lib-verify-app-owned-header
 	@echo "=== lib-verify-shared: SPEC §8.x deferral-build linkage matrix ==="
 	rm -rf build-shared
 	$(MAKE) BUILD_DIR=build-shared LIB_DIR=build-shared/lib \
