@@ -19,6 +19,8 @@ build-neg-artifact/
 build-nobare/
 build-nobare-neg/
 build-nobare-neg-b/
+build-app-owned-header/
+build-aoh-neg/
 __pycache__/
 *.pyc
 .DS_Store

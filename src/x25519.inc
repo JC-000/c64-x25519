@@ -374,37 +374,111 @@
   X25519_ONCHIP_MUL = 0
 .endif
 
-.import mul_tables_init              ; §8.1 canonical entry — always
-                                     ; resolves (owner build: x25519's
-                                     ; body; deferral: the provider's)
-.ifndef SHARED_SQTAB_INIT
-.import sqtab_init                   ; historical x25519-own alias;
-                                     ; absent from a §8.1 deferral
-                                     ; build (import-never-stub, SPEC
-                                     ; v0.9.0) — use mul_tables_init
+; --- c64-lib-contract §8.x shared-primitive surface ------------------------
+;
+; The four CANONICAL §8.x names are declared with `.global`, not
+; `.import`. That is the whole of issue #130's fix, and the reason is
+; that a deferral switch does not say WHO provides the primitive:
+; SPEC §8.0 allows either a sibling adopter or the consumer's own TU
+; (APP_OWNED), and `make lib-app-owned` spells both with the same
+; `SHARED_*` defines. An `.import` picks one of those two consumers and
+; breaks the other:
+;
+;   .import, ungated (pre-#130)   the APP_OWNED consumer cannot include
+;                                 this header at all -- ca65 refuses to
+;                                 import a name the current TU exports:
+;                                 `Cannot import exported symbol
+;                                 'ct_mul_8x8'`, and with it goes the
+;                                 whole public API surface.
+;   .import, gated on the switch  the DEFER-to-sibling consumer loses the
+;                                 declaration it has always had and dies
+;                                 on `Symbol 'mul_tables_init' is
+;                                 undefined` -- measured against the
+;                                 in-tree lib_linkage_stub, which is
+;                                 exactly that consumer.
+;
+; `.global` resolves to whichever the TU actually is: it emits an EXPORT
+; record if this TU defines the name and an IMPORT record if it merely
+; references it, and emits NOTHING if the TU does neither, so it adds no
+; phantom dependency. Measured on all three orderings that broke
+; `.import` (define-then-include, export-then-include-then-define,
+; include-then-define) and on a TU that only calls the name. Guarding on
+; the symbol's own definedness (`.ifndef ct_mul_8x8`) does NOT work here:
+; ca65 has no "is exported" predicate, so a name `.export`ed above the
+; include and defined below it still takes the import branch.
+;
+; The BACK-COMPAT ALIASES beside them (`sqtab_init`, `reu_mul_init`,
+; `mul_8x8`) stay gated `.import`s. They are x25519-own names that a
+; deferral build genuinely does not export and no consumer defines, so
+; §3's guard rule applies to them unchanged.
+;
+; Beside each `.global` sits its own `.ifdef SHARED_* … .endif` block
+; cross-checking the switch against the archive's §8.0 ownership mask,
+; so "header says deferral, archive owns it" is an lderror naming the
+; switch. (`.global` has no `.else`, so the check is a separate block;
+; the bit equates are defined further down this header and the forward
+; reference resolves at end of assembly.)
+;
+; THE NAMED MESSAGE IS NOT ALWAYS THE FIRST DIAGNOSTIC. Measured, this
+; header against an OWNER archive, one row per clause:
+;
+;                          consumer DEFINES the name   consumer only CALLS it
+;   §8.1 mul_tables_init      named assert                named assert
+;   §8.2 reu_mul_tables_init  Duplicate external id       named assert
+;   §8.3 ct_mul_8x8           Duplicate external id       named assert
+;
+; The two duplicates are not a defect in the check: an APP_OWNED
+; consumer pulls x25519_init.o regardless (reu_clear_wide is on the
+; field-op path), that member exports reu_mul_tables_init and imports
+; ct_mul_8x8, so both members are in the link carrying the same names
+; the consumer just defined, and ld65 reports the collision before it
+; evaluates asserts. §8.1's sqtab_init.o is pulled only by the §8.1
+; names themselves, which is why that row wins both ways. The mismatch
+; is caught in every cell; only the wording differs. Do not write prose
+; promising the named message "rather than" a duplicate-symbol report —
+; that claim was in this header and was false for two of three clauses.
+
+.global mul_tables_init              ; §8.1 canonical entry
+.ifdef SHARED_SQTAB_INIT
+.import LIB_X25519_SHARED_PRIMITIVES
+.assert (LIB_X25519_SHARED_PRIMITIVES & LIB_SHARED_PRIMITIVES_SQTAB) = 0, lderror, "SHARED_SQTAB_INIT was defined for this header, but the archive it links against still owns the 8.1 primitive"
+.else
+.import sqtab_init                   ; historical x25519-own alias; not
+                                     ; exported by a §8.1 deferral build
+                                     ; (import-never-stub, SPEC v0.9.0) —
+                                     ; new code should use mul_tables_init
 .endif
 .if ::X25519_ONCHIP_MUL = 0
-.ifndef SHARED_REU_MUL_INIT
-.import reu_mul_init                 ; x25519-private init name; gated out of
-                                     ; a SHARED_REU_MUL_INIT deferral build —
-                                     ; only the canonical §8.2 name below is
-                                     ; part of the composed-link surface
-.endif
-.import reu_mul_tables_init          ; c64-lib-contract §8.2 canonical entry
-                                     ; (alias of reu_mul_init standalone;
-                                     ; provider-owned under SHARED_REU_MUL_INIT)
-.endif
-.import ct_mul_8x8                   ; c64-lib-contract §8.3 canonical CT
-                                     ; multiply body
-.ifndef SHARED_CT_MUL_8X8
-.import mul_8x8                      ; back-compat alias (same address) —
-                                     ; x25519-own name, absent when the body
-                                     ; is deferred to the §8.3 canonical owner
-.endif
-.if ::X25519_ONCHIP_MUL = 0
-.import reu_fetch_mul_row_bank_patch ; §8.2 SMC bank-patch hook (byte
+.global reu_mul_tables_init          ; §8.2 canonical init entry
+.global reu_fetch_mul_row_bank_patch ; §8.2 SMC bank-patch hook (byte
                                      ; address of reu_fetch_mul_row's
-                                     ; bank-LDA immediate)
+                                     ; bank-LDA immediate). Dropped by
+                                     ; SHARED_REU_MUL_FETCH, which moves
+                                     ; with SHARED_REU_MUL_INIT per SPEC
+                                     ; v0.9.1 §8.2 and src/reu_config.s.
+                                     ; It gets no mask check of its own
+                                     ; because §8.0's mask has no bit for
+                                     ; the fetch half — SHARED_REU_MUL_FETCH
+                                     ; clears nothing in
+                                     ; LIB_X25519_SHARED_PRIMITIVES
+                                     ; (src/lib_manifest.s), so there is no
+                                     ; archive-side value to disagree with.
+.ifdef SHARED_REU_MUL_INIT
+.import LIB_X25519_SHARED_PRIMITIVES
+.assert (LIB_X25519_SHARED_PRIMITIVES & LIB_SHARED_PRIMITIVES_REU_MUL) = 0, lderror, "SHARED_REU_MUL_INIT was defined for this header, but the archive it links against still owns the 8.2 primitive"
+.else
+.import reu_mul_init                 ; x25519-private init name; never part
+                                     ; of the composed-link surface — only
+                                     ; the canonical §8.2 name above is
+.endif
+.endif
+.global ct_mul_8x8                   ; §8.3 canonical CT multiply body
+.ifdef SHARED_CT_MUL_8X8
+.import LIB_X25519_SHARED_PRIMITIVES
+.assert (LIB_X25519_SHARED_PRIMITIVES & LIB_SHARED_PRIMITIVES_CT_MUL_8X8) = 0, lderror, "SHARED_CT_MUL_8X8 was defined for this header, but the archive it links against still owns the 8.3 primitive"
+.else
+.import mul_8x8                      ; back-compat alias (same address) —
+                                     ; x25519-own name
 .endif
 .import x25519_clamp, x25519_scalarmult, x25519_base
 .import fe25519_add, fe25519_sub, fe25519_mul, fe25519_sqr
