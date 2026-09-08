@@ -153,6 +153,10 @@ make lib-verify-footprint-negative  # 16 nops into fe25519_add on a throwaway
                      #   src copy; the derived check MUST fail and name the segment
 make lib-verify-negative            # one negative leg per assertion INSIDE
                      #   lib-verify (N0..N7); each must fail with its named message
+make lib-verify-single-scan-negative  # #132's leg: remove the forced §8.1
+                     #   reference from fe25519.s and the single-scan check
+                     #   MUST fail naming mul_tables_init; the `inert` arm
+                     #   proves a bare .import alone does nothing
 make lib-verify-guards-legc-negative  # leg C's C1/C2/C1b pass on a COUNT OF
                      #   ZERO; 16 arms sabotage the step each assertion counts,
                      #   incl. C2's stale-artifact and C1/C1b's no-rebuild

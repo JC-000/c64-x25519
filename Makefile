@@ -213,6 +213,9 @@ LIBX25519 = $(LIB_DIR)/libx25519.a
         lib-verify-app-owned-header lib-verify-app-owned-header-arm \
         lib-verify-app-owned-header-negative \
         lib-verify-app-owned-header-negative-arm \
+        lib-verify-single-scan lib-verify-single-scan-arm \
+        lib-verify-single-scan-defer \
+        lib-verify-single-scan-negative lib-verify-single-scan-negative-arm \
         lib-nobare lib-nobare-negative nobare-check \
         dist bench-record perf-diff lib-x25519-1764 lib-x25519-onchip
 
@@ -327,6 +330,8 @@ clean:
 	# but nothing swept them afterwards, so they lingered as untracked trees.
 	rm -rf build-1764 build-onchip build-app-owned build-guards build-shared
 	rm -rf build-app-owned-header build-aoh-neg
+	rm -rf build-single-scan-default build-single-scan-1764 build-single-scan-onchip
+	rm -rf build-single-scan-defer build-single-scan-neg
 	rm -rf build-fp build-fp-default build-fp-onchip
 	rm -rf build-guards-default build-guards-onchip build-guards-legc-negative
 	rm -rf build-neg build-neg-artifact
@@ -1372,6 +1377,204 @@ lib-verify-app-owned-header-negative-arm:
 	@rm -rf $(AOHNEG_DIR)
 	@echo "OK: [$(AOHNEG_NAME)] demonstration complete"
 
+# --- §8.1 single-scan archive extractability (issue #132) --------------------
+#
+# NOTHING ELSE IN THIS REPO LINKS TWO SIBLING ARCHIVES, which is why #132
+# shipped. `make lib-verify` links one archive; `lib-verify-shared` links a
+# deferral build against a provider OBJECT. Neither can see the property this
+# target checks: that x25519.a is extractable on ld65's SINGLE, IN-ORDER scan,
+# with x25519.a listed FIRST.
+#
+# The defect: the v0.16.0 §8.1/§8.3 member split (#128) left sqtab_init.o
+# referenced by no member of x25519.a. A sibling that defers §8.1 to us is
+# scanned later, and by then there is no archive left behind it to satisfy
+# `mul_tables_init`. All four c64-wireguard profiles failed. Fixed library-side
+# by the zero-byte forced reference in src/fe25519.s; this target is the
+# standing regression, so the next member move fails here instead of in a
+# consumer's tree. It is wired as a prerequisite of `lib-verify-shared`
+# (below) rather than left opt-in: a check nothing invokes cannot prevent
+# the recurrence it names, and this one was orphaned when first written.
+#
+# Each arm links, in this order:
+#
+#     single_scan_driver.o   x25519.a   single_scan_sibling.a
+#
+# and every arm runs a POSITIVE CONTROL first -- the same link with x25519.a
+# LAST, which must succeed. Without it a "links" reading below could be any
+# accident and a "fails" reading could be unrelated breakage; #128's own
+# harnesses failed before ld65 reached member resolution and read as
+# confirmation either way.
+SS_DRV = tests/lib_linkage/single_scan_driver.s
+SS_SIB = tests/lib_linkage/single_scan_sibling.s
+
+# Profile arms, SPACE-FREE names with the defines looked up here, for the
+# GNU Make 3.81 MAKEFLAGS reason documented on LEGC_NAME.
+SS_DEFINES_default :=
+SS_DEFINES_1764    := -D SQR_DMA_K=0
+SS_DEFINES_onchip  := -D X25519_ONCHIP_MUL=1
+SS_PROFILE_default := default
+SS_PROFILE_1764    := 1764
+SS_PROFILE_onchip  := onchip
+
+SS_NAME ?= default
+SS_DEFINES = $(SS_DEFINES_$(SS_NAME))
+SS_PROFILE = $(SS_PROFILE_$(SS_NAME))
+SS_DIR     = build-single-scan-$(SS_NAME)
+SS_LIB     = $(SS_DIR)/lib/x25519.a
+
+lib-verify-single-scan:
+	@echo "=== lib-verify-single-scan: x25519.a must be extractable on ld65's"
+	@echo "    single in-order scan with x25519.a listed FIRST (#132) ==="
+	$(MAKE) SS_NAME=default lib-verify-single-scan-arm
+	$(MAKE) SS_NAME=1764    lib-verify-single-scan-arm
+	$(MAKE) SS_NAME=onchip  lib-verify-single-scan-arm
+	$(MAKE) lib-verify-single-scan-defer
+	@echo "OK: a sibling deferring §8.1 to x25519 links with x25519.a first in"
+	@echo "    all three profiles, and a build that DEFERS §8.1 still leaves"
+	@echo "    sqtab_init.o unextracted"
+
+lib-verify-single-scan-arm:
+	@echo "=== arm [$(SS_NAME)]: profile $(SS_PROFILE), defines '$(SS_DEFINES)' ==="
+	@rm -rf $(SS_DIR)
+	@$(MAKE) BUILD_DIR=$(SS_DIR) LIB_DIR=$(SS_DIR)/lib \
+	        CA65FLAGS="$(CA65FLAGS)" CONTRACT_ZP_DEFINES="$(CONTRACT_ZP_DEFINES)" \
+	        CONTRACT_DEFINES="$(CONTRACT_DEFINES) $(SS_DEFINES)" \
+	        X25519_PROFILE=$(SS_PROFILE) lib >/dev/null
+	@$(CA65) $(CA65FLAGS) $(CONTRACT_DEFINES) $(SS_DEFINES) -I $(SRC_DIR) \
+	    -o $(SS_DIR)/driver.o $(SS_DRV)
+	@$(CA65) $(CA65FLAGS) $(CONTRACT_DEFINES) $(SS_DEFINES) -I $(SRC_DIR) \
+	    -o $(SS_DIR)/sibling.o $(SS_SIB)
+	@rm -f $(SS_DIR)/sibling.a
+	@ar65 a $(SS_DIR)/sibling.a $(SS_DIR)/sibling.o
+	@echo "--- step 1: POSITIVE CONTROL -- x25519.a listed LAST must link."
+	@echo "    This is the order that already worked; if it fails, the harness"
+	@echo "    never reached member resolution and step 2 proves nothing."
+	@$(LD65) -C cfg/x25519-example.cfg -o $(SS_DIR)/control.prg \
+	    $(SS_DIR)/driver.o $(SS_DIR)/sibling.a $(SS_LIB) \
+	  && echo "OK: [$(SS_NAME)] control link (x25519.a last) succeeded, $$(wc -c < $(SS_DIR)/control.prg | tr -d ' ') B" \
+	  || (echo "FAIL: [$(SS_NAME)] the control link failed; the leg would prove nothing" && exit 1)
+	@echo "--- step 2: THE PROPERTY -- x25519.a listed FIRST must link too"
+	@out=$$($(LD65) -C cfg/x25519-example.cfg -o $(SS_DIR)/first.prg \
+	    -m $(SS_DIR)/first.map \
+	    $(SS_DIR)/driver.o $(SS_LIB) $(SS_DIR)/sibling.a 2>&1); rc=$$?; \
+	 if [ $$rc -ne 0 ]; then \
+	   printf '%s\n' "$$out" | sed 's/^/    /'; \
+	   echo "FAIL: [$(SS_NAME)] x25519.a listed FIRST does not link -- sqtab_init.o is unreachable from inside the archive (#132)"; exit 1; \
+	 fi
+	@grep -q "$(SS_LIB)(sqtab_init\.o)" $(SS_DIR)/first.map \
+	  || (echo "FAIL: [$(SS_NAME)] the link succeeded but sqtab_init.o was not extracted from $(SS_LIB) -- the sibling's import was satisfied by something else, so the leg is measuring the wrong thing:" \
+	      && grep -n "sqtab_init" $(SS_DIR)/first.map | head -5 && exit 1)
+	@echo "OK: [$(SS_NAME)] x25519.a first links, $$(wc -c < $(SS_DIR)/first.prg | tr -d ' ') B, and sqtab_init.o was extracted from x25519.a"
+	@rm -rf $(SS_DIR)
+
+# The safety half, and it is not decoration: forcing a reference to a
+# displaceable group is exactly what would resurrect #128 if the member
+# could still be pulled in a build that DEFERS the group. It cannot --
+# sqtab_init.s's `.else` branch exports nothing, and ld65 extracts a member
+# only to resolve an import against that member's EXPORT table -- but that is
+# reasoning, and this measures it: extracted MUST be 0.
+SSD_DIR = build-single-scan-defer
+
+lib-verify-single-scan-defer:
+	@echo "=== arm [defer]: -D SHARED_SQTAB_INIT -- the forced reference must NOT"
+	@echo "    pull sqtab_init.o when §8.1 is deferred away (#128 must stay shut) ==="
+	@rm -rf $(SSD_DIR)
+	@$(MAKE) BUILD_DIR=$(SSD_DIR) LIB_DIR=$(SSD_DIR)/lib \
+	        CA65FLAGS="$(CA65FLAGS)" CONTRACT_ZP_DEFINES="$(CONTRACT_ZP_DEFINES)" \
+	        CONTRACT_DEFINES="$(CONTRACT_DEFINES) -D SHARED_SQTAB_INIT=1" \
+	        lib >/dev/null
+	@$(CA65) $(CA65FLAGS) $(CONTRACT_DEFINES) -D SHARED_SQTAB_INIT=1 -I $(SRC_DIR) \
+	    -o $(SSD_DIR)/driver.o $(SS_DRV)
+	@$(CA65) $(CA65FLAGS) $(CONTRACT_DEFINES) -D SHARED_SQTAB_INIT=1 -I $(SRC_DIR) \
+	    -o $(SSD_DIR)/sibling.o $(SS_SIB)
+	@$(CA65) $(CA65FLAGS) $(CONTRACT_DEFINES) -D SHARED_SQTAB_INIT=1 -I $(SRC_DIR) \
+	    -o $(SSD_DIR)/provider.o $(LIB_VERIFY_PROVIDER)
+	@rm -f $(SSD_DIR)/sibling.a
+	@ar65 a $(SSD_DIR)/sibling.a $(SSD_DIR)/sibling.o
+	@out=$$($(LD65) -C cfg/x25519-example.cfg -o $(SSD_DIR)/defer.prg \
+	    -m $(SSD_DIR)/defer.map \
+	    $(SSD_DIR)/driver.o $(SSD_DIR)/provider.o $(SSD_DIR)/lib/x25519.a \
+	    $(SSD_DIR)/sibling.a 2>&1); rc=$$?; \
+	 if [ $$rc -ne 0 ]; then \
+	   printf '%s\n' "$$out" | sed 's/^/    /'; \
+	   echo "FAIL: [defer] a §8.1-deferring build no longer links against a provider -- the forced reference reopened #128"; exit 1; \
+	 fi
+	@n=$$(grep -c "sqtab_init\.o" $(SSD_DIR)/defer.map || true); \
+	 if [ "$$n" -ne 0 ]; then \
+	   echo "FAIL: [defer] sqtab_init.o was extracted $$n time(s) from a SHARED_SQTAB_INIT archive; the forced reference is pulling a displaced member (#128's shape)"; \
+	   grep -n "sqtab_init" $(SSD_DIR)/defer.map | head -5; exit 1; \
+	 fi; \
+	 echo "OK: [defer] the deferring build links and sqtab_init.o extracted=$$n"
+	@rm -rf $(SSD_DIR)
+
+# Negative leg. Perturbs the SOURCE, not the assertion: the two-line forced
+# reference is deleted from a throwaway copy of src/fe25519.s, which restores
+# the v0.16.0 shape exactly. The check must then FAIL, and fail with the
+# unresolved external NAMING mul_tables_init -- not with any other link error.
+#
+# Deleting BOTH lines is the honest perturbation, but a half-perturbation is
+# covered too: step 2 of this leg deletes only the `.assert`, leaving the bare
+# `.import`. ca65 emits an import record only for a REFERENCED symbol, so that
+# variant is INERT and must fail identically. That is the form a future editor
+# is most likely to reach for while "tidying up", and the one a reader would
+# most likely believe works.
+SSNEG_DIR = build-single-scan-neg
+
+lib-verify-single-scan-negative:
+	@echo "=== lib-verify-single-scan-negative: removing the forced reference must"
+	@echo "    put the #132 unresolved external back ==="
+	$(MAKE) SSNEG_MODE=both  lib-verify-single-scan-negative-arm
+	$(MAKE) SSNEG_MODE=inert lib-verify-single-scan-negative-arm
+	@echo "OK: the single-scan check is falsifiable, both by removing the"
+	@echo "    reference outright and by reducing it to an inert bare .import"
+
+SSNEG_MODE ?= both
+
+lib-verify-single-scan-negative-arm:
+	@echo "=== arm [$(SSNEG_MODE)] ==="
+	@rm -rf $(SSNEG_DIR)
+	@mkdir -p $(SSNEG_DIR)
+	@git ls-files -z | xargs -0 tar -c | tar -x -C $(SSNEG_DIR)
+	@cp $(SRC_DIR)/*.s $(SRC_DIR)/*.inc $(SSNEG_DIR)/src/
+	@cp tests/lib_linkage/*.s $(SSNEG_DIR)/tests/lib_linkage/
+	@cp Makefile $(SSNEG_DIR)/
+	@echo "--- step 1: POSITIVE CONTROL -- the pristine copy must pass the check."
+	@echo "    #128's harnesses failed BEFORE ld65 reached member resolution and"
+	@echo "    read as confirmation; this is what stops that happening here."
+	@(cd $(SSNEG_DIR) && $(MAKE) SS_NAME=default lib-verify-single-scan-arm) >$(SSNEG_DIR)/pristine.log 2>&1 \
+	  && echo "OK: [$(SSNEG_MODE)] the pristine relocated copy passes lib-verify-single-scan-arm" \
+	  || (echo "FAIL: the pristine copy does not pass; the leg would prove nothing" \
+	      && tail -20 $(SSNEG_DIR)/pristine.log && exit 1)
+	@echo "--- step 2: remove the forced reference from src/fe25519.s [$(SSNEG_MODE)]"
+	@if [ "$(SSNEG_MODE)" = "both" ]; then \
+	   grep -v '^\.import mul_tables_init$$' $(SSNEG_DIR)/src/fe25519.s \
+	     | grep -v '^\.assert mul_tables_init ' > $(SSNEG_DIR)/mutated.s; \
+	 else \
+	   grep -v '^\.assert mul_tables_init ' $(SSNEG_DIR)/src/fe25519.s > $(SSNEG_DIR)/mutated.s; \
+	 fi
+	@before=$$(grep -c 'mul_tables_init' $(SSNEG_DIR)/src/fe25519.s); \
+	 after=$$(grep -cE '^\.(import|assert) mul_tables_init' $(SSNEG_DIR)/mutated.s || true); \
+	 want=$$(if [ "$(SSNEG_MODE)" = "both" ]; then echo 0; else echo 1; fi); \
+	 if [ "$$before" -lt 2 ] || [ "$$after" -ne "$$want" ]; then \
+	   echo "FAIL: the mutation anchors did not match (fe25519.s mentions mul_tables_init $$before times; $$after directive line(s) left, wanted $$want); the leg would prove nothing"; exit 1; \
+	 fi; \
+	 echo "OK: [$(SSNEG_MODE)] fixture left $$after forced-reference directive line(s) in fe25519.s"
+	@mv $(SSNEG_DIR)/mutated.s $(SSNEG_DIR)/src/fe25519.s
+	@echo "--- step 3: the single-scan check MUST now fail, and NAME mul_tables_init"
+	@out=$$(cd $(SSNEG_DIR) && $(MAKE) SS_NAME=default lib-verify-single-scan-arm 2>&1); rc=$$?; \
+	 if [ $$rc -eq 0 ]; then \
+	   echo "FAIL: [$(SSNEG_MODE)] the check passed with the forced reference removed; it is inert"; exit 1; \
+	 fi; \
+	 printf '%s\n' "$$out" | grep -E "Unresolved external|FAIL:" | sed 's/^/    /'; \
+	 printf '%s\n' "$$out" | grep -q "Unresolved external 'mul_tables_init'" \
+	   || (echo "FAIL: [$(SSNEG_MODE)] the check failed, but not with the #132 unresolved external:" \
+	       && printf '%s\n' "$$out" | tail -10 && exit 1); \
+	 printf '%s\n' "$$out" | grep -q "control link (x25519.a last) succeeded" \
+	   || (echo "FAIL: [$(SSNEG_MODE)] the control link failed too, so the failure is not about ORDER:" \
+	       && printf '%s\n' "$$out" | tail -10 && exit 1); \
+	 echo "OK: [$(SSNEG_MODE)] ld65 exits $$rc naming mul_tables_init, while x25519.a-last still links"
+	@rm -rf $(SSNEG_DIR)
+
 # --- §8.x deferral-build linkage matrix (R6) ---------------------------------
 #
 # `make lib-verify-shared` proves each c64-lib-contract SHARED_*
@@ -1391,7 +1594,17 @@ lib-verify-app-owned-header-negative-arm:
 # DEFER state and that one covers the OWN state, and #130 was invisible
 # to every deferral leg because it fails at assemble time in the
 # consumer's own TU, which no linkage matrix assembles.
-lib-verify-shared: lib-verify-app-owned-header
+# Also depends on the single-scan check (#132): this target is the one place
+# in the repo that composes x25519 with a second §8.x participant, so it is
+# where a "does our archive survive being listed FIRST beside a sibling"
+# check belongs. It was orphaned when first written -- nothing invoked it --
+# and #132 exists precisely because nothing here linked two sibling archives,
+# so an opt-in check could not prevent the recurrence it claims to prevent.
+# It inherits this target's standing (the release evidence sweep and manual
+# runs); there is no CI in this repo, so that is the strongest reachability
+# available without putting a 3-profile library rebuild inside `lib-verify`,
+# which runs seven times.
+lib-verify-shared: lib-verify-app-owned-header lib-verify-single-scan
 	@echo "=== lib-verify-shared: SPEC §8.x deferral-build linkage matrix ==="
 	rm -rf build-shared
 	$(MAKE) BUILD_DIR=build-shared LIB_DIR=build-shared/lib \
