@@ -151,6 +151,13 @@ make lib-verify         # smoke-tests the archive links against a stub
 make lib-verify-shared  # same, for the four §8.x SHARED_* deferral builds
 make lib-verify-app-owned-header  # x25519.inc must be includable by a TU
                         #   that OWNS a §8.x primitive (SPEC §8.0 APP_OWNED)
+make lib-verify-single-scan  # the archive must be extractable on ld65's
+                        #   single in-order scan with x25519.a listed FIRST,
+                        #   beside a sibling that defers §8.1 to us (#132).
+                        #   Runs as a prerequisite of lib-verify-shared.
+make lib-verify-single-scan-negative  # its negative leg: removing the forced
+                        #   reference in src/fe25519.s must put the #132
+                        #   unresolved external back
 ```
 
 `make lib` produces `build/lib/`:
@@ -199,6 +206,130 @@ sentinel public symbols. If the archive is broken (missing member,
 unresolved import, name typo), `make lib-verify` fails — so running
 it in CI provides a cheap smoke test that the archive is actually
 usable.
+
+### Link order beside a sibling library, and the `-( … -)` escape hatch
+
+**You do not need a link-order rule for x25519 alone, and you do not need one
+for a sibling that defers §8.1 to us either.** `x25519.a` may be listed first,
+which is the natural order and the order that worked before v0.16.0:
+
+```
+ld65 -C your_config.cfg -o your_app.prg your_app.o x25519.a chacha20poly1305.a
+```
+
+The reason this needs saying: `ld65` scans each archive **once**, in the order
+given, and extracts a member only to resolve an import that is already pending
+at that moment. In v0.16.0 the §8.1/§8.3 member split left `sqtab_init.o`
+referenced by no member of `x25519.a`, so a sibling built
+`-D SHARED_SQTAB_INIT` — which imports our `mul_tables_init` — was scanned
+after us with no archive left behind it to satisfy the import:
+
+```
+Unresolved external 'mul_tables_init' referenced in:
+  src/lib/poly1305_lib.s(137)
+ld65: Error: 1 unresolved external(s) found - cannot create output file
+```
+
+That is issue #132, and it is fixed **in the archive**, not in your link line:
+`fe25519.o` — extracted by every real consumer, in every profile — carries a
+zero-byte reference to `mul_tables_init`, so `sqtab_init.o` comes out on the
+single scan whatever the order. `make lib-verify-single-scan` is the standing
+regression — it links this archive first against a sibling archive in all
+three profiles, and runs as a prerequisite of `make lib-verify-shared` rather
+than being opt-in. Reachability, stated exactly: there is no CI in this repo
+and nothing invokes `lib-verify-shared` automatically, so what that dependency
+buys is that anyone who runs `lib-verify-shared` — including the release
+evidence run recorded in `docs/RELEASE_NOTES_*` — gets this check too.
+
+**The residue, stated honestly.** That fix makes the natural order work. It
+does **not** make order irrelevant. In a *mutual* cross-deferral — the sibling
+owns §8.3 and defers §8.1 to us, while we defer §8.3 to the sibling
+(`make lib CONTRACT_DEFINES="-D SHARED_CT_MUL_8X8=1"`) — each archive holds an
+import only the other can satisfy. Measured, with a driver referencing only
+x25519 public API so the cycle is genuinely between the two archives:
+
+| link form | v0.16.0 as shipped | with the #132 fix |
+|---|---|---|
+| `x25519.a` first | `Unresolved external 'mul_tables_init'` | **links** |
+| `x25519.a` last | `Unresolved external 'ct_mul_8x8'` (+ `poly_prod_lo` / `poly_prod_hi` / `smc_sum_a_imm` / `smc_diff_a_imm`) | same failure |
+| `-( x25519.a sibling.a -)` | **links** | **links** |
+| `-( sibling.a x25519.a -)` | **links** | **links** |
+
+**Stuck on a released archive? `-( … -)` works on v0.16.0 as shipped.** It
+needs no library-side fix, because `--start-group` / `--end-group` (spelled
+`-(` and `-)`, present in ld65 V2.18) re-scans the enclosed archives until no
+new member is extracted — and repeated scanning is exactly what single-scan
+extraction lacks. Measured on the unfixed v0.16.0 archive, a mutual §8.x
+cross-deferral that fails in **both** plain orders links under `-( … -)` in
+**either** order within the group, and produces the same 8372 B PRG as every
+other remedy:
+
+```
+ld65 -C your_config.cfg -o your_app.prg your_app.o -( x25519.a chacha20poly1305.a -)
+```
+
+So if you are composing two siblings with mutual §8.x deferral and hit either
+unresolved set, **wrap the archives in `-( … -)` before concluding the
+archives are broken.** It is one flag, it costs nothing when there is no cycle
+to close, and it is the only form that scales past two siblings.
+
+### If you OWN §8.1, build x25519 with `-D SHARED_SQTAB_INIT`
+
+This is the one consumer-visible behaviour change the #132 fix carries. It is
+spelled out here because **the symbol it names is not predictable from our
+side** — it may be either §8.1 name, depending on your own `.export` order.
+
+**Which configuration this is:** you own §8.1 and did **not** set
+`-D SHARED_SQTAB_INIT`, so the library still exports its own §8.1 names and
+the link duplicates. The *with*-the-switch configuration — where the header's
+mask assert fires as a named `lderror` instead — is the §8.1 row of the
+diagnostic table in §4.6. The two cases are one switch apart and read almost
+alike, so check which one you are in before matching a diagnostic.
+
+A consumer that defines `mul_tables_init` (and possibly our historical alias
+`sqtab_init`) itself but builds x25519 **without** `-D SHARED_SQTAB_INIT` is
+already contract-incorrect: our `sqtab_init.o` still exports both names.
+Before the fix it linked anyway, by accident — nothing referenced the member,
+so it was simply never extracted. Now `fe25519.o` references it, so if your
+own definitions arrive from an **archive scanned after `x25519.a`** you get a
+duplicate on **one of the two §8.1 names**:
+
+```
+ld65: Error: Duplicate external identifier: 'mul_tables_init'
+        ... or 'sqtab_init'
+```
+
+**Which one you see depends on your own `.export` order, not on ours** — ld65
+names whichever of your duplicated exports it processes first. Measured, one
+row per consumer shape:
+
+| your TU exports | ld65 names |
+|---|---|
+| `mul_tables_init` only (the usual APP_OWNED shape) | `mul_tables_init` |
+| `sqtab_init, mul_tables_init` | `mul_tables_init` |
+| `mul_tables_init, sqtab_init` | `sqtab_init` |
+
+So **grep your link log for either name**. Note also that this is a different
+error class from the one #132 is filed under: #132 is an *unresolved external*
+on `mul_tables_init`, and this is a *duplicate external identifier* — which,
+in the usual APP_OWNED shape, happens to name that same symbol. The fix is not
+a link-order change; it is to build x25519 with the deferral switch you were
+already owed:
+
+```
+make lib CONTRACT_DEFINES="-D SHARED_SQTAB_INIT=1"
+```
+
+Measured scope, so you can tell whether this applies to you:
+
+| your §8.1 definitions arrive as | v0.16.0 | with the #132 fix |
+|---|---|---|
+| a plain **object** on the link line | links | **links — unchanged** |
+| a member of an **archive** scanned after `x25519.a` | links | `Duplicate external identifier` on one of the two names |
+
+A plain object defines the names before the archive is scanned, so our
+reference is satisfied by it, `sqtab_init.o` is never pulled, and nothing
+changes for you.
 
 ## 4.2 Overriding the zero-page layout
 
@@ -488,6 +619,25 @@ Standalone builds (no `-D SHARED_SQTAB_INIT`) build the table
 themselves, as before. **This is the default**; nothing changes for a
 single-lib consumer.
 
+Two link-time consequences of this switch are in §4.1, because that is where
+they report:
+
+- a sibling that *defers* §8.1 to us no longer needs `x25519.a` listed last
+  (#132); and
+- a consumer that *owns* §8.1, does **not** set this switch, **and** supplies
+  its own definitions from an **archive scanned after `x25519.a`** can now get
+  `ld65: Error: Duplicate external identifier` on `mul_tables_init` **or**
+  `sqtab_init` — which of the two ld65 names depends on the consumer's own
+  `.export` order, so grep for either.
+
+Both preconditions on that second bullet are load-bearing, and it is **not**
+the same case as the §8.1 row of the diagnostic table below. If you own §8.1
+and supply the names from a plain **object**, nothing changes — measured, that
+still links. And if you *do* set `-D SHARED_SQTAB_INIT` for the header but
+link an archive that still owns §8.1, the diagnostic is the named `lderror`
+in that table, in both consumer roles — measured, neither role reports a
+duplicate.
+
 ### §8.x canonical names and `x25519.inc` (#130)
 
 The four canonical §8.x names are declared with **`.global`**, not
@@ -550,7 +700,10 @@ this header, but the archive it links against still owns the 8.3 primitive
 ```
 
 **That is not always the first diagnostic.** Measured against an owner
-archive, one row per clause:
+archive, **with the `SHARED_*` switch set for the header** — that is the
+mismatch these asserts exist to catch — one row per clause. (The
+*without*-the-switch configuration is a different case with a different
+diagnostic; §4.1's "If you OWN §8.1" covers it.)
 
 | clause | you *define* the name | you only *call* it |
 |---|---|---|

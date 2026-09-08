@@ -56,7 +56,76 @@
 .import sqr_lo, sqr_hi
 .import a24_b0, a24_b1, a24_b2, a24_b3
 
+; --- §8.1 single-scan extraction reference (issue #132) ----------------------
+;
+; This import exists to make src/sqtab_init.s's member REACHABLE FROM INSIDE
+; the archive. It is not a call site: the reference below emits zero bytes.
+;
+; ld65 scans each archive once, in link order, and extracts a member only to
+; resolve a pending import. After the v0.16.0 §8.3/§8.1 split (#128) no member
+; of x25519.a imported either §8.1 name, so a consumer that defers §8.1 to us
+; -- a sibling built `-D SHARED_SQTAB_INIT` importing mul_tables_init -- only
+; got sqtab_init.o if x25519.a was listed AFTER that sibling. Listing x25519.a
+; first, the natural order and the order that worked at v0.15.0, failed with
+;
+;   Unresolved external 'mul_tables_init'
+;
+; in all four of c64-wireguard's profiles (#132). In the mutual cross-deferral
+; -- sibling owns §8.3 and defers §8.1 to us while we defer §8.3 to it --
+; NEITHER order links, so a documented link-order rule cannot be the fix.
+;
+; fe25519.o is extracted by every real consumer in every profile, and ld65
+; iterates to closure WITHIN one archive in both directions (sqtab_init.o is
+; an earlier member than fe25519.o, so this is a backward pull and it works),
+; so the member now comes out on the single scan whatever the order.
+;
+; TWO LINES, AND BOTH ARE LOAD-BEARING. ca65 emits an import record only for a
+; REFERENCED symbol: `.import` alone emits none and would be inert. Measured
+; over the three available forms -- bare .import: no record, 0 bytes;
+; `.addr mul_tables_init`: record, 2 BYTES; the .assert below: record, 0 bytes.
+; The assert is the zero-byte form, which is why the PRG is byte-identical.
+;
+; Under `-D SHARED_SQTAB_INIT` this does NOT resurrect #128 from the other
+; side: sqtab_init.s's deferring branch exports NOTHING, and ld65 pulls a
+; member only to resolve an import against that member's EXPORT table, so the
+; member cannot be extracted however many references exist. Measured, that
+; build extracts sqtab_init.o zero times. The deferral is displaced by the
+; build switch, not by extraction luck.
+;
+; SPEC v1.2.2 §6.1 permits this: the clause's "defines nothing else the
+; library's own code references" scopes "else" to names other than the
+; displaceable symbol the isolated TU exists to hold, so the library
+; referencing mul_tables_init leaves sqtab_init.o conformant (c64-lib-contract
+; lane ruling, 2026-09-07).
+;
+; Regression: `make lib-verify-single-scan` links this archive FIRST against a
+; sibling archive that defers §8.1, in all three profiles. It runs as a
+; prerequisite of `make lib-verify-shared` rather than opt-in, since a check
+; nothing invokes could not prevent the recurrence it claims to -- #132
+; happened precisely because nothing here linked two sibling archives. That
+; buys reachability, NOT enforcement: there is no CI here and nothing runs
+; `lib-verify-shared` automatically, so the guarantee is only that whoever
+; runs it gets this too. Its negative leg deletes these two
+; lines from a throwaway source copy and requires the unresolved-external
+; failure above.
+.import mul_tables_init
+
 .segment "LIB_X25519_CODE"
+
+; The zero-byte reference itself. It is NOT a check and must not be read as
+; one: the condition is a tautology (a 6502 address is always >= 0), because
+; the only job here is to make ca65 emit an import record. A condition that
+; could plausibly be false -- `<> $ffff`, say -- would add nothing and could
+; false-fire on a provider that legitimately landed there.
+;
+; It sits inside LIB_X25519_CODE for readability, beside the code that needs
+; the tables. Placement is INCONSEQUENTIAL TO THE ARTIFACT and no reason
+; should be invented for it: measured with the same reference hoisted above
+; the `.segment` directive, fe25519.o reports the identical segment sizes
+; (CODE 0 -- which ca65 emits either way -- and LIB_X25519_CODE 2750) and the
+; PRG is byte-identical, a17cbc81..., 8628 B. Only the object's string pool
+; and line info move.
+.assert mul_tables_init >= 0, error, "§8.1 extraction reference (issue #132) — not a check, see above"
 
 ; =============================================================================
 ; fe25519_copy - Copy 32 bytes: (fe25519_dst) = (fe25519_src1)
