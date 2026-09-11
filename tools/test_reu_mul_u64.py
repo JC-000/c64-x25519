@@ -353,7 +353,52 @@ def parse_args(argv):
     while i < len(argv):
         a = argv[i]
         if a == "--speeds":
-            opts["speeds"] = [int(s) for s in argv[i + 1].split(",")]
+            speeds = [int(s) for s in argv[i + 1].split(",")]
+            # REFUSED, not silently deduped. An operator who typed a speed
+            # twice should be told, not have it corrected behind their
+            # back: each repeat re-runs the whole per-clock leg — a fresh
+            # load_prg boot, reu_mul_init, the reu_fetch_mul_row loop and
+            # the KAT — and adds no coverage.
+            #
+            # Refused HERE, at parse time, because it needs no device:
+            # main() does not probe until after this returns and takes the
+            # device lock after that, so a typo is caught before anything
+            # is acquired or touched.
+            #
+            # Value-based dedup, not string-based, so `+48,48`, `048,48`
+            # and `1_0,10` are refused on what they MEAN rather than on
+            # how they were spelled; ` 48 , 1 ` is accepted as [48, 1].
+            #
+            # No maximum length is imposed and none is needed. What #151
+            # cares about is bounded: every entry that REACHES the loop is
+            # a distinct member of KNOWN_SPEEDS[product], so the list that
+            # gets there cannot be longer than that product's own
+            # turbo-step set. The bound is derived from the device, not a
+            # literal.
+            #
+            # The PARSED list is not bounded, and this does not claim it
+            # is: `--speeds 0,1,...,1999` parses to 2000 entries. Non-
+            # members are refused in main(), after the lock is held, so a
+            # long distinct-but-invalid list still costs a probe and a
+            # lock acquisition before it is rejected. That is unchanged by
+            # this dedup and is not claimed to be fixed by it. It cannot
+            # move to parse time either: the membership test needs the
+            # product, and the product needs the probe.
+            #
+            # Order is preserved, so no sort: `--speeds 48,1` and
+            # `--speeds 1,48` are different tests, and the 48 MHz leg is
+            # the one that exposes the §8.2 settle hazard.
+            repeated = [s for s in dict.fromkeys(speeds)
+                        if speeds.count(s) > 1]
+            if repeated:
+                print(f"REFUSING: --speeds repeats "
+                      f"{', '.join(str(s) for s in repeated)} "
+                      f"(given '{argv[i + 1]}'). A repeated speed re-runs "
+                      f"the whole fetch loop and KAT for that clock with "
+                      f"no added coverage. List each speed once; order is "
+                      f"significant and is preserved as given.")
+                sys.exit(2)
+            opts["speeds"] = speeds
             i += 2
         elif a == "--seed":
             opts["seed"] = int(argv[i + 1]); i += 2

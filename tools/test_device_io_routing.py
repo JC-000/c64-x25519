@@ -135,6 +135,12 @@ RED_LEGS = {
         "callable path and in the one inside main()",
     "check_scratch_off_harness_regions":
         "a scratch blob moved back onto a declared harness scratch region",
+    "check_speeds_rejects_repeats_at_parse_time":
+        "replace the refusal with a silent dedup; sort the parsed list so "
+        "order is lost; drop the repeated value from the diagnosis clause; "
+        "move parse_args below the device lock, including the comment-only "
+        "form that defeated the previous string-search lint; name every "
+        "given speed in the diagnosis instead of only the repeated one",
     "check_every_check_has_a_recorded_red_leg":
         "delete any entry from RED_LEGS",
 }
@@ -1613,6 +1619,147 @@ def check_every_scratch_install_site_is_guarded():
             f"reach.)\n    {line.strip()}")
 
 
+def check_speeds_rejects_repeats_at_parse_time():
+    """`--speeds` refuses a repeated clock, by name, before any device.
+
+    The list is bounded only by membership in KNOWN_SPEEDS[product],
+    checked in main(), so without a dedup `--speeds 48,48,48,48` is
+    accepted and the whole reu_fetch_mul_row loop plus the KAT runs once
+    per entry — device traffic multiplied by a typo, for no added
+    coverage.
+
+    Refused rather than silently deduped: correcting an operator's
+    argument without telling them is the quiet kind of erosion this repo
+    has a rule about. Refused at PARSE time, verified by the call order in
+    main(): parse_args returns before probe_u64 and before the device lock
+    is taken, so a typo costs nothing.
+
+    No maximum length is asserted here, because none should exist: with
+    repeats refused, every entry is a distinct member of the product's own
+    turbo-step set, which bounds the list without a literal."""
+    m = importlib.import_module("test_reu_mul_u64")
+    import builtins
+
+    def parse(argv):
+        out = []
+        saved = builtins.print
+        builtins.print = lambda *a, **k: out.append(
+            " ".join(str(x) for x in a))
+        try:
+            return m.parse_args(argv), None, out
+        except SystemExit as e:
+            return None, e.code, out
+        finally:
+            builtins.print = saved
+
+    # -- a repeat is refused, and the message names WHICH value --
+    for argv, repeated in ((["--speeds", "48,48"], "48"),
+                           (["--speeds", "1,48,1"], "1"),
+                           (["--speeds", "48,1,48,1"], "48")):
+        opts, code, out = parse(argv)
+        text = "\n".join(out)
+        assert code == 2, (
+            f"{argv} was accepted (exit {code!r}); a repeated speed runs "
+            f"the whole fetch loop again for no coverage. Printed:\n{text}")
+        # Asserted against the DIAGNOSIS clause, not the whole message.
+        # The message also echoes the raw argument, and that echo always
+        # contains the repeated value — so "is it anywhere in the text"
+        # cannot tell "names which value repeated" from "quotes the input
+        # back". Same shape as the refusal-block problem earlier in this
+        # file: a needle found in a neighbouring sentence.
+        clause = text.split("(given")[0]
+        assert repeated in clause, (
+            f"the refusal for {argv} does not name the repeated value "
+            f"{repeated!r} in its diagnosis — it appears only in the echo "
+            f"of the argument, which would be there whatever repeated. "
+            f"Diagnosis clause was: {clause!r}")
+
+    # -- the discriminating fixture: the repeat is NOT the only value, so
+    #    "names which value repeated" and "lists every given speed"
+    #    produce different text. In 48,48 and 1,48,1 the repeated value is
+    #    a substring of the full list either way, so those legs cannot
+    #    tell the two apart — swapping `repeated` for `speeds` in the
+    #    message left them green. Whenever an assertion checks that a
+    #    message names a specific item, pick an input where naming the
+    #    right one and naming all of them differ. --
+    opts, code, out = parse(["--speeds", "1,16,48,16"])
+    clause = "\n".join(out).split("(given")[0]
+    assert code == 2, f"1,16,48,16 was accepted (exit {code!r})"
+    assert "16" in clause, (
+        f"the diagnosis does not name the repeated value 16: {clause!r}")
+    for other in ("48", "1,"):
+        assert other not in clause, (
+            f"the diagnosis names {other!r}, which was NOT repeated — it is "
+            f"listing every given speed rather than the repeat, so it does "
+            f"not tell the operator which entry to fix: {clause!r}")
+
+    # -- distinct lists pass, and ORDER survives: 48,1 and 1,48 are
+    #    different tests, since the 48 MHz leg exposes the settle hazard --
+    for given, want in (("48,1", [48, 1]), ("1,48", [1, 48]),
+                        ("1,16,48", [1, 16, 48])):
+        opts, code, out = parse(["--speeds", given])
+        assert code is None, (
+            f"--speeds {given} was refused (exit {code!r}); its entries are "
+            f"distinct. Printed:\n" + "\n".join(out))
+        assert opts["speeds"] == want, (
+            f"--speeds {given} parsed to {opts['speeds']}, not {want}. "
+            f"Order is significant and must not be sorted or reordered")
+
+    # -- and the refusal precedes any device work.
+    #
+    #    Located with ast, NOT by string search. A `needle in line` scan
+    #    matched COMMENTS and took the first hit, so moving the real
+    #    parse_args call below the lock and adding one comment line
+    #    mentioning "opts = parse_args(argv) runs first" satisfied it —
+    #    a sentence discussing the order standing in for the order. THIS
+    #    delta adds comments discussing parse order to that very file, so
+    #    the needle was exactly the text the change introduces.
+    #
+    #    What this sees: Call nodes inside main()'s body, by callee name.
+    #    Exactly one of each is required, so a second call site fails
+    #    loudly instead of being silently resolved to the first.
+    #    What it does NOT see: a device call inserted above parse_args
+    #    under some other name. That remains out of reach.
+    import ast
+    tree = ast.parse(open(os.path.join(PROJECT_ROOT, "tools",
+                                       "test_reu_mul_u64.py")).read())
+    main_fn = next(n for n in ast.walk(tree)
+                   if isinstance(n, ast.FunctionDef) and n.name == "main")
+
+    def call_lines(pred):
+        return [n.lineno for n in ast.walk(main_fn)
+                if isinstance(n, ast.Call) and pred(n.func)]
+
+    sites = {
+        "parse_args": call_lines(
+            lambda f: isinstance(f, ast.Name) and f.id == "parse_args"),
+        "probe_u64": call_lines(
+            lambda f: isinstance(f, ast.Name) and f.id == "probe_u64"),
+        "acquire_or_raise": call_lines(
+            lambda f: isinstance(f, ast.Attribute)
+            and f.attr == "acquire_or_raise"),
+    }
+    for name, lines_found in sites.items():
+        assert len(lines_found) == 1, (
+            f"expected exactly one {name}() call in test_reu_mul_u64.main(), "
+            f"found {len(lines_found)} at {lines_found}. With more than one, "
+            f"'which comes first' is not a well-formed question and this "
+            f"check would have silently graded the first")
+    parse_at = sites["parse_args"][0]
+    assert parse_at < sites["probe_u64"][0], (
+        f"parse_args() is at line {parse_at}, after probe_u64() at "
+        f"{sites['probe_u64'][0]}: a --speeds typo now costs a device round "
+        f"trip before it is reported")
+    assert parse_at < sites["acquire_or_raise"][0], (
+        f"parse_args() is at line {parse_at}, after the device lock at "
+        f"{sites['acquire_or_raise'][0]}: a --speeds typo now queues behind "
+        f"or blocks another lane before it is reported")
+    # NOTE: in the shipped order probe_u64 precedes the lock, so the lock
+    # assertion cannot fail while the probe assertion passes. The two are
+    # not independent in practice; both are kept because either call site
+    # could move on its own.
+
+
 def check_cited_spans_match_harness_span():
     """Any harness region cited in our prose must be spelled the way
     ScratchRegion.span spells it.
@@ -1784,6 +1931,8 @@ def main():
           "device", check_all_three_u64_tools_grade)
     check("every reboot is followed by the readiness wait (call site)",
           check_reboot_is_followed_by_readiness_wait)
+    check("--speeds refuses a repeated clock, by name, before any device",
+          check_speeds_rejects_repeats_at_parse_time)
     check("cited harness spans match ScratchRegion.span (inclusive)",
           check_cited_spans_match_harness_span)
     check("every scratch install site calls the guard",
