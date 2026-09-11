@@ -36,8 +36,11 @@ is ``Ultimate64TempHygieneError`` at the harness's request choke point,
 and this repo defers to it — see tools/u64_preflight.py, "Why there is
 no hygiene handling here at all".
 
-Each check below is written so that reverting the fix it guards makes it
-FAIL, and the failure names the leg, the symbol or the address at fault.
+Each check below was driven to FAIL by reverting the defect it guards,
+and its failure names the leg, the symbol or the address at fault. What
+that perturbation was is RECORDED per check in ``RED_LEGS``; what is
+machine-enforced is only that every check has an entry, not that the
+entry is true — see the comment above ``RED_LEGS``.
 
 Run:  python3 tools/test_device_io_routing.py
 """
@@ -55,6 +58,150 @@ sys.path.insert(0, os.path.join(PROJECT_ROOT, "tools"))
 from c64_test_harness.backends.ultimate64_client import (
     Ultimate64Client, Ultimate64Error)
 from c64_test_harness.memory_policy import MemoryPolicy, MemoryRegion
+
+
+# --------------------------------------------------------------------------
+# Red-leg roster
+# --------------------------------------------------------------------------
+
+#: What each check's red leg WAS, as recorded by the person who ran it.
+#:
+#: RECORDED, NOT VERIFIED — and the distinction is the point of this
+#: comment. check_every_check_has_a_recorded_red_leg compares the roster's
+#: KEYS against the checks main() registers, in both directions, so a
+#: check with no entry fails the suite and a stale entry does too. Nothing
+#: reads the VALUES. A value of "" or "TODO", or a sentence describing a
+#: perturbation that actually reddens some other check, is equally green.
+#: The enforced property is coverage: for every registered check, someone
+#: once wrote a sentence here. Whether that sentence is true of the check
+#: is not machine-checkable and is not claimed to be.
+#:
+#: Perturbations go in the SOURCE, reproducing the defect class, rather
+#: than in the checker. Where an entry below names a FIXTURE or a runtime
+#: monkeypatch instead of a source edit, that is the exception being
+#: stated rather than hidden — the harness re-probe, because this repo
+#: does not write to that checkout; the arming rule, whose input is the
+#: fixture's firmware payload; and the roster's own leg, which is deleting
+#: an entry. No count of those is given: it would be a hand-maintained
+#: number inside the structure built to replace hand-maintained claims,
+#: and it would be wrong the first time a check is added.
+RED_LEGS = {
+    "check_bench_x25519_u64_drives_clean":
+        "run_once made to report no completed run",
+    "check_reu_scrub_coverage":
+        "drop rd_hi from check_rows' scrub set",
+    "check_reu_no_duplicate_scrubs":
+        "restore the four unconditional 256-byte scrubs",
+    "check_reu_restores_state_on_failure":
+        "remove restore_state from the finally block",
+    "check_reboot_settle_floor":
+        "lower the settle floor below the 8.0 s HEAD slept",
+    "check_reboot_readiness_probed":
+        "readiness back to sleep(8.0) plus a single probe",
+    "check_sentinel_wait_reports_poll_error":
+        "sentinel wait back to the original hand-rolled deadline loop",
+    "check_sentinel_wait_is_actually_called":
+        "inline the poll loop in call(), leaving the helper unused beside it",
+    "check_issue33_uses_acquire_or_raise":
+        "lock back to the bool-returning acquire(timeout=600)",
+    "check_bench_fe_ops_single_call_is_one_thunk":
+        "any one single-call bench back to three separate jsr() calls",
+    "check_reprobe_precedes_arming":
+        "Ultimate64Client._maybe_reprobe_capabilities monkeypatched to a "
+        "no-op at runtime (the property is the harness's; this repo does "
+        "not write to that checkout)",
+    "check_harness_hygiene_arms_on_the_leaky_device":
+        "fixture serves a self-collecting firmware in place of a leaky one",
+    "check_grading_printout_matches_the_threshold_in_use":
+        "grading printed from a fresh get_info() instead of "
+        "client.capabilities; and the harness guard left unnamed",
+    "check_no_front_door_refusal_survives":
+        "reinstate a sys.exit refusal in u64_preflight; and bring back "
+        "make_client",
+    "check_no_tool_forces_temp_hygiene":
+        "a tool passes temp_hygiene=True to Ultimate64Client",
+    "check_harness_pin_names_a_real_commit":
+        "pin left on a squashed (unreachable) commit; pin pointed at a "
+        "nonexistent one; pin decayed to prose with no commit",
+    "check_all_three_u64_tools_grade":
+        "a reboot and a 1000-byte write injected ahead of the grading "
+        "printout; and the printout's call site commented out",
+    "check_reboot_is_followed_by_readiness_wait":
+        "post-reboot readiness call site reverted to sleep(8.0)",
+    "check_cited_spans_match_harness_span":
+        "one cited harness span reverted to the exclusive-end form",
+    "check_every_scratch_install_site_is_guarded":
+        "an install site loses its assert_off_harness_scratch call, in the "
+        "callable path and in the one inside main()",
+    "check_scratch_off_harness_regions":
+        "a scratch blob moved back onto a declared harness scratch region",
+    "check_every_check_has_a_recorded_red_leg":
+        "delete any entry from RED_LEGS",
+}
+
+
+def _registered_checks():
+    """Names main() passes to check() AS A BARE IDENTIFIER, from the AST.
+
+    Derived rather than listed: a roster compared against a second
+    hand-maintained list would only prove the two lists agree.
+
+    BOUND, deliberately and not fixed: only ``check("...", some_name)`` is
+    seen. A check registered via a lambda, a ``functools.partial`` or a
+    bound method is invisible here, so it would need no roster entry and
+    the coverage guarantee would not cover it. Matching arbitrary callables
+    in an AST walk buys a fragile checker against a hazard this file does
+    not have — every registration below is the bare form. The two plausible
+    refactors both fail loudly rather than silently: a module-level table
+    of checks, and a helper that wraps check(), each leave zero bare
+    identifiers and trip the "no check() registrations found" assertion. It
+    is the lambda form alone that would slip through."""
+    import ast
+    tree = ast.parse(open(os.path.abspath(__file__)).read())
+    main_fn = next(n for n in ast.walk(tree)
+                   if isinstance(n, ast.FunctionDef) and n.name == "main")
+    names = set()
+    for node in ast.walk(main_fn):
+        if (isinstance(node, ast.Call)
+                and getattr(node.func, "id", None) == "check"
+                and len(node.args) >= 2
+                and isinstance(node.args[1], ast.Name)):
+            names.add(node.args[1].id)
+    return names
+
+
+def check_every_check_has_a_recorded_red_leg():
+    """The roster and the registered checks are the same set.
+
+    This turns "every check here has a RECORDED red leg" into a checkable
+    statement, where "every check here has been driven red" would remain a
+    universal quantifier in prose with nothing comparing it to the code —
+    the shape that failed repeatedly while this suite was being written.
+
+    It checks COVERAGE, not truth: keys only, both directions. A roster
+    value is prose and is never read, so this cannot tell a real
+    perturbation from "TODO". Enforcing that would mean running each
+    perturbation, which is what a person did once and what no check here
+    repeats."""
+    registered = _registered_checks()
+    assert registered, (
+        "no check() registrations found in main(); this check cannot see "
+        "what it is meant to compare against")
+    missing = sorted(registered - set(RED_LEGS))
+    assert not missing, (
+        "check(s) registered with no recorded red leg: "
+        + ", ".join(missing)
+        + ". Drive it red and record the perturbation in RED_LEGS. If you "
+          "conclude it cannot be driven red, record THAT as its roster "
+          "entry — the argument, in the roster, not in a docstring this "
+          "check cannot read. An unfalsifiable check is an assertion, and "
+          "the roster is the single place a reader looks to tell which is "
+          "which")
+    stale = sorted(set(RED_LEGS) - registered)
+    assert not stale, (
+        "RED_LEGS names check(s) that main() no longer registers: "
+        + ", ".join(stale)
+        + ". A roster entry for a deleted check is a claim about nothing")
 
 
 # --------------------------------------------------------------------------
@@ -219,7 +366,17 @@ def check_bench_x25519_u64_drives_clean():
     has exactly one call site, this one, and nothing else consumes its
     result. It earns its place by catching a bench path that stops
     working against the fake at all, which is how the fake gets caught
-    drifting from the code it stands in for."""
+    drifting from the code it stands in for.
+
+    What it CANNOT catch is drift in READY_SCREEN_CODES itself. The fixture
+    paints the modelled screen from m.READY_SCREEN_CODES and prepare_prg
+    then searches for m.READY_SCREEN_CODES, so the comparison is defined in
+    terms of the value under test and moves with it: setting the constant
+    to arbitrary bytes leaves this check green. Not fixed here — hardcoding
+    the expected bytes in the fixture trades a tautology for a brittle
+    constant that has to be updated whenever the PRG's banner legitimately
+    changes. A real banner mismatch shows up on hardware as the ready
+    banner never appearing, which prepare_prg reports."""
     dev, names = _drive_bench_x25519_u64()
     assert dev.requests, "no writes recorded — the fake was never driven"
 
@@ -1633,6 +1790,8 @@ def main():
           check_every_scratch_install_site_is_guarded)
     check("scratch blobs clear of declared harness scratch",
           check_scratch_off_harness_regions)
+    check("every check here has a recorded red leg",
+          check_every_check_has_a_recorded_red_leg)
     print()
     if FAILURES:
         print(f"{len(FAILURES)} check(s) FAILED")

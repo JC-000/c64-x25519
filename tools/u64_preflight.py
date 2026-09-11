@@ -86,15 +86,15 @@ Harness pin
 
 This module's behaviour is reasoned from harness internals — the arming
 rule, the attachment predicate, the re-probe path — and that dependency
-moved four times in the session this was written (``f4074ab`` ->
-``202c188`` -> ``d4b96bc`` -> ``eb245a9``), twice on ground this file
-rests on. Note that ``d4b96bc`` is no longer reachable: PR #259 landed
-as a squash, so a pin naming it resolves today only because the object
-is still present and stops resolving after a gc. A
-statement about a sibling repo ages; the installed tree is checkable at
-any moment. If you are changing this module, re-read
-``backends/ultimate64_client.py`` at the current HEAD before trusting
-any sentence above, and move this pin when you do.
+was observed at four different commits in the session this was written
+(``f4074ab``, ``202c188``, ``d4b96bc``, ``eb245a9``), two of which
+changed ground this file rests on. Of those four, only ``eb245a9`` is
+reachable from HEAD: PR #259 landed as a squash and orphaned the whole
+pre-merge chain, so the other three survive as loose objects and resolve
+today only until a gc. A statement about a sibling repo ages; the
+installed tree is checkable at any moment. If you are changing this
+module, re-read ``backends/ultimate64_client.py`` at the current HEAD
+before trusting any sentence above, and move this pin when you do.
 
 The deletion described above was made BECAUSE of behaviour at
 ``eb245a9``, not because hygiene stopped mattering. A reader who finds
