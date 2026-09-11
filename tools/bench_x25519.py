@@ -33,6 +33,7 @@ from c64_test_harness import (
     Labels, ViceConfig, ViceInstanceManager,
     read_bytes, write_bytes, jsr, load_code, wait_for_text,
 )
+from c64_test_harness.memory_policy import MemoryPolicy, MemoryRegion
 
 PROJECT_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 PRG_PATH = os.path.join(PROJECT_ROOT, "build", "x25519.prg")
@@ -43,9 +44,88 @@ NTSC_HZ = 60  # jiffy clock tick rate
 NTSC_CYCLES_PER_SEC = 1_022_727
 NTSC_CYCLES_PER_JIF = NTSC_CYCLES_PER_SEC / NTSC_HZ   # ≈ 17,045.45
 
-# Benchmark subroutine address
-BENCH_SUB_ADDR = 0x0360
+# Benchmark subroutine address.
+# $0360 (used until 2026-09-10) is the harness's own
+# execute.run_subroutine trampoline region ($0360-$036D) — see
+# assert_off_harness_scratch below.
+#
+# $036E-$03EF is the band in this page free of every NON-transient
+# declared harness entry. Non-transient is the right qualifier and the
+# only one the guard checks: liveness_probe declares $0334-$03B3 and it
+# covers these blobs, but it is TRANSIENT (prior contents written back),
+# so harness_scratch_overlaps() excludes it.
+#
+# Every span above is quoted from ScratchRegion.span, which renders
+# INCLUSIVELY, because the constructor takes an EXCLUSIVE end and a raw
+# `end` copied into prose is one byte too high every time. Spans in this
+# comment were wrong in exactly that way before they were derived; the
+# wrong values are not repeated here, because a wrong span quoted in
+# prose is the seed of the next wrong claim — and a COUNT of them is a
+# claim nothing can check either, since the values it counts are
+# deliberately absent. The guard, not this sentence, is what enforces the
+# band; the sentence is here to save the next person a lookup.
+BENCH_SUB_ADDR = 0x0370
 
+
+
+def assert_off_harness_scratch(*spans):
+    """Fail loudly if a scratch blob we install overlaps a region the
+    harness writes for itself.
+
+    HARNESS_SCRATCH is the harness's own declaration of where it puts
+    trampolines and flag bytes; MemoryPolicy.harness_scratch_overlaps()
+    compares a declared span against it. Nothing in this repo ever
+    consulted it.
+
+    The hazard this guards is LATENT, not live, and saying otherwise
+    would contradict the scope paragraph below. $0360 appears twice in
+    the harness, and only one of those writes anything: execute.py:638 is
+    run_subroutine's default trampoline_addr — the WRITE site, and the
+    only one — while memory_policy.py:325 is the ScratchRegion that
+    DECLARES the same region, i.e. this guard's own input data. A
+    declaration writes no bytes.
+
+    (Stated as two rather than one because a reader who greps will find
+    two and may take the whole paragraph for unsound. The count is
+    checkable, so it is given precisely, in a docstring that a few lines
+    on warns against counts nothing can check.)
+
+    No tool here calls run_subroutine; both call jsr(), whose default
+    scratch_addr is $0334. So nothing was overwriting anything. What the
+    guard buys is that the next tool to reach for run_subroutine, or the
+    next harness release that moves a default, fails with a named message
+    instead of running the wrong bytes. That is the same argument the
+    $C000 exclusion below rests on, pointed the other way.
+
+    NOT MemoryPolicy.from_prg + transport.memory_policy: from_prg makes
+    the PRG load image ($0801-$29B2 here) a RESERVED region, and every
+    legitimate write these tools make — x25_scalar $19A0, fe25519_tmp1
+    $1800, main_loop+1 $082E — is inside it, so that policy denies the
+    tool's own traffic. This is the introspection half, which is the part
+    that answers the question actually being asked.
+
+    Transient entries are excluded (the harness writes prior contents
+    back), which is what keeps the 32 KiB $0800-$87FF REU staging window
+    from matching every C64 program ever loaded.
+
+    SCOPE, stated because it is not derivable from the call: pass only
+    spans this tool installs CODE into and then executes through a
+    harness facility. The result buffers at $C000/$C100 are deliberately
+    NOT passed: $C000-$C3FF is declared scratch for sid_player,
+    bridge_ping and uci_network, none of which any tool here invokes, and
+    every trampoline in this repo lives in that page. Passing them would
+    make this check permanently red over a collision that cannot occur.
+    """
+    regions = tuple(MemoryRegion(start, start + length, note)
+                    for start, length, note in spans)
+    overlaps = MemoryPolicy(reserved_regions=regions).harness_scratch_overlaps()
+    if overlaps:
+        detail = "; ".join(
+            f"{r} collides with harness scratch {s.span} "
+            f"({s.owner}; relocate via {s.configurable})"
+            for r, s in overlaps)
+        raise SystemExit(f"FATAL: scratch layout collides with the harness: "
+                         f"{detail}")
 
 def build_bench_subroutine(labels, blank=True):
     """Build 6502 subroutine that runs the full benchmark and returns via RTS.
@@ -151,6 +231,12 @@ def main():
 
     # Build benchmark subroutine
     bench_code = build_bench_subroutine(labels, blank=blank)
+    # Span DERIVED from the blob just built, not a restated constant. The
+    # literal that used to sit here said "19 (blank=True: 6 JSRs + RTS)";
+    # measured, the blob is 16 bytes and 5 JSRs. A hand-counted length is
+    # one more claim nothing compares against the artifact.
+    assert_off_harness_scratch(
+        (BENCH_SUB_ADDR, len(bench_code), "bench_x25519 bench subroutine"))
     print(f"Benchmark subroutine: {len(bench_code)} bytes at ${BENCH_SUB_ADDR:04X}")
 
     # Launch VICE via managed instance (PID/port tracked, file-locked)

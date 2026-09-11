@@ -26,10 +26,20 @@ VICE cycle counts are bit-identical with/without REU). An optional final
 phase reboots with the REU DISABLED and re-runs the onchip PRG once — the
 hardware analogue of the VICE C64_NO_REU proof.
 
-Device guard: refuses to run unless the device self-reports as
-"Ultimate 64 Elite" (the C64U is out of bounds for now; also the U64E
-turbo enum tops out at 48 MHz — there is no 64 MHz step on this device,
-so the 64 MHz gate point remains pending on the C64U).
+Device guard: refuses any product not in KNOWN, and refuses a requested
+speed the named product has no turbo step for. KNOWN carries BOTH
+"Ultimate 64 Elite" and "C64 Ultimate", so both are accepted — this
+paragraph used to say the C64U was out of bounds, which the roster 280
+lines below has never agreed with. The U64E enum tops out at 48 MHz
+(no 64 MHz step there), so the 64 MHz gate point is reachable only on a
+C64 Ultimate.
+
+Printed on every run, and it is visibility rather than a guard:
+print_grading shows what the device reported and how the harness grades
+its writemem behaviour. The GUARD is the harness's own — the client
+collects the device's /Temp attachments itself and raises
+Ultimate64TempHygieneError when a pass proves impossible, with
+U64_TEMP_GC_REQUIRED=0 as the opt-out. See tools/u64_preflight.py.
 
 Usage:
     U64_HOST=10.43.23.81 python3 tools/bench_x25519_u64.py
@@ -46,11 +56,19 @@ import time
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, PROJECT_ROOT)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from c64_test_harness import DeviceLock, DeviceLockTimeout, Labels
+from c64_test_harness import (
+    DeviceLock, DeviceLockTimeout, Labels, watch_progress,
+)
 from c64_test_harness.backends.ultimate64 import Ultimate64Transport
-from c64_test_harness.backends.ultimate64_helpers import set_reu, set_turbo_mhz
+from c64_test_harness.backends.ultimate64_client import Ultimate64Client
+from c64_test_harness.backends.ultimate64_helpers import (
+    restore_state, set_reu, set_turbo_mhz, snapshot_state,
+)
 from c64_test_harness.backends.ultimate64_probe import probe_u64
+
+from u64_preflight import print_grading, wait_device_ready
 
 DEFAULT_PRG = os.path.join(PROJECT_ROOT, "build", "x25519.prg")
 DEFAULT_LABELS = os.path.join(PROJECT_ROOT, "build", "labels.txt")
@@ -135,6 +153,43 @@ def wait_ready_screen(transport, timeout):
     return False
 
 
+def wait_sentinel(transport, timeout, poll=0.05):
+    """Wait for the trampoline's done sentinel via the harness's routing
+    helper instead of a hand-rolled read loop.
+
+    watch_progress is the harness's poller: it owns the read cadence, and
+    it separates a read that RAISED (PollError, and polling continues)
+    from a run that never finished (Timeout). The hand-rolled loop this
+    replaced had no except: the first transport hiccup propagated out and
+    killed the run mid-measurement.
+
+    What this does NOT fix, stated so nobody reads more into it: a
+    transport that returns an EMPTY read without raising still runs the
+    wall budget out. watch_progress records b"" as the value and reports
+    Timeout, exactly as `if data and data[0] == VAL` did.
+
+    Only the sentinel is watched. Nothing else these trampolines touch
+    advances mid-run (the result buffer and main_loop's operand are both
+    written at the very end), so watch_progress's Stalled/idle_timeout
+    axis carries no information here and is pinned to the wall budget.
+
+    Returns (True, None) on the sentinel, else (False, reason).
+    """
+    reason = "TIMEOUT"
+    for ev in watch_progress(
+            transport, {"sentinel": (DONE_SENTINEL_ADDR, 1)},
+            poll_interval=poll, idle_timeout=timeout, overall_timeout=timeout,
+            stop_when=lambda v: v.get("sentinel", b"") == bytes(
+                [DONE_SENTINEL_VAL])):
+        if ev.kind == "Finished":
+            return True, None
+        if ev.kind == "PollError":
+            reason = f"POLL ERROR ({type(ev.error).__name__}: {ev.error})"
+        elif ev.kind == "Timeout":
+            break
+    return False, reason
+
+
 def clear_screen(transport):
     transport.write_memory(0x0400, bytes([0x20] * 1000))
 
@@ -172,16 +227,10 @@ def run_once(client, transport, labels, mhz, expected, timeout):
     # hijack: JMP main_loop -> JMP $0800 (single low-byte write, atomic)
     t0 = time.monotonic()
     transport.write_memory(main_loop + 1, bytes([SHIM_ADDR & 0xFF]))
-    deadline = t0 + timeout
-    wall = None
-    while time.monotonic() < deadline:
-        data = transport.read_memory(DONE_SENTINEL_ADDR, 1)
-        if data and data[0] == DONE_SENTINEL_VAL:
-            wall = time.monotonic() - t0
-            break
-        time.sleep(0.05)
-    if wall is None:
-        print(f"      TIMEOUT after {timeout:.0f}s at {mhz} MHz")
+    ok, why = wait_sentinel(transport, timeout, poll=0.05)
+    wall = time.monotonic() - t0
+    if not ok:
+        print(f"      {why} after {wall:.0f}s at {mhz} MHz")
         return None
     result = bytes(transport.read_memory(labels["x25_result"], 32))
     if result != expected:
@@ -240,13 +289,29 @@ def main():
         sys.exit(1)
 
     transport = None
+    client = None
+    orig_state = None
     try:
-        transport = Ultimate64Transport(
+        # The harness owns /Temp hygiene: the client arms it from the
+        # device's capabilities and re-probes before arming, so nothing
+        # here forces or wraps it. See tools/u64_preflight.py, "Why there
+        # is no hygiene handling here at all".
+        client = Ultimate64Client(
             host=host, password=os.environ.get("U64_PASSWORD"), timeout=8.0)
-        client = transport.client
+        transport = Ultimate64Transport(
+            host=host, password=os.environ.get("U64_PASSWORD"), timeout=8.0,
+            client=client)
         info = client.get_info()
         product = info.get("product", "?")
         print(f"Device: {product} fw {info.get('firmware_version', '?')} at {host}")
+        # Grade FIRST: /v1/info is already in hand, and a device this tool
+        # refuses should be refused before it is touched further.
+        print_grading(client, what="bench_x25519_u64")
+        # Snapshot BEFORE the first mutation. Every sys.exit(1) below is
+        # inside this try, and the old code only lowered turbo on the
+        # success path — so any failure left the device turbo'd, and a
+        # failure inside the stock_proof phase left the REU disabled too.
+        orig_state = snapshot_state(client)
         # Two Ultimate generations exist with different turbo enums
         # (skill/PATTERNS: U64E fw 3.14 lacks 64 MHz; C64U fw 1.1.0
         # lacks 5 MHz; foreign speeds are firmware-rejected). Refuse
@@ -270,7 +335,9 @@ def main():
 
         print("\n[session boot] reboot + REU on (512 KB)")
         client.reboot()
-        time.sleep(8.0)
+        if wait_device_ready(host) is None:
+            print("FATAL: device did not come back after reboot")
+            sys.exit(1)
         set_reu(client, enabled=True, size="512 KB")
 
         for profile, prg, labels_path in (
@@ -296,7 +363,9 @@ def main():
         if stock_proof:
             print("\n=== onchip stock-config proof (REU DISABLED) ===")
             client.reboot()
-            time.sleep(8.0)
+            if wait_device_ready(host) is None:
+                print("FATAL: device did not come back after reboot")
+                sys.exit(1)
             set_reu(client, enabled=False)
             labels = Labels.from_file(ONCHIP_LABELS)
             if not prepare_prg(client, transport, ONCHIP_PRG, labels, scalar):
@@ -322,9 +391,19 @@ def main():
                       f"{o[0]:.2f} s -> onchip is {d[0] / o[0]:.2f}x"
                       f"{' FASTER' if o[0] < d[0] else ' (slower)'}")
 
-        set_turbo_mhz(client, 1)
-        print("\n(device left at 1 MHz; REU state = last phase's setting)")
+        # Behaviour change, deliberate: this tool used to end by lowering
+        # turbo to 1 MHz and printing that it left the REU on whatever the
+        # last phase set — and with --stock-proof on by default the last
+        # phase DISABLES the REU, so it handed the next lane a device with
+        # no REU. It now restores what it found, on the success path and
+        # on every failure exit alike.
+        print("\n(device turbo + REU restored to the state found at start)")
     finally:
+        if orig_state is not None:
+            try:
+                restore_state(client, orig_state)
+            except Exception as e:      # never mask the original failure
+                print(f"WARNING: restore_state failed: {e!r}")
         if transport is not None:
             transport.close()
         lock.release()

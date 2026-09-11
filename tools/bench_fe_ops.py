@@ -20,7 +20,7 @@ window and divides by N.
 
 fe25519_cswap takes its mask in A on entry. Since the harness's `jsr`
 helper does not let us set A before the call, we install a 6-byte
-trampoline at $0340 (LDA #mask / JSR fe25519_cswap / RTS) and bench
+trampoline at $0350 (LDA #mask / JSR fe25519_cswap / RTS) and bench
 that trampoline both single-call and batched.
 
 Usage:
@@ -44,6 +44,7 @@ from c64_test_harness import (
     Labels, ViceConfig, ViceInstanceManager,
     read_bytes, write_bytes, jsr, wait_for_text,
 )
+from c64_test_harness.memory_policy import MemoryPolicy, MemoryRegion
 
 PROJECT_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 PRG_PATH = os.path.join(PROJECT_ROOT, "build", "x25519.prg")
@@ -123,70 +124,182 @@ def _prime_cswap_operands(transport, labels, a, b):
 
 
 # -- single-call benches -----------------------------------------------------
+#
+# All of these go through _bench_single, which builds the SAME thunk the
+# batch path builds (n=1). They used to issue three separate jsr() calls:
+#     jsr(bench_cycles_start); jsr(target); jsr(bench_cycles_stop)
+# and jsr()'s preserve_state=True default reads PC/SP/FL before the call
+# and puts them back after, so bench_cycles_start's `sei` was reverted the
+# moment that first jsr returned — the measured routine then ran with the
+# I flag as the monitor found it, while the batch path at
+# _build_batch_thunk() kept the sei. Two paths in one file measuring under
+# different interrupt conditions.
+#
+# The mask is DOCUMENTED to outlive the reconfiguration. src/util.s:129-130,
+# the banner over the pair: "Like bench_start/stop, this pair preserves the
+# caller's I-flag via bench_cycles_saved_p"; and :134-136 over the proc:
+# "Saves caller's P (incl. I flag); leaves IRQs masked while the counter
+# runs (matched by bench_cycles_stop's plp)". The php-at-start /
+# plp-at-stop pairing across two routines only makes sense if I persists
+# between them. The `sei`'s own inline comment at :141 says merely "mask
+# IRQs while we reconfigure CIA1", which reads as if the mask were
+# scoped to the reconfiguration — it is not, and the banner four lines
+# above says so.
+#
+# So this restores a documented invariant the single-call path silently
+# broke; it is not a measurement fix. The measured effect is nil either
+# way, because bench_cycles_start also writes $7F to cia1_icr, clearing
+# every CIA1 interrupt source, so nothing was firing into the window.
+#
+# blank=False keeps the display-active condition the single-call spread
+# has always been measured under (see _build_batch_thunk's docstring for
+# why the batch path blanks and this one does not). The thunk adds its own
+# ldx/stx/dec/bne scaffold inside the counted window, so single-call
+# numbers move against pre-change runs.
+#
+# THE DELTA IS +14.5 CYCLES, and the delta is the quantity to trust. Two
+# independent A/B runs under VICE on fe25519_mul (2026-09-10, both
+# --iterations 2 --batch 5, seeded rng so every run saw the same
+# operands):
+#
+#     run   old three-jsr form   this thunk form   delta
+#     A          101,536.0          101,550.5      +14.5
+#     B          101,535.5          101,550.0      +14.5
+#
+# The absolutes jitter by about a cycle between runs; the delta does not.
+# The evidence for that is inside run A rather than asserted: at
+# --iterations 2 the reported avg is (min+max)/2, and run A's old-form
+# spread was min=101,530 max=101,541 — 11 cycles — so a half-cycle shift
+# in an average of two samples is well inside its own noise. A third run
+# will give a third pair of absolutes and the same delta.
+#
+# And the delta matches an opcode-level derivation of the scaffold the
+# thunk adds inside the counted window (from the second adversarial
+# review):
+#
+#     LDX #imm      2
+#     STX abs       4
+#     DEC abs       6
+#     BNE not-taken 2
+#                  --
+#                  14 cycles
+#
+# So the number rests on a mechanism plus two measurements, not on one
+# measurement. Nothing else in this file's reported figures was
+# re-measured; the cross-check numbers quoted in _build_batch_thunk's
+# docstring predate the change and are left as written rather than
+# restated from a two-iteration run.
+
+
+def _bench_single(transport, labels, target, timeout):
+    """One measured call through the batch thunk builder with n=1."""
+    thunk = _build_batch_thunk(labels, target, 1, blank=False)
+    assert_off_harness_scratch(
+        (BATCH_SUB_ADDR, len(thunk), "bench_fe_ops single-call thunk"))
+    write_bytes(transport, BATCH_SUB_ADDR, thunk)
+    jsr(transport, BATCH_SUB_ADDR, timeout=timeout)
+    return _read_cycles(transport, labels)
+
 
 def bench_fe_mul(transport, labels, a, b):
     _prime_mul_operands(transport, labels, a, b)
-    jsr(transport, labels["bench_cycles_start"])
-    jsr(transport, labels["fe25519_mul"], timeout=120.0)
-    jsr(transport, labels["bench_cycles_stop"])
-    return _read_cycles(transport, labels)
+    return _bench_single(transport, labels, "fe25519_mul", 120.0)
 
 
 def bench_fe_sqr(transport, labels, a):
     _prime_sqr_operand(transport, labels, a)
-    jsr(transport, labels["bench_cycles_start"])
-    jsr(transport, labels["fe25519_sqr"], timeout=120.0)
-    jsr(transport, labels["bench_cycles_stop"])
-    return _read_cycles(transport, labels)
+    return _bench_single(transport, labels, "fe25519_sqr", 120.0)
 
 
 def bench_fe_inv(transport, labels, a):
     _prime_sqr_operand(transport, labels, a)
-    jsr(transport, labels["bench_cycles_start"])
-    jsr(transport, labels["fe25519_inv"], timeout=240.0)
-    jsr(transport, labels["bench_cycles_stop"])
-    return _read_cycles(transport, labels)
+    return _bench_single(transport, labels, "fe25519_inv", 240.0)
 
 
 def bench_fe_add(transport, labels, a, b):
     _prime_addsub_operands(transport, labels, a, b)
-    jsr(transport, labels["bench_cycles_start"])
-    jsr(transport, labels["fe25519_add"], timeout=30.0)
-    jsr(transport, labels["bench_cycles_stop"])
-    return _read_cycles(transport, labels)
+    return _bench_single(transport, labels, "fe25519_add", 30.0)
 
 
 def bench_fe_sub(transport, labels, a, b):
     _prime_addsub_operands(transport, labels, a, b)
-    jsr(transport, labels["bench_cycles_start"])
-    jsr(transport, labels["fe25519_sub"], timeout=30.0)
-    jsr(transport, labels["bench_cycles_stop"])
-    return _read_cycles(transport, labels)
+    return _bench_single(transport, labels, "fe25519_sub", 30.0)
 
 
 def bench_fe_reduce_final(transport, labels, a):
     _prime_reduce_final_operand(transport, labels, a)
-    jsr(transport, labels["bench_cycles_start"])
-    jsr(transport, labels["fe25519_reduce_final"], timeout=30.0)
-    jsr(transport, labels["bench_cycles_stop"])
-    return _read_cycles(transport, labels)
+    return _bench_single(transport, labels, "fe25519_reduce_final", 30.0)
 
 
 def bench_fe_mul_a24(transport, labels, a):
     _prime_a24_operand(transport, labels, a)
-    jsr(transport, labels["bench_cycles_start"])
-    jsr(transport, labels["fe25519_mul_a24"], timeout=60.0)
-    jsr(transport, labels["bench_cycles_stop"])
-    return _read_cycles(transport, labels)
+    return _bench_single(transport, labels, "fe25519_mul_a24", 60.0)
 
 
 # fe25519_cswap takes its mask in A on entry. The harness's `jsr` helper
-# does not let us set A before the call, so we install a 6-byte trampoline
-# at $0340 (cassette buffer region, also used by the safety loop at $0339):
+# does not let us set A before the call, so we install a 6-byte trampoline:
 #     LDA #mask    (2 bytes)
 #     JSR cswap    (3 bytes)
 #     RTS          (1 byte)
-CSWAP_TRAMP_ADDR = 0x0340
+#
+# $0340 (used until 2026-09-10) overlaps sid_player.play_sid_vice's song
+# trampoline at $033C-$0341 — a NON-transient declared harness span, the
+# category assert_off_harness_scratch actually checks. Moved to $0350,
+# inside $0342-$035F, which is free of every non-transient entry. Latent,
+# like the $0360 case in bench_x25519.py: nothing here calls sid_player.
+# The point is that one standard now covers every blob this file installs
+# and executes, instead of two of three.
+CSWAP_TRAMP_ADDR = 0x0350
+
+
+
+def assert_off_harness_scratch(*spans):
+    """Fail loudly if a scratch blob we install overlaps a NON-transient
+    region the harness declares for itself.
+
+    Same guard as bench_x25519.py and ct_mul_brute_check.py, and it is
+    here because the standard has to be one standard: this file installs
+    two executable blobs, and until 2026-09-10 one of them sat on
+    sid_player.play_sid_vice's song trampoline ($033C-$0341) while the
+    other was unchecked.
+
+    Transient entries are excluded (the harness writes prior contents
+    back), which is what keeps liveness_probe's $0334-$03B3 and the
+    32 KiB $0800-$87FF REU staging window from matching everything.
+
+    SCOPE, stated because it is not derivable from the call: pass every
+    span this tool installs CODE into and then EXECUTES through a harness
+    facility. The standard is "guard every declared NON-transient span",
+    not "guard only what can collide today" — which facilities a tool
+    invokes is exactly the kind of fact that changes without anyone
+    noticing.
+
+    ONE carve-out, and it is a derived constraint rather than a judgement
+    call. The $0339 safety loop (JMP self) is NOT passed, because its
+    address is not ours to choose: execute.jsr writes JSR/NOP/NOP at
+    scratch_addr $0334-$0338, so $0339 is the first byte PAST that
+    trampoline, and a safety loop anywhere else does not catch execution
+    that runs off the end of it. sid_player.play_sid_vice parks at
+    $0339-$033B for the same reason and by the same derivation — the
+    collision is two facilities agreeing on an address the layout
+    dictates, not two facilities picking one carelessly. Moving it would
+    delete its function, and it is the same three bytes in 32 files here.
+    So it is excluded, and the reason is written down where a reader
+    meets it.
+
+    Also not passed: the fe25519 buffers and bench_cycles, which live in
+    the PRG image rather than in harness scratch.
+    """
+    regions = tuple(MemoryRegion(start, start + length, note)
+                    for start, length, note in spans)
+    overlaps = MemoryPolicy(reserved_regions=regions).harness_scratch_overlaps()
+    if overlaps:
+        detail = "; ".join(
+            f"{r} collides with harness scratch {s.span} "
+            f"({s.owner}; relocate via {s.configurable})"
+            for r, s in overlaps)
+        raise SystemExit(f"FATAL: scratch layout collides with the harness: "
+                         f"{detail}")
 
 
 def _build_cswap_trampoline(labels, mask):
@@ -200,12 +313,13 @@ def _build_cswap_trampoline(labels, mask):
 
 def bench_fe_cswap(transport, labels, a, b, mask):
     _prime_cswap_operands(transport, labels, a, b)
-    write_bytes(transport, CSWAP_TRAMP_ADDR,
-                _build_cswap_trampoline(labels, mask))
-    jsr(transport, labels["bench_cycles_start"])
-    jsr(transport, CSWAP_TRAMP_ADDR, timeout=30.0)
-    jsr(transport, labels["bench_cycles_stop"])
-    return _read_cycles(transport, labels)
+    tramp = _build_cswap_trampoline(labels, mask)
+    assert_off_harness_scratch(
+        (CSWAP_TRAMP_ADDR, len(tramp), "bench_fe_ops cswap trampoline"))
+    write_bytes(transport, CSWAP_TRAMP_ADDR, tramp)
+    # _build_batch_thunk takes an int target, which is what lets the cswap
+    # trampoline go down the same path as the label-named ops.
+    return _bench_single(transport, labels, CSWAP_TRAMP_ADDR, 30.0)
 
 
 # -- batched bench (sub-jiffy precision via amortization) --------------------
@@ -215,7 +329,7 @@ def _build_batch_thunk(labels, target, n, blank=True):
     cycle counter.
 
     `target` may be a string (label name) or an int (raw address); the
-    address form lets us batch-bench the cswap trampoline at $0340.
+    address form lets us batch-bench the cswap trampoline at $0350.
 
     With blank=True (the default), the thunk wraps the timed region in
     jsr vic_blank / jsr vic_unblank so that the measurement matches the
@@ -280,6 +394,8 @@ def _build_batch_thunk(labels, target, n, blank=True):
 
 def bench_batch(transport, labels, target, n, blank=True):
     thunk = _build_batch_thunk(labels, target, n, blank=blank)
+    assert_off_harness_scratch(
+        (BATCH_SUB_ADDR, len(thunk), "bench_fe_ops batch thunk"))
     write_bytes(transport, BATCH_SUB_ADDR, thunk)
     jsr(transport, BATCH_SUB_ADDR, timeout=300.0)
     return _read_cycles(transport, labels)
@@ -438,12 +554,15 @@ def main():
         t_a24 = bench_batch(transport, labels, "fe25519_mul_a24", batch_n,
                             blank=blank)
 
-        # cswap: batch the trampoline at $0340 (mask=$FF -> always swap).
+        # cswap: batch the trampoline at $0350 (mask=$FF -> always swap).
         # The trampoline does LDA #$FF / JSR fe25519_cswap / RTS each call.
         _prime_cswap_operands(transport, labels,
                               rng.randint(1, P-1), rng.randint(1, P-1))
-        write_bytes(transport, CSWAP_TRAMP_ADDR,
-                    _build_cswap_trampoline(labels, 0xFF))
+        cs_tramp = _build_cswap_trampoline(labels, 0xFF)
+        assert_off_harness_scratch(
+            (CSWAP_TRAMP_ADDR, len(cs_tramp),
+             "bench_fe_ops cswap trampoline (batch)"))
+        write_bytes(transport, CSWAP_TRAMP_ADDR, cs_tramp)
         t_cs = bench_batch(transport, labels, CSWAP_TRAMP_ADDR, batch_n,
                            blank=blank)
 
