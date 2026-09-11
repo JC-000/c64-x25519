@@ -60,11 +60,19 @@ import time
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, PROJECT_ROOT)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from c64_test_harness import DeviceLock, DeviceLockTimeout, Labels
+from c64_test_harness import (
+    DeviceLock, DeviceLockTimeout, Labels, watch_progress,
+)
 from c64_test_harness.backends.ultimate64 import Ultimate64Transport
-from c64_test_harness.backends.ultimate64_helpers import set_reu, set_turbo_mhz
+from c64_test_harness.backends.ultimate64_client import Ultimate64Client
+from c64_test_harness.backends.ultimate64_helpers import (
+    restore_state, set_reu, set_turbo_mhz, snapshot_state,
+)
 from c64_test_harness.backends.ultimate64_probe import probe_u64
+
+from u64_preflight import print_grading, wait_device_ready
 
 from cryptography.hazmat.primitives.asymmetric.x25519 import (
     X25519PrivateKey, X25519PublicKey)
@@ -215,6 +223,42 @@ def load_prg(client, transport, labels, boot_mhz):
     return True
 
 
+def wait_sentinel(transport, timeout, poll):
+    """Wait for the trampoline's done sentinel through the harness's
+    routing helper rather than a hand-rolled read loop.
+
+    watch_progress owns the poll cadence and separates a read that RAISED
+    (PollError, and polling continues) from a run that never finished
+    (Timeout). The hand-rolled loop this replaced had no except: the
+    first transport hiccup propagated out and killed the run.
+
+    What this does NOT fix: a transport that returns an EMPTY read
+    without raising still runs the wall budget out, under watch_progress
+    exactly as under `if d and d[0] == VAL`.
+
+    ONLY the sentinel is watched, deliberately. Watching mul_dma_lo would
+    give a genuine started-vs-never-started signal, but it would put a
+    host DMA read on the bus in the middle of the very REU settle window
+    this test exists to measure (contract#144). Wall budget is the only
+    timer, so idle_timeout is pinned to it.
+
+    Returns (True, None) on the sentinel, else (False, reason).
+    """
+    reason = "TIMEOUT"
+    for ev in watch_progress(
+            transport, {"sentinel": (DONE_SENTINEL_ADDR, 1)},
+            poll_interval=poll, idle_timeout=timeout, overall_timeout=timeout,
+            stop_when=lambda v: v.get("sentinel", b"") == bytes(
+                [DONE_SENTINEL_VAL])):
+        if ev.kind == "Finished":
+            return True, None
+        if ev.kind == "PollError":
+            reason = f"POLL ERROR ({type(ev.error).__name__}: {ev.error})"
+        elif ev.kind == "Timeout":
+            break
+    return False, reason
+
+
 def call(transport, labels, op, timeout, poll=0.02):
     """Run one trampoline op; return wall seconds or None on timeout."""
     transport.write_memory(OP_ADDR, bytes([op]))
@@ -222,12 +266,11 @@ def call(transport, labels, op, timeout, poll=0.02):
     main_loop = labels["main_loop"]
     t0 = time.monotonic()
     transport.write_memory(main_loop + 1, bytes([SHIM_ADDR & 0xFF]))
-    deadline = t0 + timeout
-    while time.monotonic() < deadline:
-        d = transport.read_memory(DONE_SENTINEL_ADDR, 1)
-        if d and d[0] == DONE_SENTINEL_VAL:
-            return time.monotonic() - t0
-        time.sleep(poll)
+    ok, why = wait_sentinel(transport, timeout, poll)
+    if ok:
+        return time.monotonic() - t0
+    if why != "TIMEOUT":
+        print(f"      {why}")
     return None
 
 
@@ -244,10 +287,20 @@ def check_rows(transport, labels, rows, max_report=6):
     for a in rows:
         for kind, op, rd_lo, rd_hi in (("host", OP_FETCH, lo_addr, hi_addr),
                                        ("cpu", OP_FETCH_SNAP, SNAP_LO, SNAP_HI)):
-            transport.write_memory(lo_addr, bytes([SCRUB] * 256))
-            transport.write_memory(hi_addr, bytes([SCRUB] * 256))
-            transport.write_memory(rd_lo, bytes([SCRUB] * 256))
-            transport.write_memory(rd_hi, bytes([SCRUB] * 256))
+            # The DMA target (lo/hi) and the read-back target must BOTH
+            # carry poison, but on the "host" leg rd_lo/rd_hi ARE lo/hi,
+            # so two of the four unconditional writes rewrote bytes
+            # written by the line immediately above — 128 of the 512
+            # writes per run. Dedup by address, in order, so the "cpu"
+            # leg's genuinely distinct SNAP_LO/SNAP_HI are still scrubbed
+            # and coverage is unchanged. Saves round trips; no behaviour
+            # change.
+            scrub_targets = []
+            for t in (lo_addr, hi_addr, rd_lo, rd_hi):
+                if t not in scrub_targets:
+                    scrub_targets.append(t)
+            for t in scrub_targets:
+                transport.write_memory(t, bytes([SCRUB] * 256))
             transport.write_memory(labels["mul_cached_a"], bytes([a]))
             if call(transport, labels, op, timeout=10.0) is None:
                 print(f"      TIMEOUT: reu_fetch_mul_row a={a} ({kind})")
@@ -361,16 +414,31 @@ def main():
     verdicts = []
     failed = False
     transport = None
+    client = None
+    orig_state = None
     try:
-        transport = Ultimate64Transport(
+        # The harness owns /Temp hygiene: the client arms it from the
+        # device's capabilities and re-probes before arming, so nothing
+        # here forces or wraps it. See tools/u64_preflight.py, "Why there
+        # is no hygiene handling here at all".
+        client = Ultimate64Client(
             host=host, password=os.environ.get("U64_PASSWORD"), timeout=8.0)
-        client = transport.client
+        transport = Ultimate64Transport(
+            host=host, password=os.environ.get("U64_PASSWORD"), timeout=8.0,
+            client=client)
         info = client.get_info()
         product = info.get("product", "?")
         fw = info.get("firmware_version", "?")
         dev = f"{product} fw {fw}"
         print(f"Device: {dev} at {host}  (fpga {info.get('fpga_version', '?')}, "
               f"core {info.get('core_version', '?')})")
+        # Grade FIRST: /v1/info is already in hand, and a device this tool
+        # refuses should be refused before it is touched further.
+        print_grading(client, what="test_reu_mul_u64")
+        # Snapshot BEFORE the first mutation. Every sys.exit(1) below is
+        # inside this try, and the old code only lowered turbo on the
+        # success path — so any failure exit left the device turbo'd.
+        orig_state = snapshot_state(client)
         if product not in KNOWN_SPEEDS:
             print(f"REFUSING: unknown device product '{product}'"); sys.exit(1)
         bad = [s for s in opts["speeds"] if s not in KNOWN_SPEEDS[product]]
@@ -379,7 +447,8 @@ def main():
 
         print("\n[session boot] reboot + REU on (512 KB)")
         client.reboot()
-        time.sleep(8.0)
+        if wait_device_ready(host) is None:
+            print("FATAL: device did not come back after reboot"); sys.exit(1)
         set_reu(client, enabled=True, size="512 KB")
 
         for mhz in opts["speeds"]:
@@ -419,8 +488,12 @@ def main():
             if mism["host"] or mism["cpu"] or kat == "FAIL":
                 failed = True
 
-        set_turbo_mhz(client, 1)
     finally:
+        if orig_state is not None:
+            try:
+                restore_state(client, orig_state)
+            except Exception as e:      # never mask the original failure
+                print(f"WARNING: restore_state failed: {e!r}")
         if transport is not None:
             transport.close()
         lock.release()

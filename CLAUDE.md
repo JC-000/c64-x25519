@@ -181,6 +181,25 @@ make test-slow       # full suite (requires VICE + built .prg)
 
 Single test run: `python3 tools/<name>.py [--slow]`. Benches live in `tools/bench_*.py` and are NOT run by `make test-slow`.
 
+```
+python3 tools/test_device_io_routing.py   # software-only: no VICE, no device,
+                     #   U64_HOST unset. Drives the U64 tools' own code paths
+                     #   against a fake whose write_mem is the harness's real
+                     #   one, and guards the rules in "Device-touching tools"
+                     #   below. Re-runnable, not a one-off transcript: each
+                     #   check RECORDS the perturbation observed to make it
+                     #   FAIL, in the file's own `RED_LEGS` roster, and
+                     #   `check_every_check_has_a_recorded_red_leg` compares
+                     #   that roster against the checks `main()` registers —
+                     #   both directions — so a check with no entry fails
+                     #   the suite. What is enforced is COVERAGE, not truth:
+                     #   the roster's values are prose and nothing reads
+                     #   them. Read the roster to see what each red leg was;
+                     #   re-run one yourself if you need it verified.
+                     #   Not wired into `make test`; run it after touching
+                     #   anything under tools/ that talks to a device.
+```
+
 ## Toolchain
 
 - `ca65` / `ld65` / `ar65` (cc65 suite) — `brew install cc65`
@@ -263,6 +282,54 @@ When you add or change anything CT-relevant, **extend the leak catalogue in `doc
 - `docs/LIBRARY.md` — integration guide, memory map, public API
 - `docs/CT_ANALYSIS.md` — leak catalogue L1–L32, threat model, Phase 6 correctness/CT argument. **Authoritative for any CT discussion.**
 - `docs/RELEASE_NOTES_v*.md` — per-release perf + CT posture story
+
+## Device-touching tools (binding)
+
+Five rules for anything in `tools/` that drives real hardware. Each carries
+its reason, because a rule without one gets deleted by the next person who
+finds it inconvenient. `tools/test_device_io_routing.py` guards them.
+
+- **Route device requests through harness primitives.** Do not hand-roll
+  what the harness provides: `snapshot_state`/`restore_state`, `probe_u64`,
+  `watch_progress`, `acquire_or_raise`, `MemoryPolicy`. The harness is the
+  single point where traffic to a device can be filtered, and a local
+  equivalent moves that point somewhere nobody is looking.
+- **Do not chunk writes locally.** `transport.write_memory` hands the whole
+  payload to `client.write_mem`, which POSTs above
+  `client.write_mem_query_threshold`, leaving an uncollected `/Temp`
+  attachment on firmware without upstream GideonZ/1541ultimate#686. The fix
+  belongs at the harness's request choke point — c64-test-harness#252, where
+  this repo is a named dependent — not here. `memory.write_bytes`' chunk size
+  is a hardcoded literal derived from VICE's text-monitor limit
+  (`memory.py:13-16`), so adopting it puts an emulator constant on the
+  hardware path and has to be unwound when #252 lands.
+- **Do not enable SocketDMA.** `Ultimate64Transport` takes `socket_dma=False`
+  / `socket_dma_min_bytes=8192`; leave both. Device writes go over REST for
+  the same reason as the rule above — one path, owned and filtered by the
+  harness. Enabling a second transport from inside this repo bypasses that,
+  and characterising its behaviour is the harness lane's job, not ours. Raise
+  it there if you think you need it.
+- **Do not add a front-door `/Temp` refusal.** `Ultimate64Client` arms an FTP
+  collector on leak-prone devices itself and raises
+  `Ultimate64TempHygieneError` unless `U64_TEMP_GC_REQUIRED=0` — and only
+  when hygiene is *proven impossible*, so a local refusal blocks runs the
+  harness handles correctly. This repo tried one and deleted it; the
+  reasoning, and the one case deliberately left to the operator, is in
+  `tools/u64_preflight.py` under "Why there is no hygiene handling here at
+  all". Read that before adding any.
+- **Grade the device from the device, not from a document.** Print the
+  firmware the device reports beside any conclusion drawn from it. This rule
+  exists because during this work a live device was graded *backwards* from a
+  correctly-dated design doc: `docs/design/issue_72_onchip_mul.md:445-448`
+  records `fw 3.14d` on 2026-07-26, true when written, and the device had
+  since moved to a firmware with the opposite `/Temp` behaviour. There was no
+  defect in the document for a careful reader to notice — the staleness came
+  from the reader. Treat a dated record as evidence about its date.
+
+Reasoning that depends on harness internals must name the harness commit it
+was verified against, and re-check it before relying on it: that dependency
+was observed at four different commits in the session these rules were
+written. See the pin in `tools/u64_preflight.py`, which lists them.
 
 ## Workflow notes
 

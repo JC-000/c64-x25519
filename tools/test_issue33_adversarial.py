@@ -48,15 +48,19 @@ import time
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, PROJECT_ROOT)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from c64_test_harness.backends.ultimate64_client import Ultimate64Client
 from c64_test_harness.backends.ultimate64 import Ultimate64Transport
-from c64_test_harness.backends.device_lock import DeviceLock
+from c64_test_harness.backends.device_lock import DeviceLock, DeviceLockTimeout
 from c64_test_harness.backends.ultimate64_probe import probe_u64
 from c64_test_harness.backends.ultimate64_helpers import (
     set_turbo_mhz, set_reu, snapshot_state, restore_state,
 )
 from c64_test_harness.labels import Labels
+from c64_test_harness import watch_progress
+
+from u64_preflight import print_grading
 
 PRG_PATH = os.path.join(PROJECT_ROOT, "build", "x25519.prg")
 LABELS_PATH = os.path.join(PROJECT_ROOT, "build", "labels.txt")
@@ -441,8 +445,17 @@ def main() -> int:
 
     lock = DeviceLock(args.host)
     print("  acquiring device lock (cross-process queue)...", flush=True)
-    if not lock.acquire(timeout=600.0):
-        print("FATAL: could not acquire device lock within 10min")
+    # acquire_or_raise, not acquire: the bool tells you nothing about WHY.
+    # DeviceLockTimeout carries holder_pid / pid_alive / lockfile_age_seconds
+    # / device_reachable_rest, which is the difference between "queued
+    # behind a live run" and "a dead PID left the lockfile behind".
+    # 120 s, not 600 s: DeviceLock heartbeats already extend a waiter
+    # behind a LIVE holder, so the hard ceiling only governs how long we
+    # sit behind a WEDGED one. This matches the repo's other two U64 tools.
+    try:
+        lock.acquire_or_raise(timeout=120.0)
+    except DeviceLockTimeout as e:
+        print(f"FATAL: could not acquire device lock: {e}")
         return 2
     print("  device lock acquired")
 
@@ -463,10 +476,14 @@ def main() -> int:
         return 2
     print(f"  probe ok: {pr}")
     try:
+        # The harness owns /Temp hygiene; nothing here forces or wraps
+        # it. See tools/u64_preflight.py, "Why there is no hygiene
+        # handling here at all".
         client = Ultimate64Client(host=args.host, password=PASSWORD,
                                   timeout=60.0)
         transport = Ultimate64Transport(host=args.host, password=PASSWORD,
                                         client=client)
+        print_grading(client, what="test_issue33_adversarial")
         orig = snapshot_state(client)
         try:
             if not args.skip_reboot:
@@ -560,13 +577,36 @@ def main() -> int:
                   f"polling sentinel (timeout {args.timeout:.0f}s)...")
 
             t0 = time.monotonic()
+            # watch_progress, not a hand-rolled deadline loop: it owns the
+            # poll cadence and reports a read that RAISED (PollError)
+            # separately from a run that never finished (Timeout). Both
+            # markers are watched alongside the sentinel, so "never
+            # started" (pre stays $00) and "started, never finished" (pre
+            # advanced, post did not) show up as Advanced events with
+            # timing rather than collapsing into one bare TIMEOUT.
             outcome = "TIMEOUT"
-            while time.monotonic() - t0 < args.timeout:
-                done = transport.read_memory(DONE_SENTINEL_ADDR, 1)[0]
-                if done == 0x42:
+            for ev in watch_progress(
+                    transport,
+                    {"sentinel": (DONE_SENTINEL_ADDR, 1),
+                     "pre": (PRE_MARKER_ADDR, 1),
+                     "post": (POST_MARKER_ADDR, 1)},
+                    poll_interval=0.5,
+                    idle_timeout=args.timeout,
+                    overall_timeout=args.timeout,
+                    stop_when=lambda v: v.get("sentinel", b"") == b"\x42"):
+                if ev.kind == "Finished":
                     outcome = "OK"
                     break
-                time.sleep(0.5)
+                if ev.kind == "Advanced":
+                    for name, (old, new) in ev.changed.items():
+                        if old:     # skip the priming event
+                            print(f"    [{ev.elapsed:7.1f}s] {name}: "
+                                  f"${old[0]:02x} -> ${new[0]:02x}")
+                elif ev.kind == "PollError":
+                    outcome = (f"POLL ERROR ({type(ev.error).__name__}: "
+                               f"{ev.error})")
+                elif ev.kind == "Timeout":
+                    break
 
             elapsed = time.monotonic() - t0
             pre = transport.read_memory(PRE_MARKER_ADDR, 1)[0]

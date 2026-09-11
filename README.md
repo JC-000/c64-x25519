@@ -664,6 +664,8 @@ Cryptographic results are differentially tested against [pyca/cryptography](http
 
 The test suite caught a latent `fe_reduce_wide` carry-propagation bug in v0.1.0 prep (fixed in `48092b5`) via differential testing on a random u-coord that exercised a specific `$FF`-boundary cascade. A permanent regression test prevents recurrence, and an audit of all similar `adc #0` sites in `src/*.s` confirmed zero other instances of the bug pattern.
 
+Tools that drive real hardware route their device I/O through the test harness rather than hand-rolling equivalents, so there is one place where traffic to a device can be inspected or filtered instead of one per script. Those rules are binding and are written down in `CLAUDE.md` under "Device-touching tools", each with the reason it exists. `tools/test_device_io_routing.py` guards them and needs neither VICE nor a device: it drives the hardware tools' own code paths against a fake, so the rules are checked on every ordinary development machine rather than only when hardware is to hand.
+
 ## Security notes
 
 - **Full side-channel posture (v0.4.0, Phase 7 landed).** All 29
