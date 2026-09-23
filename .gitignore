@@ -26,6 +26,8 @@ __pycache__/
 .DS_Store
 # Serena: ignore regenerable/local state, track project.yml + memories
 .serena/
+# Index cache of the retired ca65-ls language server
+.ca65-ls/
 # Release tarballs produced by tools/build_release.sh / `make dist`
 c64-x25519-v*.tar.gz
 
