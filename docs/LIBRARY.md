@@ -999,7 +999,7 @@ because of the conditional construction.
 ## 4.9 Precalc-table enumeration (c64-lib-contract §8.0 step-6)
 
 c64-x25519 ships [`docs/precalc-tables.md`](precalc-tables.md) plus
-`LIB_PRECALC_TABLE` macro invocations in `src/lib_manifest.s` satisfying
+`LIB_PRECALC_TABLE` macro invocations in `src/precalc_manifest.s` satisfying
 SPEC §8.0's catch-loop intake step. Each precalculated table that meets
 the §8.0 floor (≥ 256 B AND one of: REU-resident, hot-loop-read,
 page-aligned) is enumerated in both forms:
@@ -1011,7 +1011,7 @@ page-aligned) is enumerated in both forms:
   fifth argument) plus — unless the build defines
   `LIB_NO_BARE_EXPORTS` — the deprecated bare triple
   `LIB_PRECALC_<name>_*`. Cross-adopter audits grep via
-  `od65 --dump-exports build/lib/lib_manifest.o | grep _PRECALC_` —
+  `od65 --dump-exports build/lib/precalc_manifest.o | grep _PRECALC_` —
   the pattern is `_PRECALC_`, which matches both forms; the old
   `LIB_PRECALC_` pattern silently misses every prefixed export. Note
   `od65` reads objects, not archives: pointed at a `.a` it prints
@@ -1019,11 +1019,18 @@ page-aligned) is enumerated in both forms:
   (or the shipped per-object files), never the archive itself
   (SPEC v0.7.2).
 
-Three tables are enumerated today: `sqtab` (1024 B, RAM, shared per
-§8.1), `reu_mul` (131072 B, REU, shared per §8.2), `reu_mul_doubled`
-(196608 B = 3 REU banks × 64 KB, private — gated on `SQR_DMA_K`; the
-rationale field flags the c448/Ed448 re-classification trigger
-explicitly so a future audit can re-classify).
+Eleven tables are enumerated in the default build: `sqtab` (1024 B,
+RAM, shared per §8.1), `reu_mul` (131072 B, REU, shared per §8.2),
+`reu_mul_doubled` (196608 B = 3 REU banks × 64 KB, private — gated on
+`SQR_DMA_K`; the rationale field flags the c448/Ed448 re-classification
+trigger explicitly so a future audit can re-classify), and eight
+page-aligned 256 B constant tables from `src/data.s` (RODATA: built at
+assemble time, never written), private and in every profile, enumerated as `x25519_<symbol>` (`x25519_mul38_lo_tab`,
+`x25519_mul38_hi_tab`, `x25519_sqr_lo`, `x25519_sqr_hi`,
+`x25519_a24_b0`..`x25519_a24_b3`) because the bare `LIB_PRECALC_*`
+triple is shared by every adopter. `make lib-verify` fails naming any page-aligned table of
+≥ 256 B in the linked stub that has no entry
+(`tools/check_precalc_enumeration.py`).
 
 `src/precalc_table.inc` is a verbatim copy of the canonical macro
 source from c64-lib-contract SPEC §8.0; updates land via coordinated
@@ -1189,7 +1196,7 @@ differential suite in a VICE instance with no REU attached.
 | `LIB_X25519_RESIDENT_BYTES` | `8383` | `8207` |
 | `LIB_X25519_COLD_BYTES` | `826` | `160` |
 | `LIB_X25519_ZP_USAGE_BYTES` | `85` | `85` (unchanged — the generator allocates no new ZP) |
-| `LIB_PRECALC_*` exports | `sqtab`, `reu_mul`, `reu_mul_doubled` | `sqtab` only |
+| `LIB_PRECALC_*` exports | `sqtab`, `reu_mul`, `reu_mul_doubled`, the eight `x25519_*` RODATA tables | `reu_mul` and `reu_mul_doubled` absent; the rest unchanged |
 
 Two of these carry contract meaning worth spelling out:
 

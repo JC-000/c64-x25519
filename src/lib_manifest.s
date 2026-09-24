@@ -14,8 +14,9 @@
 ; (issues #78/#79): ld65 links whole object members, so the §5
 ; aggregates a consumer legitimately imports must not share a member
 ; with the deprecated bare §1 version names. This TU carries the §5
-; aggregates, the §8.x masks, and the §8.4 precalc-table enumeration;
-; src/lib_version.s carries the §1 version equates and nothing else.
+; aggregates and the §8.x masks; the §8.4 precalc-table enumeration is in
+; src/precalc_manifest.s, and src/lib_version.s carries the §1 version
+; equates and nothing else.
 ;
 ; These integer equates let a consumer cfg do assemble-time fit /
 ; collision checks before kicking off a 30-min compile + test cycle.

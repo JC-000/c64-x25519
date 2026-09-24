@@ -202,7 +202,7 @@ LIBX25519 = $(LIB_DIR)/libx25519.a
 
 .PHONY: all clean test test-slow test-ref test-vice lib lib-verify \
         lib-verify-shared lib-app-owned lib-verify-guards lib-verify-docs \
-        lib-verify-footprint lib-verify-footprint-negative \
+        lib-verify-footprint lib-verify-footprint-negative lib-verify-precalc \
         lib-verify-footprint-negative-arm \
         lib-verify-negative lib-verify-guards-legc \
         lib-verify-guards-legc-negative \
@@ -736,8 +736,10 @@ lib-verify-docs:
 # hint to match. That ca65 gap is why this was a label grep in the first
 # place.
 # Non-empty sentinel for the isolation check, per profile: 3 bare names per
-# enumerated table. onchip drops reu_mul (issue #72), 1764 drops
-# reu_mul_doubled (SQR_DMA_K=0). Stated per profile so the sentinel cannot
+# enumerated table. The 8 page-aligned tables from data.s (24 names) and
+# sqtab are in every profile; 1764 drops reu_mul_doubled (SQR_DMA_K=0), and
+# onchip drops both reu_mul (issue #72) and reu_mul_doubled (it forces
+# SQR_DMA_K=0). Stated per profile so the sentinel cannot
 # be satisfied by a build that simply enumerates fewer tables.
 ifeq ($(LIB_NOBARE),1)
 # -D LIB_NO_BARE_EXPORTS=1: src/precalc_table.inc suppresses the bare
@@ -749,11 +751,11 @@ LIB_VERIFY_BARE_VERSION_EXPECT = 0
 else
 LIB_VERIFY_BARE_VERSION_EXPECT = 4
 ifeq ($(X25519_PROFILE),onchip)
-LIB_VERIFY_BARE_PRECALC_EXPECT = 3
+LIB_VERIFY_BARE_PRECALC_EXPECT = 27
 else ifeq ($(X25519_PROFILE),1764)
-LIB_VERIFY_BARE_PRECALC_EXPECT = 6
+LIB_VERIFY_BARE_PRECALC_EXPECT = 30
 else
-LIB_VERIFY_BARE_PRECALC_EXPECT = 9
+LIB_VERIFY_BARE_PRECALC_EXPECT = 33
 endif
 endif
 
@@ -795,7 +797,7 @@ lib-verify-isolation: lib
 # length-24 names. It MUST fail, and MUST say the extraction dropped names
 # rather than reporting a clean archive -- three of this library's bare
 # LIB_PRECALC_* names are exactly 24 characters, so an unsafe extraction
-# reports "6 bare names" on an archive exporting 9.
+# reports "30 bare names" on a default archive exporting 33.
 # --- §5 basis cross-check negative leg ------------------------------------
 #
 # The footprint basis is a SUM OF OBJECT SIZES, which omits any padding ld65
@@ -832,8 +834,8 @@ lib-verify-isolation-negative: lib
 	          --expect-bare-precalc $(LIB_VERIFY_BARE_PRECALC_EXPECT) \
 	          --unsafe-extract 2>&1); rc=$$?; \
 	 if [ $$rc -eq 0 ]; then echo "FAIL: the unsafe extraction was not caught"; echo "$$out"; exit 1; fi; \
-	 if ! echo "$$out" | grep -q "extraction dropped 3 of 18"; then echo "FAIL: did not identify precalc_manifest.o's dropped names:"; echo "$$out"; exit 1; fi; \
-	 if ! echo "$$out" | grep -q "found 6"; then echo "FAIL: the non-empty sentinel did not catch the undercount:"; echo "$$out"; exit 1; fi; \
+	 if ! echo "$$out" | grep -q "precalc_manifest.o: extraction dropped 3 of 66 "; then echo "FAIL: did not identify precalc_manifest.o's dropped names:"; echo "$$out"; exit 1; fi; \
+	 if ! echo "$$out" | grep -q "expected 33 bare LIB_PRECALC_\* exports across the archive, found 30\."; then echo "FAIL: the non-empty sentinel did not catch the undercount:"; echo "$$out"; exit 1; fi; \
 	 echo "OK: reconciliation and sentinel both fire on a dropped-name extraction"
 
 
@@ -902,6 +904,17 @@ LIB_VERIFY_FOOTPRINT_CMD = python3 tools/check_footprint.py \
 lib-verify-footprint: lib $(LIB_VERIFY_PRG)
 	@$(LIB_VERIFY_FOOTPRINT_CMD)
 
+# §8.4: every page-aligned >=256 B table in the linked stub must have a
+# LIB_PRECALC_TABLE entry in this archive. Both sides are derived (stub map,
+# od65 over the archive members), so a new table without an entry fails here.
+LIB_VERIFY_PRECALC_CMD = python3 tools/check_precalc_enumeration.py \
+	--map $(LIB_VERIFY_DIR)/stub.map --labels $(LIB_VERIFY_DIR)/stub.labels \
+	--archive $(LIBX25519) \
+	--lib-dir $(LIB_DIR) --profile $(X25519_PROFILE)
+
+lib-verify-precalc: lib $(LIB_VERIFY_PRG)
+	@$(LIB_VERIFY_PRECALC_CMD)
+
 lib-verify: lib-verify-docs lib-verify-citations lib-verify-isolation lib $(LIB_VERIFY_PRG)
 	@set -e; \
 	test -s $(LIB_VERIFY_PRG) || (echo "FAIL: $(LIB_VERIFY_PRG) is empty" && exit 1); \
@@ -937,6 +950,7 @@ lib-verify: lib-verify-docs lib-verify-citations lib-verify-isolation lib $(LIB_
 	        && grep "$$sym" $(LIB_VERIFY_DIR)/stub.labels && exit 1); \
 	done; \
 	$(LIB_VERIFY_FOOTPRINT_CMD); \
+	$(LIB_VERIFY_PRECALC_CMD); \
 	bytes=$$(wc -c < $(LIB_VERIFY_PRG)); \
 	echo "OK: $(LIB_VERIFY_PRG) is $$bytes bytes, $(X25519_PROFILE)-profile symbol surface verified (mask \$$$(LIB_VERIFY_MASK_EXPECT))"
 
@@ -2549,9 +2563,13 @@ NOBARE_NEG_B_DIR = $(NOBARE_NEG_DIR)-b
 # rather than on the property — the failure the mode-axis comment at the top
 # of this file warns about, one axis over. The OK line counts the sets with
 # $(words …), so the reported number shrinks with them instead of over-claiming.
+# The eight 256 B page-aligned tables from src/data.s, enumerated in every profile
+# as x25519_<symbol> (src/precalc_manifest.s).
+NOBARE_RAM_TABLES = mul38_lo_tab mul38_hi_tab sqr_lo sqr_hi a24_b0 a24_b1 a24_b2 a24_b3
 NOBARE_ABSENT_SYMS_COMMON = \
 	LIB_VERSION_MAJOR LIB_VERSION_MINOR LIB_VERSION_PATCH LIB_ABI_VERSION \
-	LIB_PRECALC_sqtab_SIZE LIB_PRECALC_sqtab_REGION LIB_PRECALC_sqtab_SHARED
+	LIB_PRECALC_sqtab_SIZE LIB_PRECALC_sqtab_REGION LIB_PRECALC_sqtab_SHARED \
+	$(foreach t,$(NOBARE_RAM_TABLES),LIB_PRECALC_x25519_$(t)_SIZE LIB_PRECALC_x25519_$(t)_REGION LIB_PRECALC_x25519_$(t)_SHARED)
 NOBARE_ABSENT_SYMS_REU = \
 	LIB_PRECALC_reu_mul_SIZE LIB_PRECALC_reu_mul_REGION \
 	LIB_PRECALC_reu_mul_SHARED
@@ -2565,7 +2583,8 @@ NOBARE_ABSENT_SYMS_DOUBLED = \
 NOBARE_PRESENT_SYMS_COMMON = \
 	LIB_X25519_VERSION_MAJOR LIB_X25519_VERSION_MINOR \
 	LIB_X25519_VERSION_PATCH LIB_X25519_ABI_VERSION \
-	LIB_X25519_PRECALC_sqtab_SIZE
+	LIB_X25519_PRECALC_sqtab_SIZE \
+	$(foreach t,$(NOBARE_RAM_TABLES),LIB_X25519_PRECALC_x25519_$(t)_SIZE)
 NOBARE_PRESENT_SYMS_REU     = LIB_X25519_PRECALC_reu_mul_SIZE
 NOBARE_PRESENT_SYMS_DOUBLED = LIB_X25519_PRECALC_reu_mul_doubled_SIZE
 
