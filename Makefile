@@ -39,26 +39,31 @@
 # --- One top-level make per working tree (issue #140) ------------------------
 # The verify trees are fixed-name and most targets `rm -rf` theirs first, so
 # two concurrent runs in one tree break each other. A top-level make does not
-# read the body below: it re-runs itself, with every -f makefile it was given,
-# under lockf(1) on .make.lock, with -t 0 so a held lock is refused at once
-# (lockf exits 75). The kernel drops the lock when the inner make exits,
-# however it exits (SIGKILL included), so there is no stale state. MAKEFILES
-# reaches the inner make through the environment, so it is not passed again.
-# Recipes other -f makefiles give the goals would also run in this outer make,
-# without the body's variables, so here every recipe but the lock's runs under
-# SHELL=/usr/bin/true. Where /usr/bin/lockf is absent the body runs directly,
-# unlocked. .NOTPARALLEL covers `make -j` inside one run.
+# read the body below: it re-runs itself under lockf(1) on .make.lock, with
+# -t 0 so a held lock is refused at once (lockf exits 75). The kernel drops
+# the lock when the inner make exits, however it exits (SIGKILL included), so
+# there is no stale state. Where /usr/bin/lockf is absent the body runs
+# directly, unlocked. .NOTPARALLEL covers `make -j` inside one run.
+# Composing this file with other makefiles (-f or include) is refused: files
+# read before it are caught here, files read after it when the lock recipe
+# expands. The body's paths are relative to this directory anyway. MAKEFILES
+# files are allowed (anything they include is not) and are read by both the
+# outer and the inner make (via the environment).
 ifeq ($(MAKELEVEL)$(X25519_LOCKED)$(if $(wildcard /usr/bin/lockf),,nolockf),0)
+X25519_SELF  := $(lastword $(MAKEFILE_LIST))
 X25519_LOCK  := $(CURDIR)/.make.lock
 X25519_GOALS := $(if $(MAKECMDGOALS),$(MAKECMDGOALS),x25519-default-goal)
-SHELL := /usr/bin/true
+X25519_FOREIGN = $(filter-out $(X25519_SELF) $(MAKEFILES),$(MAKEFILE_LIST))
+X25519_NOCOMPOSE = composing the x25519 Makefile with other makefiles, by -f or include ($(X25519_FOREIGN)), is unsupported; run it with $$(MAKE) -C <its directory>
+ifneq ($(X25519_FOREIGN),)
+$(error $(X25519_NOCOMPOSE))
+endif
 .PHONY: $(X25519_GOALS) x25519-lock
 $(X25519_GOALS): x25519-lock ; @:
-x25519-lock: SHELL := /bin/sh
 x25519-lock:
+	$(if $(X25519_FOREIGN),$(error $(X25519_NOCOMPOSE)))
 	@[ ! -L "$(X25519_LOCK)" ] || rm -f "$(X25519_LOCK)"; \
-	 X25519_LOCKED=1 /usr/bin/lockf -s -k -t 0 "$(X25519_LOCK)" $(MAKE) \
-	   $(foreach f,$(filter-out $(MAKEFILES),$(MAKEFILE_LIST)),-f '$(f)') $(MAKECMDGOALS); \
+	 X25519_LOCKED=1 /usr/bin/lockf -s -k -t 0 "$(X25519_LOCK)" $(MAKE) -f '$(X25519_SELF)' $(MAKECMDGOALS); \
 	 rc=$$?; [ $$rc -ne 75 ] || echo "another make run holds $(X25519_LOCK); use a separate worktree" >&2; \
 	 exit $$rc
 else
@@ -876,17 +881,17 @@ lib-verify-fill-negative:
 	 echo "OK: the basis cross-check sees 255 B of ld65 fill, names LIB_X25519_DATA, and says UNDER-reports"
 
 # Scope: the expected counts below are those of the default profile in
-# bare mode. Three switches change that name set, and each was
-# measured failing on the counts rather than on the property, so each is
-# refused by name: the onchip and 1764 profiles (by X25519_PROFILE label, or
-# by whole define token -- X25519_ONCHIP_MUL=<non-zero>; SQR_DMA_K bare or
-# =0, since ca65 makes a bare -D 0), and LIB_NO_BARE_EXPORTS. SHARED_*,
-# LIB_SHARED_SQTAB_BASE and X25519_ONCHIP_MUL=0 / bare leave the counts
-# unchanged and were measured passing, so they are not refused.
+# bare mode. The onchip and 1764 profiles and LIB_NO_BARE_EXPORTS change that
+# name set and were measured failing on the counts rather than on the
+# property, so they are refused by name. Fail-safe on the value-gated
+# switches: ANY SQR_DMA_K define is refused (the default needs none, and
+# spellings such as 0x0 also select 1764), as is any X25519_ONCHIP_MUL define
+# other than bare or literal =0 (both 0 to ca65). SHARED_* and
+# LIB_SHARED_SQTAB_BASE leave the counts unchanged and are not refused.
 ISONEG_DEFS := $(patsubst -D%,%,$(ALL_DEFINES))
 ISONEG_OFF_SCOPE = $(strip $(filter X25519_PROFILE=onchip X25519_PROFILE=1764,X25519_PROFILE=$(X25519_PROFILE)) \
   $(filter-out X25519_ONCHIP_MUL=0,$(filter X25519_ONCHIP_MUL=%,$(ISONEG_DEFS))) \
-  $(filter SQR_DMA_K SQR_DMA_K=0,$(ISONEG_DEFS)) \
+  $(filter SQR_DMA_K SQR_DMA_K=%,$(ISONEG_DEFS)) \
   $(if $(LIB_NOBARE),LIB_NO_BARE_EXPORTS))
 ifneq ($(filter lib-verify-isolation-negative,$(MAKECMDGOALS)),)
 ifneq ($(ISONEG_OFF_SCOPE),)
