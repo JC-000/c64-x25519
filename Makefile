@@ -316,16 +316,27 @@ test-vice: $(PRG)
 	python3 tools/test_fe_reduce_wide_bound.py
 	$(MAKE) test-vice-reloc
 
-# Relocated-bank build: every REU access must follow X25519_REU_BANK. The
-# default build uses bank 0, where a hardcoded 0 is indistinguishable from
-# the knob, so the mul and sqr stress also run on a build whose window
-# (base..base+5) does not overlap the default one. The tests read the
-# linked labels and refuse to run unless both X25519_REU_BANK and the
-# exported LIB_X25519_SHARED_REU_MUL_BANK equal RELOC_BANK.
+# Relocated-bank build (#158). The default build uses bank 0, where a
+# hardcoded bank 0 is indistinguishable from the knob, so this leg rebuilds
+# with X25519_REU_BANK=RELOC_BANK (window base..base+5, disjoint from the
+# default 0..5) and runs, on that build:
+#   - the fe25519_mul and fe25519_sqr stress (mul row fetch, sqr doubled
+#     and carry fetches, and the reu_mul_init stashes that fill them);
+#   - test_reu_fetch_mul_row.py, which JSRs the §8.2 entry
+#     reu_fetch_mul_row directly for rows on both table banks.
+# reu_probe is NOT covered. Each script reads the linked labels and refuses
+# to run unless X25519_REU_BANK and LIB_X25519_SHARED_REU_MUL_BANK both
+# equal RELOC_BANK. Skipped under onchip (no REU code) and C64_NO_REU.
 RELOC_DIR     = build-reloc
 RELOC_BANK    = 9
 RELOC_REUSIZE = 2048
+RELOC_SKIP    = $(strip $(filter onchip,$(X25519_PROFILE)) \
+                $(findstring X25519_ONCHIP_MUL=1,$(ALL_DEFINES)) \
+                $(if $(C64_NO_REU),C64_NO_REU))
 test-vice-reloc:
+ifneq ($(RELOC_SKIP),)
+	@echo "SKIP test-vice-reloc: no REU in this configuration ($(RELOC_SKIP)); the relocated-bank leg only applies to REU builds"
+else
 	rm -rf $(RELOC_DIR)
 	$(MAKE) BUILD_DIR=$(RELOC_DIR) LIB_DIR=$(RELOC_DIR)/lib \
 	        CA65FLAGS="$(CA65FLAGS)" CONTRACT_ZP_DEFINES="$(CONTRACT_ZP_DEFINES)" \
@@ -336,7 +347,9 @@ test-vice-reloc:
 	       X25519_EXPECT_REU_BANK=$(RELOC_BANK); \
 	echo "=== VICE stress on relocated REU bank $(RELOC_BANK) ==="; \
 	python3 tools/test_fe_mul_stress.py; \
-	python3 tools/test_fe_sqr_stress.py
+	python3 tools/test_fe_sqr_stress.py; \
+	python3 tools/test_reu_fetch_mul_row.py
+endif
 
 # Reference-only self-test (no VICE, no build required).
 test-ref:

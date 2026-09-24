@@ -52,6 +52,10 @@ def check_expected_bank(labels):
             print(f"FATAL: {labels_path()}: {name} = {got}, expected {want} "
                   f"(X25519_EXPECT_REU_BANK) - wrong build selected")
             sys.exit(1)
+    if os.environ.get("C64_NO_REU"):
+        print("FATAL: X25519_EXPECT_REU_BANK is set but C64_NO_REU disables "
+              "the REU; the relocated-bank check needs one")
+        sys.exit(1)
     # Window is base+0..base+5; the REU must hold it or VICE wraps banks.
     need_kb = (want + 6) * 64
     have_kb = int(os.environ.get("X25519_REUSIZE", "512"))
@@ -60,4 +64,5 @@ def check_expected_bank(labels):
               f"{want}..{want + 5} (needs {need_kb} KB)")
         sys.exit(1)
     print(f"Build {build_dir()}: X25519_REU_BANK = "
-          f"LIB_X25519_SHARED_REU_MUL_BANK = {want}, REU {have_kb} KB")
+          f"LIB_X25519_SHARED_REU_MUL_BANK = {want}; "
+          f"VICE {' '.join(reu_args())}")
