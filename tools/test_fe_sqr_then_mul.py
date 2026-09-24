@@ -4,6 +4,12 @@ c64-lib-contract issue #15 SMC-patch refactor of reu_fetch_doubled_row.
 
 Background
 ==========
+NOTE: the SMC patch described below was removed for issue #134 —
+reu_fetch_doubled_row now issues DMA #1 itself against the doubled
+banks and touches no code bytes. R1 therefore has nothing to restore,
+but the test still guards it (a wrong bank left behind would still
+corrupt the next fe25519_mul) and R2's latch invariant is unchanged.
+
 reu_fetch_doubled_row's DMA #1 was refactored in v0.7.0 prep to
 SMC-patch the canonical reu_fetch_mul_row primitive at its
 X25519_REU_BANK immediate-operand byte (label

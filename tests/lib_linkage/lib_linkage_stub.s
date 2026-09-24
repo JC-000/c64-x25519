@@ -196,9 +196,12 @@ precalc_sqtab_refs:
 .endif
 
 .if ::X25519_ONCHIP_MUL = 0
-; SPEC §8.2 canonical entry point (v0.7-prep+).
-; SPEC §8.2 SMC patch hook (v0.7-prep+); unlocks the #15 follow-up.
+; SPEC §8.2 canonical entry point, plus x25519's private, deprecated
+; SMC hook (owner builds only; not §8.2 surface).
 public_spec_82_refs:
         .addr reu_mul_tables_init
+.ifndef SHARED_REU_MUL_FETCH
+        ; x25519-own hook; not §8.2 surface, so absent when fetch is deferred.
         .addr reu_fetch_mul_row_bank_patch
+.endif
 .endif ; X25519_ONCHIP_MUL = 0 (issue #72 — §8.2 surface absent in onchip)

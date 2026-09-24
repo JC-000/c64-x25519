@@ -285,11 +285,12 @@ sqtab_hi = LIB_SHARED_SQTAB_BASE + $0200
 ; ITER-1 in the slow path).
 ;
 ; REU_SETTLE — the settle, as a macro (not a proc) because three of the
-; twelve execute sites are on the fe25519_mul / fe25519_sqr hot path.
+; thirteen execute sites are on the fe25519_mul / fe25519_sqr hot path.
 ;
 ;   Fast path (the only path ever observed on hardware, and the only
-;   path under VICE): lda abs / and / eor / beq = 11 cycles, 9 bytes,
-;   taken iff the single read shows bit 6 SET and bit 5 CLEAR. Reading
+;   path under VICE): lda abs / and / eor / beq = 11 cycles,
+;   taken iff the single read shows bit 6 SET and bit 5 CLEAR (the whole
+;   expansion, jsr included, is 12 bytes, od65-measured). Reading
 ;   $DF00 clears bits 5-7, so the byte is read ONCE into A and every
 ;   decision is made on that sample.
 ;

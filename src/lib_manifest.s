@@ -62,66 +62,20 @@
 ;
 ; LIB_X25519_RESIDENT_BYTES
 ;   Approximate code + data footprint that must remain CPU-resident
-;   in any consumer's address space. Depends on the SQR_DMA_K build
-;   constant (the 1764 variant drops the @dbl_gen / doubled-stash
-;   sections from reu_mul_init):
+;   in any consumer's address space:
 ;
-;     SQR_DMA_K > 0 (default, =22):
-;       LIB_X25519_CODE total ≈ 3895 B  (x25519 717 + fe25519 2750 +
-;                               mul_8x8 63 + x25519_init 213 + util 152)
-;       LIB_X25519_DATA total ≈ 3584 B  (x25519_reu_fault + the two
-;                               settle bytes are absorbed by the
-;                               pre-existing page pad)
-;       SQTAB         1024 B
-;       ---------------------------------------------------------------
-;                            ≈ 8503 B RESIDENT
-;       LIB_X25519_INIT_CODE ≈ 947 B COLD (x25519_init 787 =
-;                               reu_mul_init 427 + reu_probe 360;
-;                               mul_8x8 160 = sqtab_init + sq_* temps)
-;       (v0.12.0 arrived as TWO deltas, and this breakdown must be
-;        updated for both — the second one is what made it drift:
-;          (a) +93 RESIDENT / +121 COLD for the §8.2 v0.13.0
-;              REU_SETTLE — 9 B at each of the 12 execute sites, 3
-;              resident + 9 cold, plus the shared resident
-;              x25519_reu_settle_slow proc and the fault-byte clears.
-;              Was 3775 / 8383 / 826 at v0.11.x -> 3868 / 8476 / 947.
-;          (b) +27 RESIDENT for the fe25519_mul_a24 byte-31 carry-out
-;              fold (audit A1 / L32; see the note at _BASE_RESIDENT
-;              below) -> 3895 / 8503 / 947, the values above.
-;        Delta (b) was applied to the _BASE_RESIDENT equates and NOT
-;        to this itemisation, which is why it read 2723 / 3868 / 8476
-;        until 2026-08-30. If you adjust one, adjust the other: the
-;        equates are what consumers see, this breakdown is what
-;        explains them, and only the equates are checked by anything.)
+;       RESIDENT = sum(LIB_X25519_CODE) + sum(LIB_X25519_DATA)
+;                  + the 1024 B sqtab window
+;       COLD     = sum(LIB_X25519_INIT_CODE)
 ;
-;     SQR_DMA_K = 0 (lib-x25519-1764 variant):
-;       LIB_X25519_CODE total ≈ 3747 B  (x25519 717 + fe25519 2696 +
-;                               mul_8x8 63 + x25519_init 119 + util 152:
-;                               x25519_init.o drops to 119 B —
-;                               reu_fetch_doubled_row gated out — and
-;                               fe25519.o to 2696 B per the #61
-;                               .if ::SQR_DMA_K DMA-dispatch gating)
-;       LIB_X25519_DATA total ≈ 3584 B
-;       SQTAB         1024 B
-;       ---------------------------------------------------------------
-;                            ≈ 8355 B RESIDENT
-;       LIB_X25519_INIT_CODE ≈ 733 B COLD (x25519_init 573 =
-;                               reu_mul_init 213 + reu_probe 360;
-;                               reu_mul_init loses the doubled-table
-;                               generation at K=0)
-;       (v0.12.0, same two deltas as the default profile:
-;        +81 RESIDENT / +85 COLD for REU_SETTLE — 2 resident + 6 cold
-;        execute sites survive at K=0 — then +27 RESIDENT for the
-;        mul_a24 fold. Was 8247 / 648 at v0.11.x -> 8328 / 733 ->
-;        8355 / 733. This block carried the same stale-by-27 resident
-;        as the default one until 2026-08-30; its settle deltas were
-;        additionally written as "+70 / +223", which did not reconcile
-;        with its own endpoints — 8247+70 = 8317, not 8328, and
-;        648+223 = 871, not 733. The figures above are the differences
-;        the file's own endpoints require. The v0.11.x endpoints
-;        themselves are historical and were not re-measured here; the
-;        CURRENT values are od65-measured and are what the equates
-;        below carry.)
+;   summed over the shipped archive's members. No per-member breakdown
+;   is kept here, because a hand-written one drifts: `make
+;   lib-verify-footprint` (run inside every lib-verify, all seven
+;   profiles) derives both from `od65 --dump-segsize` and fails if the
+;   _BASE_* / _D_* equates below disagree, printing the per-member
+;   figures when it does. SQR_DMA_K = 0 (lib-x25519-1764) is smaller
+;   because reu_fetch_doubled_row, fe25519_sqr's DMA dispatch and
+;   reu_mul_init's doubled-table generation are gated out.
 ;
 ;   (Refreshed 2026-07-19 for the issue-#68 cold-segment split: the
 ;   init-only procs moved to LIB_X25519_INIT_CODE, so RESIDENT and
@@ -206,27 +160,17 @@ LIB_X25519_ZP_USAGE_BYTES = x25519_zp_bytes
 .if ::X25519_ONCHIP_MUL
 ; Onchip profile (issue #72): zero REU banks — this zero IS the SPEC §5
 ; "no REU" declaration ("Zero if no REU", SPEC.md §5; polyval
-; precedent). RESIDENT = LIB_X25519_CODE (3626) + LIB_X25519_DATA
-; (3584) + sqtab (1024); COLD = LIB_X25519_INIT_CODE (sqtab_init only
-; — reu_mul_init/reu_probe are gated out). Measured via od65 at
-; v0.8.0 (`make lib-x25519-onchip` prints the per-object dump).
-; All three _BASE_RESIDENT values +27 B at v0.12.0: the fe25519_mul_a24
-; byte-31 carry-out fold (audit 2026-08-28 A1 / L32), od65-measured
-; and profile-independent. The "2711 -> 2738" pin this note used to
-; carry was measured on the audit branch BEFORE the §8.2 settle merged
-; into fe25519.s, so it reproduces on no shipped profile and should not
-; be read as a current figure. Current od65-measured fe25519.o
-; LIB_X25519_CODE: 2750 default, 2696 1764, 2692 onchip. The +27 claim
-; itself still holds — it is carried in all three _BASE_RESIDENT
-; values below, and the itemisations above were corrected to match on
-; 2026-08-30.
+; precedent). COLD holds sqtab_init only — reu_mul_init/reu_probe are
+; gated out. The _BASE_* values below are checked against od65 by
+; `make lib-verify-footprint` in every profile, so no derivation of
+; them is restated here.
 LIB_X25519_REU_BANKS_USED = 0
 _BASE_RESIDENT = 8234
 _BASE_COLD     = 160
 .elseif SQR_DMA_K
 LIB_X25519_REU_BANKS_USED = $3B << X25519_REU_BANK
 .assert X25519_REU_BANK <= 26, error, "X25519_REU_BANK > 26 shifts the top of the 5-bank $3B window past bit 31 and the exported LIB_X25519_REU_BANKS_USED silently drops it (SPEC §5: banks 0-31)"
-_BASE_RESIDENT = 8506
+_BASE_RESIDENT = 8521
 _BASE_COLD     = 947
 .else
 LIB_X25519_REU_BANKS_USED = $03 << X25519_REU_BANK
@@ -275,7 +219,7 @@ _BASE_COLD     = 733
 ; (SPEC v0.9.1-C: INIT and FETCH move together) additionally drops the
 ; resident reu_fetch_mul_row body = 32 B RESIDENT. (Re-measured
 ; 2026-08-28 for v0.12.0: the §8.2 v0.13.0 REU_SETTLE expansion adds
-; 9 B per execute site plus one shared x25519_reu_settle_slow proc
+; 12 B per execute site plus one shared x25519_reu_settle_slow proc
 ; (RESIDENT, not deferrable — it also serves reu_probe and the
 ; doubled-row DMA #2), so reu_mul_init grew 364 -> 427 / 186 -> 213
 ; and reu_fetch_mul_row 20 -> 32. Measured by assembling x25519_init.s

@@ -42,8 +42,7 @@ mul_tables_init:
 ; §8.2: the canonical init entry the provider owns. x25519's own
 ; reu_mul_init / reu_mul_tables_init exports are gated out
 ; (src/x25519_init.s), as are the reu_init_a/b-backed ZP_INIT_A/B
-; alias equates (src/reu_config.s). The per-row fetch surface
-; (reu_fetch_mul_row / _bank_patch) stays x25519-own.
+; alias equates (src/reu_config.s).
 .export reu_mul_tables_init
 .segment "CODE"
 reu_mul_tables_init:
@@ -51,14 +50,15 @@ reu_mul_tables_init:
 .endif
 
 .ifdef SHARED_REU_MUL_FETCH
-; §8.2 fetch half (SPEC v0.9.1): canonical per-row fetch + the
-; promoted SMC bank-patch label (contract #15). Stand-in only.
+; §8.2 fetch half: exactly the surface SPEC v1.2.2 §8.2 names for a
+; provider (reu_fetch_mul_row, A = a) and nothing more, so a deferring
+; archive that still demands a provider-internal name (e.g.
+; reu_fetch_mul_row_bank_patch, which no other provider exports) fails
+; this link. Stand-in only.
 .export reu_fetch_mul_row
-.export reu_fetch_mul_row_bank_patch
 .segment "CODE"
 reu_fetch_mul_row:
         rts
-reu_fetch_mul_row_bank_patch := reu_fetch_mul_row
 .endif
 
 .ifdef SHARED_CT_MUL_8X8

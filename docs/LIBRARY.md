@@ -483,7 +483,7 @@ compile + VICE test cycle:
 |---|---|---|
 | `LIB_X25519_ZP_USAGE_BYTES` | `85` | Total bytes of ZP slots the library claims (sum of the `.exportzp`-ed slots in `src/zp_config.s`, `fe_wide` included) |
 | `LIB_X25519_REU_BANKS_USED` | `$3B` default / `$03` for `lib-x25519-1764` / `0` for `lib-x25519-onchip` | Bitmask of REU banks claimed for mul tables. **Default build** (banks 0, 1, 3, 4, 5): `$3B << X25519_REU_BANK`. **1764 variant** (`make lib-x25519-1764`, `SQR_DMA_K=0`): `$03 << X25519_REU_BANK` — banks 0, 1 only, drops the doubled-table cluster. Bank 2 is never claimed in either build. **onchip variant** (`make lib-x25519-onchip`, `X25519_ONCHIP_MUL=1`): plain `0` — no shift, no banks. Per SPEC §5 the zero *is* the "no REU" declaration, not an unset field; see §4.11. See [`REU_USAGE_ANALYSIS.md`](REU_USAGE_ANALYSIS.md) §"Group B SHIPPED" for the 1764 rationale + measured trade-offs |
-| `LIB_X25519_RESIDENT_BYTES` | `8506` default / `8355` for `lib-x25519-1764` / `8234` for `lib-x25519-onchip` | Approximate code + data + sqtab footprint that must remain CPU-resident. Dropped from 9209/8895 at the issue-#68 cold-segment split — the init-only code is now counted in `LIB_X25519_COLD_BYTES` (SPEC §5 disjoint partition; see §4.10). All three figures od65-measured; the onchip value has been measured-exact since the profile shipped in v0.8.0. v0.12.0 grew default/1764 by +93/+81 for the §8.2 v0.13.0 REU settle (§4.12); onchip touches no REU and is unchanged |
+| `LIB_X25519_RESIDENT_BYTES` | `8521` default / `8355` for `lib-x25519-1764` / `8234` for `lib-x25519-onchip` | Approximate code + data + sqtab footprint that must remain CPU-resident. Dropped from 9209/8895 at the issue-#68 cold-segment split — the init-only code is now counted in `LIB_X25519_COLD_BYTES` (SPEC §5 disjoint partition; see §4.10). All three figures od65-measured; the onchip value has been measured-exact since the profile shipped in v0.8.0. v0.12.0 grew default/1764 by +93/+81 for the §8.2 v0.13.0 REU settle (§4.12); onchip touches no REU and is unchanged. Default +15 since, for `reu_fetch_doubled_row` issuing its own row DMA (#134; not present in 1764) |
 | `LIB_X25519_COLD_BYTES` | `947` default / `733` for `lib-x25519-1764` / `160` for `lib-x25519-onchip` | Approximate footprint a consumer MAY reclaim/overlay after init — the `LIB_X25519_INIT_CODE` segment (issue #68; see §4.10). The onchip segment holds `sqtab_init` alone, so it is much smaller. v0.12.0: +121/+85 for the nine boot-time settle sites (§4.12) |
 
 The values are approximate ("within 5% is fine" per SPEC §5), though
@@ -655,15 +655,20 @@ duplicate.
 
 ### §8.x canonical names and `x25519.inc` (#130)
 
-The four canonical §8.x names are declared with **`.global`**, not
+The three canonical §8.x names are declared with **`.global`**, not
 `.import`:
 
 | name | declared as | §8.x clause |
 |---|---|---|
 | `mul_tables_init` | `.global` | §8.1 |
 | `reu_mul_tables_init` | `.global` | §8.2 |
-| `reu_fetch_mul_row_bank_patch` | `.global` | §8.2 (fetch half) |
 | `ct_mul_8x8` | `.global` | §8.3 |
+
+`reu_fetch_mul_row_bank_patch` is also declared `.global`, but it is
+not a canonical name: it is x25519-private and deprecated, not §8.2
+surface. Owner builds export it; a `SHARED_REU_MUL_FETCH` build does
+not, no sibling provider supplies it, and a §8.2 owner need not define
+it. Everything below is about the three canonical names.
 
 The reason is that a deferral switch does not say *who* provides the
 primitive. SPEC §8.0 allows either a sibling adopter or the consumer's
@@ -820,7 +825,7 @@ Manifest equates in the variant archive report the smaller claim:
 | Equate | Default build | 1764 variant |
 |---|---|---|
 | `LIB_X25519_REU_BANKS_USED` | `$3B` (banks 0, 1, 3, 4, 5) | `$03` (banks 0, 1) |
-| `LIB_X25519_RESIDENT_BYTES` | `8506` | `8355` |
+| `LIB_X25519_RESIDENT_BYTES` | `8521` | `8355` |
 | `LIB_X25519_COLD_BYTES` | `947` | `733` |
 | `LIB_X25519_ZP_USAGE_BYTES` | `85` | `85` (unchanged) |
 | `LIB_VERSION_*` | release version | same (same source tree) |
@@ -966,12 +971,12 @@ reu_fetch_mul_row_bank_patch := reu_fetch_mul_row::bank_lda + 1
 ```
 
 Address of the immediate-operand byte of the `lda #X25519_REU_BANK`
-instruction inside `reu_fetch_mul_row`. An SMC caller can `sta` here
-to retarget the fetch to a different REU bank base without rebuilding
-the library. No-op for canonical callers; consumed today by
-`reu_fetch_doubled_row`'s DMA #1 (see §4.10) to retarget to
-`X25519_REU_BANK_DOUBLED` for one call, then restore. The label is a
-regular local (not `@cheap`) per ca65's `proc::label` scope rules.
+instruction inside `reu_fetch_mul_row`. **Deprecated:** it is not part
+of the SPEC §8.2 surface, no other §8.2 provider exports it, and nothing
+in this library patches it any more — `reu_fetch_doubled_row` issues
+its own DMA against the doubled banks. It is still exported by owner
+builds (not under `SHARED_REU_MUL_FETCH`) for the §6.5 deprecation
+window; do not build on it.
 
 ### Symbolic bank names
 
@@ -1207,7 +1212,7 @@ differential suite in a VICE instance with no REU attached.
 |---|---|---|
 | `LIB_X25519_REU_BANKS_USED` | `$3B` (banks 0, 1, 3, 4, 5) | `0` |
 | `LIB_X25519_SHARED_PRIMITIVES` | `$0007` (§8.1 + §8.2 + §8.3) | `$0005` (§8.1 + §8.3) |
-| `LIB_X25519_RESIDENT_BYTES` | `8506` | `8234` |
+| `LIB_X25519_RESIDENT_BYTES` | `8521` | `8234` |
 | `LIB_X25519_COLD_BYTES` | `947` | `160` |
 | `LIB_X25519_ZP_USAGE_BYTES` | `85` | `85` (unchanged — the generator allocates no new ZP) |
 | `LIB_PRECALC_*` exports | `sqtab`, `reu_mul`, `reu_mul_doubled`, the eight `x25519_*` RODATA tables | `reu_mul` and `reu_mul_doubled` absent; the rest unchanged |
@@ -1273,9 +1278,10 @@ post-execute settle meeting the bracketed floor — **≥ 49 cycles at
 **unbracketed** by the contract; **c64-x25519 claims conformance at
 ≤ 48 MHz only** and makes no statement about 64 MHz.
 
-Since v0.12.0 all twelve execute sites in the library — the three on
-the hot path (`reu_fetch_mul_row`, `reu_fetch_doubled_row`'s inline
-DMA #2, `fe25519_mul`'s inlined row fetch) and the nine at boot (five
+All thirteen execute sites in the library — the four resident ones
+(`reu_fetch_mul_row`, `reu_fetch_doubled_row`'s DMA #1 and DMA #2,
+`fe25519_mul`'s inlined row fetch; all but `reu_fetch_mul_row` are on
+the in-tree hot path) and the nine at boot (five
 stashes in `reu_mul_init`, four in `reu_probe`) — are followed by the
 `REU_SETTLE` macro from `src/constants.s`. It reads `$DF00` **once per
 iteration** (a read clears bits 5–7, so the value is captured in A and
@@ -1349,17 +1355,17 @@ clobber **A and the carry flag** -- X and Y are preserved. The carry is
 *not* preserved: `reu_fetch_mul_row` computes its bank byte with
 `asl` (which destroys the entry carry) followed by `adc #0` (which
 overwrites it), so C on return is that add's carry-out;
-`reu_fetch_doubled_row` inherits this through its `jsr
-reu_fetch_mul_row`. The §8.2 settle keeps its bounded spin counter in
+`reu_fetch_doubled_row` clobbers C the same way, through the identical
+`asl` / `adc #0` bank computation in its own DMA #1. The §8.2 settle keeps its bounded spin counter in
 memory (`x25519_reu_settle_cnt`), not in X, so the pre-existing
 "clobbers A" convention is unchanged in the X/Y dimension and a
 consumer that JSRs `reu_fetch_mul_row` directly need not save X or Y --
 but it must not carry a live C across the call. (Earlier drafts of the
-settle used X as the counter; the routine banners at
-`src/x25519_init.s:357-362` and `:471-472` are authoritative. The
-settle's own banner at `:406` does claim C preserved, and that is correct
-and verified -- it is the fetch routines' arithmetic, not the settle,
-that clobbers C.)
+settle used X as the counter; the `Clobbers:` lines in the banners of
+`reu_fetch_mul_row` and `reu_fetch_doubled_row` in `src/x25519_init.s`
+are authoritative. The banner of `x25519_reu_settle_slow` does claim C
+preserved, and that is correct and verified -- it is the fetch routines'
+arithmetic, not the settle, that clobbers C.)
 
 Cost: +1,106,192 cycles per `x25519_scalarmult` (+0.42 %;
 262,318,045 → 263,424,237 cycles, 15,389.3 → 15,454.2 jif on this

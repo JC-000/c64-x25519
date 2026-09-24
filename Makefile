@@ -561,13 +561,18 @@ LIB_VERIFY_SYMS_CT_OWN = mul_8x8
 #   _REU_OWN     x25519-private init name — gated out of a deferral build
 #   _REU_CANON   canonical §8.2 entry — own standalone, provider stand-in
 #                under deferral, present either way
-#   _REU_SURFACE fetch hook + placement equates + precalc row — x25519-own
-#                in every REU-consuming build (the deferral moves the init
+#   _REU_SURFACE fetch entry + placement equates + precalc row — present
+#                in every REU-consuming build (the deferral moves the
 #                provider, not the table consumption)
+#   _REU_HOOK    x25519-own SMC hook inside our reu_fetch_mul_row. Not §8.2
+#                surface: absent when fetch is deferred, and the provider
+#                stand-in does not export it, so a deferring archive that
+#                still imports it fails to link.
 LIB_VERIFY_SYMS_REU_OWN = reu_mul_init \
 	LIB_X25519_SHARED_REU_MUL_ZP_INIT_A LIB_X25519_SHARED_REU_MUL_ZP_INIT_B
 LIB_VERIFY_SYMS_REU_CANON = reu_mul_tables_init
-LIB_VERIFY_SYMS_REU_SURFACE = reu_fetch_mul_row reu_fetch_mul_row_bank_patch \
+LIB_VERIFY_SYMS_REU_HOOK = reu_fetch_mul_row_bank_patch
+LIB_VERIFY_SYMS_REU_SURFACE = reu_fetch_mul_row \
 	X25519_REU_BANK X25519_REU_OFFSET \
 	X25519_REU_BANK_DOUBLED X25519_REU_BANK_CARRY \
 	LIB_X25519_SHARED_REU_MUL_BANK LIB_X25519_SHARED_REU_MUL_OFFSET \
@@ -575,7 +580,7 @@ LIB_VERIFY_SYMS_REU_SURFACE = reu_fetch_mul_row reu_fetch_mul_row_bank_patch \
 	LIB_X25519_SHARED_REU_MUL_STAGE_LO LIB_X25519_SHARED_REU_MUL_STAGE_HI
 
 LIB_VERIFY_SYMS_REU = $(LIB_VERIFY_SYMS_REU_OWN) $(LIB_VERIFY_SYMS_REU_CANON) \
-	$(LIB_VERIFY_SYMS_REU_SURFACE)
+	$(LIB_VERIFY_SYMS_REU_HOOK) $(LIB_VERIFY_SYMS_REU_SURFACE)
 
 # Per-profile expected symbol sets + the expected
 # LIB_X25519_SHARED_PRIMITIVES / LIB_X25519_SHARED_CONSUMES values
@@ -616,17 +621,17 @@ LIB_VERIFY_SYMS_ABSENT = $(LIB_VERIFY_SYMS_SQTAB_OWN)
 LIB_VERIFY_MASK_EXPECT = 000006
 LIB_VERIFY_CONSUMES_EXPECT = 000007
 LIB_VERIFY_BANKS_EXPECT = 00003B
-LIB_VERIFY_RESIDENT_EXPECT = 00213A
+LIB_VERIFY_RESIDENT_EXPECT = 002149
 LIB_VERIFY_COLD_EXPECT = 000313
 else ifeq ($(X25519_PROFILE),shared-reu)
 LIB_VERIFY_SYMS_EXPECT = $(LIB_VERIFY_SYMS_SQTAB_OWN) $(LIB_VERIFY_SYMS_COMMON) \
 	$(LIB_VERIFY_SYMS_CT_CANON) $(LIB_VERIFY_SYMS_CT_OWN) \
 	$(LIB_VERIFY_SYMS_REU_CANON) $(LIB_VERIFY_SYMS_REU_SURFACE)
-LIB_VERIFY_SYMS_ABSENT = $(LIB_VERIFY_SYMS_REU_OWN)
+LIB_VERIFY_SYMS_ABSENT = $(LIB_VERIFY_SYMS_REU_OWN) $(LIB_VERIFY_SYMS_REU_HOOK)
 LIB_VERIFY_MASK_EXPECT = 000005
 LIB_VERIFY_CONSUMES_EXPECT = 000007
 LIB_VERIFY_BANKS_EXPECT = 00003B
-LIB_VERIFY_RESIDENT_EXPECT = 00211A
+LIB_VERIFY_RESIDENT_EXPECT = 002129
 LIB_VERIFY_COLD_EXPECT = 000208
 else ifeq ($(X25519_PROFILE),shared-ct)
 LIB_VERIFY_SYMS_EXPECT = $(LIB_VERIFY_SYMS_SQTAB_OWN) $(LIB_VERIFY_SYMS_COMMON) \
@@ -635,18 +640,18 @@ LIB_VERIFY_SYMS_ABSENT = $(LIB_VERIFY_SYMS_CT_OWN)
 LIB_VERIFY_MASK_EXPECT = 000003
 LIB_VERIFY_CONSUMES_EXPECT = 000007
 LIB_VERIFY_BANKS_EXPECT = 00003B
-LIB_VERIFY_RESIDENT_EXPECT = 0020FB
+LIB_VERIFY_RESIDENT_EXPECT = 00210A
 LIB_VERIFY_COLD_EXPECT = 0003B3
 else ifeq ($(X25519_PROFILE),shared-all)
 LIB_VERIFY_SYMS_EXPECT = $(LIB_VERIFY_SYMS_COMMON) \
 	$(LIB_VERIFY_SYMS_CT_CANON) \
 	$(LIB_VERIFY_SYMS_REU_CANON) $(LIB_VERIFY_SYMS_REU_SURFACE)
 LIB_VERIFY_SYMS_ABSENT = $(LIB_VERIFY_SYMS_CT_OWN) $(LIB_VERIFY_SYMS_REU_OWN) \
-	$(LIB_VERIFY_SYMS_SQTAB_OWN)
+	$(LIB_VERIFY_SYMS_REU_HOOK) $(LIB_VERIFY_SYMS_SQTAB_OWN)
 LIB_VERIFY_MASK_EXPECT = 000000
 LIB_VERIFY_CONSUMES_EXPECT = 000007
 LIB_VERIFY_BANKS_EXPECT = 00003B
-LIB_VERIFY_RESIDENT_EXPECT = 0020DB
+LIB_VERIFY_RESIDENT_EXPECT = 0020EA
 LIB_VERIFY_COLD_EXPECT = 000168
 else
 LIB_VERIFY_SYMS_EXPECT = $(LIB_VERIFY_SYMS_SQTAB_OWN) $(LIB_VERIFY_SYMS_COMMON) \
@@ -656,7 +661,7 @@ LIB_VERIFY_SYMS_ABSENT =
 LIB_VERIFY_MASK_EXPECT = 000007
 LIB_VERIFY_CONSUMES_EXPECT = 000007
 LIB_VERIFY_BANKS_EXPECT = 00003B
-LIB_VERIFY_RESIDENT_EXPECT = 00213A
+LIB_VERIFY_RESIDENT_EXPECT = 002149
 LIB_VERIFY_COLD_EXPECT = 0003B3
 endif
 
@@ -1205,7 +1210,7 @@ lib-verify-negative:
 #     COLD           947 -> 160   (x25519_init.o's 787 B
 #                                  LIB_X25519_INIT_CODE goes away entirely;
 #                                  mul_8x8.o's 160 B is all that remains)
-#     x25519_init.o  LIB_X25519_CODE 213 -> 10   (NOT to zero -- the §8.2
+#     x25519_init.o  LIB_X25519_CODE 231 -> 10   (NOT to zero -- the §8.2
 #                                  members shrink to a 10-byte residue,
 #                                  they do not vanish)
 #     fe25519.o      LIB_X25519_CODE 2750 -> 2692
@@ -1216,10 +1221,10 @@ lib-verify-negative:
 #
 #   Those two are the ENDPOINTS of the range, which is checkable rather
 #   than asserted: across all seven profiles RESIDENT spans 8234 (onchip)
-#   to 8503 (default and shared-sqtab) and COLD spans 160 (onchip) to 947
+#   to 8521 (default and shared-sqtab) and COLD spans 160 (onchip) to 947
 #   (default and shared-ct), and every remaining profile sits inside both
-#   intervals -- 1764 8355/733, shared-sqtab 8503/787, shared-reu
-#   8471/520, shared-ct 8440/947, shared-all 8408/360. So default and
+#   intervals -- 1764 8355/733, shared-sqtab 8521/787, shared-reu
+#   8489/520, shared-ct 8458/947, shared-all 8426/360. So default and
 #   onchip BRACKET the composition range the check has to handle, and a
 #   demonstration at both ends shows the check fails correctly across that
 #   range rather than in one arbitrary configuration.
@@ -1353,7 +1358,11 @@ lib-verify-footprint-negative-arm:
 #   src/x25519.inc(397): Error: Cannot import exported symbol 'ct_mul_8x8'
 #   src/x25519.inc(405): Error: Cannot import exported symbol 'reu_fetch_mul_row_bank_patch'
 #
-# The fix is `.global` on those four names, NOT a switch gate. A gate was
+# (The fourth, reu_fetch_mul_row_bank_patch, is x25519-private and
+# deprecated, not §8.2 surface: an owner of §8.2 fetch does not define it,
+# so it has no arm below. Its header line stays `.global`.)
+#
+# The fix is `.global` on those names, NOT a switch gate. A gate was
 # tried and rejected on evidence: the deferral switches do not say WHO
 # provides the primitive (a sibling, or the consumer itself -- both are
 # spelled with the same defines, see lib-app-owned), so gating on them
@@ -1419,15 +1428,13 @@ lib-verify-app-owned-header-arm:
 # Negative leg. Perturbs the SOURCE, not the assertion: one canonical
 # name's `.global` is turned back into an `.import` in a throwaway copy of
 # src/, which IS the pre-#130 defect, and the harness must then fail AND
-# name that symbol. Four arms, one per canonical name, because the defect
-# is per-name -- #130 shipped with all four wrong while the back-compat
-# aliases right beside them were correct.
+# name that symbol. Three arms, one per canonical §8.x name, because the
+# defect is per-name -- #130 shipped with each of them wrong while the
+# back-compat aliases right beside them were correct.
 AOHNEG_SYM_sqtab     := mul_tables_init
 AOHNEG_DEFINES_sqtab := -D SHARED_SQTAB_INIT
 AOHNEG_SYM_reu       := reu_mul_tables_init
 AOHNEG_DEFINES_reu   := -D SHARED_REU_MUL_INIT -D SHARED_REU_MUL_FETCH
-AOHNEG_SYM_fetch     := reu_fetch_mul_row_bank_patch
-AOHNEG_DEFINES_fetch := -D SHARED_REU_MUL_INIT -D SHARED_REU_MUL_FETCH
 AOHNEG_SYM_ct        := ct_mul_8x8
 AOHNEG_DEFINES_ct    := -D SHARED_CT_MUL_8X8
 
@@ -1442,9 +1449,8 @@ lib-verify-app-owned-header-negative:
 	@echo "    FAIL when a canonical §8.x name goes back to a bare .import ==="
 	$(MAKE) AOHNEG_NAME=sqtab lib-verify-app-owned-header-negative-arm
 	$(MAKE) AOHNEG_NAME=reu   lib-verify-app-owned-header-negative-arm
-	$(MAKE) AOHNEG_NAME=fetch lib-verify-app-owned-header-negative-arm
 	$(MAKE) AOHNEG_NAME=ct    lib-verify-app-owned-header-negative-arm
-	@echo "OK: the APP_OWNED check is falsifiable for all four canonical"
+	@echo "OK: the APP_OWNED check is falsifiable for all three canonical"
 	@echo "    §8.x names, one at a time"
 
 lib-verify-app-owned-header-negative-arm:
