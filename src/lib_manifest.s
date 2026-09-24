@@ -232,7 +232,9 @@ _D_COLD_SQ = 0
 .endif
 .if .defined(SHARED_REU_MUL_INIT) .and (::X25519_ONCHIP_MUL = 0)
 .if ::SQR_DMA_K
-_D_COLD_REU = 427
+; 427 B reu_mul_init leaves; 315 B x25519_sqr_tables_init (the private
+; doubled/carry-bank build a deferring K>0 archive still owes) arrives.
+_D_COLD_REU = 427 - 315
 .else
 _D_COLD_REU = 213
 .endif

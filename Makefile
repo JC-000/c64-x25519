@@ -254,7 +254,8 @@ LIBX25519 = $(LIB_DIR)/libx25519.a
         lib-verify-single-scan-defer \
         lib-verify-single-scan-negative lib-verify-single-scan-negative-arm \
         lib-nobare lib-nobare-negative nobare-check \
-        dist bench-record perf-diff lib-x25519-1764 lib-x25519-onchip
+        dist bench-record perf-diff lib-x25519-1764 lib-x25519-onchip \
+        test-defer-prg
 
 all: $(PRG)
 
@@ -290,7 +291,8 @@ test-slow: $(PRG)
 	python3 tools/test_x25519_edge_u.py --slow; \
 	python3 tools/test_rfc7748_iterated.py --slow; \
 	python3 tools/test_rfc7748_iter1000.py --iterations 1; \
-	python3 tools/test_ct_ladder_cycles.py
+	python3 tools/test_ct_ladder_cycles.py; \
+	python3 tools/test_shared_reu_deferral.py
 	$(MAKE) test-vice-reloc
 # The four audit-2026-08-28 tests above (fe_adversarial_bigint,
 # x25519_adversarial_kat, ct_ladder_cycles, rfc7748_iter1000 at 1
@@ -313,7 +315,8 @@ test-vice: $(PRG)
 	python3 tools/test_ct_mul_a24_cycles.py; \
 	python3 tools/test_ct_reduce_wide_cycles.py; \
 	python3 tools/test_fe_reduce_wide_carry.py; \
-	python3 tools/test_fe_reduce_wide_bound.py
+	python3 tools/test_fe_reduce_wide_bound.py; \
+	python3 tools/test_shared_reu_deferral.py --quick
 	$(MAKE) test-vice-reloc
 
 # Relocated-bank build (#158). The default build uses bank 0, where a
@@ -364,10 +367,33 @@ test-ref:
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.s $(SRC_DIR)/constants.s $(SRC_DIR)/zp_config.s $(SRC_DIR)/reu_config.s $(SRC_DIR)/precalc_table.inc | $(BUILD_DIR)
 	$(CA65) $(ALL_DEFINES) -o $@ $<
 
-$(PRG): $(CA65_OBJS) $(CC65_CFG) | $(BUILD_DIR)
-	$(LD65) -C $(CC65_CFG) -o $(PRG) -Ln $(LABELS).raw $(CA65_OBJS)
+# PRG_EXTRA_OBJS is empty except in the §8.2 deferral test build
+# (test-defer-prg below), which links a stand-in provider beside main.o.
+PRG_EXTRA_OBJS ?=
+
+$(PRG): $(CA65_OBJS) $(PRG_EXTRA_OBJS) $(CC65_CFG) | $(BUILD_DIR)
+	$(LD65) -C $(CC65_CFG) -o $(PRG) -Ln $(LABELS).raw $(CA65_OBJS) $(PRG_EXTRA_OBJS)
 	sed 's/^al \([0-9a-fA-F]\{6\}\) /al C:\1 /' $(LABELS).raw > $(LABELS)
 	rm -f $(LABELS).raw
+
+# --- §8.2 deferral runtime build (#159) ----------------------------------
+#
+# build-defer/x25519.prg: the harness PRG with every x25519 TU assembled
+# under SHARED_REU_MUL_INIT + SHARED_REU_MUL_FETCH (default SQR_DMA_K), and
+# tests/deferral/reu_mul_provider.s linked in as the §8.2 provider. main.s
+# then boots provider init -> x25519_sqr_tables_init. Driven by
+# tools/test_shared_reu_deferral.py, which invokes this target itself.
+DEFER_DIR = build-defer
+DEFER_DEFINES = -D SHARED_REU_MUL_INIT=1 -D SHARED_REU_MUL_FETCH=1
+
+$(BUILD_DIR)/reu_mul_provider.o: tests/deferral/reu_mul_provider.s | $(BUILD_DIR)
+	$(CA65) $(ALL_DEFINES) -o $@ $<
+
+test-defer-prg:
+	$(MAKE) BUILD_DIR=$(DEFER_DIR) \
+	        CONTRACT_DEFINES="$(DEFER_DEFINES)" X25519_PROFILE=shared-reu \
+	        PRG_EXTRA_OBJS=$(DEFER_DIR)/reu_mul_provider.o \
+	        $(DEFER_DIR)/x25519.prg
 
 # --- directories ----------------------------------------------------------
 
@@ -614,6 +640,11 @@ LIB_VERIFY_SYMS_COMMON = x25519_clamp x25519_scalarmult x25519_base \
 # export set (it verified under the default expectations).
 LIB_VERIFY_SYMS_DOUBLED = reu_fetch_doubled_row
 
+# §8.2 deferral at SQR_DMA_K > 0: the private doubled/carry-bank build the
+# provider's reu_mul_tables_init does not do (src/x25519_init.s). Present
+# only in the shared-reu / shared-all archives; absent everywhere else.
+LIB_VERIFY_SYMS_REU_DEFER = x25519_sqr_tables_init
+
 # §8.x bit constants must NEVER be exported (issues #77/#78 item 3):
 # they are unprefixed names with identical values in every §8 adopter,
 # so any export collides at link time with a sibling library (the
@@ -680,7 +711,8 @@ LIB_VERIFY_SYMS_REU = $(LIB_VERIFY_SYMS_REU_OWN) $(LIB_VERIFY_SYMS_REU_CANON) \
 ifeq ($(X25519_PROFILE),onchip)
 LIB_VERIFY_SYMS_EXPECT = $(LIB_VERIFY_SYMS_SQTAB_OWN) $(LIB_VERIFY_SYMS_COMMON) \
 	$(LIB_VERIFY_SYMS_CT_CANON) $(LIB_VERIFY_SYMS_CT_OWN)
-LIB_VERIFY_SYMS_ABSENT = $(LIB_VERIFY_SYMS_REU) $(LIB_VERIFY_SYMS_DOUBLED)
+LIB_VERIFY_SYMS_ABSENT = $(LIB_VERIFY_SYMS_REU) $(LIB_VERIFY_SYMS_DOUBLED) \
+	$(LIB_VERIFY_SYMS_REU_DEFER)
 LIB_VERIFY_MASK_EXPECT = 000005
 LIB_VERIFY_CONSUMES_EXPECT = 000005
 LIB_VERIFY_BANKS_EXPECT = 000000
@@ -690,7 +722,7 @@ else ifeq ($(X25519_PROFILE),1764)
 LIB_VERIFY_SYMS_EXPECT = $(LIB_VERIFY_SYMS_SQTAB_OWN) $(LIB_VERIFY_SYMS_COMMON) \
 	$(LIB_VERIFY_SYMS_CT_CANON) $(LIB_VERIFY_SYMS_CT_OWN) \
 	$(LIB_VERIFY_SYMS_REU)
-LIB_VERIFY_SYMS_ABSENT = $(LIB_VERIFY_SYMS_DOUBLED)
+LIB_VERIFY_SYMS_ABSENT = $(LIB_VERIFY_SYMS_DOUBLED) $(LIB_VERIFY_SYMS_REU_DEFER)
 LIB_VERIFY_MASK_EXPECT = 000007
 LIB_VERIFY_CONSUMES_EXPECT = 000007
 LIB_VERIFY_BANKS_EXPECT = 000003
@@ -700,7 +732,7 @@ else ifeq ($(X25519_PROFILE),shared-sqtab)
 LIB_VERIFY_SYMS_EXPECT = $(LIB_VERIFY_SYMS_COMMON) \
 	$(LIB_VERIFY_SYMS_CT_CANON) $(LIB_VERIFY_SYMS_CT_OWN) \
 	$(LIB_VERIFY_SYMS_REU)
-LIB_VERIFY_SYMS_ABSENT = $(LIB_VERIFY_SYMS_SQTAB_OWN)
+LIB_VERIFY_SYMS_ABSENT = $(LIB_VERIFY_SYMS_SQTAB_OWN) $(LIB_VERIFY_SYMS_REU_DEFER)
 LIB_VERIFY_MASK_EXPECT = 000006
 LIB_VERIFY_CONSUMES_EXPECT = 000007
 LIB_VERIFY_BANKS_EXPECT = 00003B
@@ -709,17 +741,18 @@ LIB_VERIFY_COLD_EXPECT = 000313
 else ifeq ($(X25519_PROFILE),shared-reu)
 LIB_VERIFY_SYMS_EXPECT = $(LIB_VERIFY_SYMS_SQTAB_OWN) $(LIB_VERIFY_SYMS_COMMON) \
 	$(LIB_VERIFY_SYMS_CT_CANON) $(LIB_VERIFY_SYMS_CT_OWN) \
-	$(LIB_VERIFY_SYMS_REU_CANON) $(LIB_VERIFY_SYMS_REU_SURFACE)
+	$(LIB_VERIFY_SYMS_REU_CANON) $(LIB_VERIFY_SYMS_REU_SURFACE) \
+	$(LIB_VERIFY_SYMS_REU_DEFER)
 LIB_VERIFY_SYMS_ABSENT = $(LIB_VERIFY_SYMS_REU_OWN) $(LIB_VERIFY_SYMS_REU_HOOK)
 LIB_VERIFY_MASK_EXPECT = 000005
 LIB_VERIFY_CONSUMES_EXPECT = 000007
 LIB_VERIFY_BANKS_EXPECT = 00003B
 LIB_VERIFY_RESIDENT_EXPECT = 002129
-LIB_VERIFY_COLD_EXPECT = 000208
+LIB_VERIFY_COLD_EXPECT = 000343
 else ifeq ($(X25519_PROFILE),shared-ct)
 LIB_VERIFY_SYMS_EXPECT = $(LIB_VERIFY_SYMS_SQTAB_OWN) $(LIB_VERIFY_SYMS_COMMON) \
 	$(LIB_VERIFY_SYMS_CT_CANON) $(LIB_VERIFY_SYMS_REU)
-LIB_VERIFY_SYMS_ABSENT = $(LIB_VERIFY_SYMS_CT_OWN)
+LIB_VERIFY_SYMS_ABSENT = $(LIB_VERIFY_SYMS_CT_OWN) $(LIB_VERIFY_SYMS_REU_DEFER)
 LIB_VERIFY_MASK_EXPECT = 000003
 LIB_VERIFY_CONSUMES_EXPECT = 000007
 LIB_VERIFY_BANKS_EXPECT = 00003B
@@ -728,19 +761,20 @@ LIB_VERIFY_COLD_EXPECT = 0003B3
 else ifeq ($(X25519_PROFILE),shared-all)
 LIB_VERIFY_SYMS_EXPECT = $(LIB_VERIFY_SYMS_COMMON) \
 	$(LIB_VERIFY_SYMS_CT_CANON) \
-	$(LIB_VERIFY_SYMS_REU_CANON) $(LIB_VERIFY_SYMS_REU_SURFACE)
+	$(LIB_VERIFY_SYMS_REU_CANON) $(LIB_VERIFY_SYMS_REU_SURFACE) \
+	$(LIB_VERIFY_SYMS_REU_DEFER)
 LIB_VERIFY_SYMS_ABSENT = $(LIB_VERIFY_SYMS_CT_OWN) $(LIB_VERIFY_SYMS_REU_OWN) \
 	$(LIB_VERIFY_SYMS_REU_HOOK) $(LIB_VERIFY_SYMS_SQTAB_OWN)
 LIB_VERIFY_MASK_EXPECT = 000000
 LIB_VERIFY_CONSUMES_EXPECT = 000007
 LIB_VERIFY_BANKS_EXPECT = 00003B
 LIB_VERIFY_RESIDENT_EXPECT = 0020EA
-LIB_VERIFY_COLD_EXPECT = 000168
+LIB_VERIFY_COLD_EXPECT = 0002A3
 else
 LIB_VERIFY_SYMS_EXPECT = $(LIB_VERIFY_SYMS_SQTAB_OWN) $(LIB_VERIFY_SYMS_COMMON) \
 	$(LIB_VERIFY_SYMS_CT_CANON) $(LIB_VERIFY_SYMS_CT_OWN) \
 	$(LIB_VERIFY_SYMS_REU) $(LIB_VERIFY_SYMS_DOUBLED)
-LIB_VERIFY_SYMS_ABSENT =
+LIB_VERIFY_SYMS_ABSENT = $(LIB_VERIFY_SYMS_REU_DEFER)
 LIB_VERIFY_MASK_EXPECT = 000007
 LIB_VERIFY_CONSUMES_EXPECT = 000007
 LIB_VERIFY_BANKS_EXPECT = 00003B
@@ -1428,7 +1462,7 @@ lib-verify-negative:
 #   to 8521 (default and shared-sqtab) and COLD spans 160 (onchip) to 947
 #   (default and shared-ct), and every remaining profile sits inside both
 #   intervals -- 1764 8355/733, shared-sqtab 8521/787, shared-reu
-#   8489/520, shared-ct 8458/947, shared-all 8426/360. So default and
+#   8489/835, shared-ct 8458/947, shared-all 8426/675. So default and
 #   onchip BRACKET the composition range the check has to handle, and a
 #   demonstration at both ends shows the check fails correctly across that
 #   range rather than in one arbitrary configuration.

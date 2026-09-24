@@ -59,7 +59,16 @@ zp_tmp2 = $03           ; temp byte
 
 ; --- Imports from x25519_init.s ---
 .if ::X25519_ONCHIP_MUL = 0
+.ifndef SHARED_REU_MUL_INIT
 .import reu_mul_init
+.else
+; §8.2 deferral build (build-defer/, tools/test_shared_reu_deferral.py):
+; the provider is tests/deferral/reu_mul_provider.s.
+.import reu_mul_tables_init
+.if ::SQR_DMA_K
+.import x25519_sqr_tables_init
+.endif
+.endif
 .endif
 
 ; --- Exports defined in this file ---
@@ -124,8 +133,15 @@ start:
         jsr sqtab_init
 
 .if ::X25519_ONCHIP_MUL = 0
+.ifndef SHARED_REU_MUL_INIT
         ; Initialize REU multiplication tables
         jsr reu_mul_init
+.else
+        jsr reu_mul_tables_init     ; §8.2 provider: banks base, base+1
+.if ::SQR_DMA_K
+        jsr x25519_sqr_tables_init  ; x25519's private banks base+3..+5
+.endif
+.endif
 .endif
         ; (Onchip profile boots with sqtab_init only — no REU init,
         ;  no REU present required. Issue #72.)
