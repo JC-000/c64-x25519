@@ -235,7 +235,7 @@ CA65_OBJS = $(BUILD_DIR)/main.o $(LIB_OBJS)
 
 LIBX25519 = $(LIB_DIR)/libx25519.a
 
-.PHONY: all clean test test-slow test-ref test-vice lib lib-verify \
+.PHONY: all clean test test-slow test-ref test-vice test-vice-reloc lib lib-verify \
         lib-verify-shared lib-app-owned lib-verify-guards lib-verify-docs \
         lib-verify-footprint lib-verify-footprint-negative lib-verify-precalc \
         lib-verify-footprint-negative-arm \
@@ -291,6 +291,7 @@ test-slow: $(PRG)
 	python3 tools/test_rfc7748_iterated.py --slow; \
 	python3 tools/test_rfc7748_iter1000.py --iterations 1; \
 	python3 tools/test_ct_ladder_cycles.py
+	$(MAKE) test-vice-reloc
 # The four audit-2026-08-28 tests above (fe_adversarial_bigint,
 # x25519_adversarial_kat, ct_ladder_cycles, rfc7748_iter1000 at 1
 # iteration) plus the repaired edge_u / rfc7748_iterated members were
@@ -313,6 +314,29 @@ test-vice: $(PRG)
 	python3 tools/test_ct_reduce_wide_cycles.py; \
 	python3 tools/test_fe_reduce_wide_carry.py; \
 	python3 tools/test_fe_reduce_wide_bound.py
+	$(MAKE) test-vice-reloc
+
+# Relocated-bank build: every REU access must follow X25519_REU_BANK. The
+# default build uses bank 0, where a hardcoded 0 is indistinguishable from
+# the knob, so the mul and sqr stress also run on a build whose window
+# (base..base+5) does not overlap the default one. The tests read the
+# linked labels and refuse to run unless both X25519_REU_BANK and the
+# exported LIB_X25519_SHARED_REU_MUL_BANK equal RELOC_BANK.
+RELOC_DIR     = build-reloc
+RELOC_BANK    = 9
+RELOC_REUSIZE = 2048
+test-vice-reloc:
+	rm -rf $(RELOC_DIR)
+	$(MAKE) BUILD_DIR=$(RELOC_DIR) LIB_DIR=$(RELOC_DIR)/lib \
+	        CA65FLAGS="$(CA65FLAGS)" CONTRACT_ZP_DEFINES="$(CONTRACT_ZP_DEFINES)" \
+	        CONTRACT_DEFINES="$(CONTRACT_DEFINES) -D X25519_REU_BANK=$(RELOC_BANK)" \
+	        all
+	@set -e; \
+	export X25519_BUILD_DIR=$(RELOC_DIR) X25519_REUSIZE=$(RELOC_REUSIZE) \
+	       X25519_EXPECT_REU_BANK=$(RELOC_BANK); \
+	echo "=== VICE stress on relocated REU bank $(RELOC_BANK) ==="; \
+	python3 tools/test_fe_mul_stress.py; \
+	python3 tools/test_fe_sqr_stress.py
 
 # Reference-only self-test (no VICE, no build required).
 test-ref:
