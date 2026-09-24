@@ -248,16 +248,16 @@ _BASE_COLD     = 733
 ;
 ; so a bank this library really claims but whose bit falls off the top of
 ; the mask is a bank the consumer's collision assert cannot see. Measured
-; (ca65 2.19, `od65 --dump-exports` on the emitted symbol):
+; (ca65 V2.18, `od65 --dump-exports` on the emitted symbol):
 ;
 ;   X25519_REU_BANK=26  ->  0xEC000000   banks 26,27,29,30,31   correct
 ;   X25519_REU_BANK=27  ->  0xD8000000   banks 27,28,30,31      bank 32 GONE
 ;
 ; ca65 computes the shift in wider-than-32-bit arithmetic and only narrows
 ; when it writes the export, so nothing in the assemble reports the loss.
-; The one diagnostic that does fire — "Symbol is long but exported
-; absolute" — starts at base 26, where the mask is still correct, and says
-; nothing about truncation; it is noise here, not the guard.
+; The only diagnostics ca65 gives — "Symbol is far/long but exported
+; absolute" — appear while the mask is still correct and say nothing
+; about truncation; they are noise here, not the guard.
 ;
 ; SPEC §8.2's own `LIB_SHARED_REU_MUL_BANK < 31` (src/reu_config.s) is the
 ; same defect one level down and does NOT subsume these: it bounds the

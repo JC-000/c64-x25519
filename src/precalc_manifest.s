@@ -29,7 +29,7 @@
 ; beside the six LIB_X25519_* §5 aggregates that §5 REQUIRES a composing
 ; consumer to import — so importing a footprint equate pulled this member
 ; in and collided on names the consumer never referenced. Measured before
-; the split (ca65 2.19 / ld65 V2.18), with a consumer importing only two
+; the split (ca65 / ld65 V2.18), with a consumer importing only two
 ; prefixed §5 equates from two libraries and referencing no bare name:
 ;
 ;   ld65: Error: Duplicate external identifier: 'LIB_PRECALC_sqtab_SHARED'
