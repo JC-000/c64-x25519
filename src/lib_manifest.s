@@ -223,7 +223,8 @@ _BASE_COLD     = 733
 ; 12 B per execute site plus one shared x25519_reu_settle_slow proc
 ; (RESIDENT, not deferrable — it also serves reu_probe and the
 ; doubled-row DMA #2), so reu_mul_init grew 364 -> 427 / 186 -> 213
-; and reu_fetch_mul_row 20 -> 32. Measured by assembling x25519_init.s
+; and reu_fetch_mul_row 20 -> 32; 32 -> 58 when the fetch began
+; writing every FETCH register (#164). Measured by assembling x25519_init.s
 ; under `-D SHARED_REU_MUL_INIT -D SHARED_REU_MUL_FETCH` and diffing
 ; od65 --dump-segsize against the owner object.)
 .ifdef SHARED_SQTAB_INIT

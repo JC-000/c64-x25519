@@ -15,8 +15,9 @@ under three preceding states:
   after-sqr      a real fe25519_sqr runs first (its last REU op is that
                  same DMA).
 The last two need the SQR_DMA_K > 0 build and are skipped, by name, in
-the 1764 build. After every fetch the C64 address, REU address low byte
-and length registers must read back as mul_dma_lo / $00 / 512.
+the 1764 build. After every fetch the C64 address, REU address low byte,
+length and address control must read back as mul_dma_lo / $00 / 512 / $00
+(address control: bits 7-6; the unused bits read as 1 under VICE).
 
 Build / REU selection: see vice_build.py (X25519_BUILD_DIR, X25519_REUSIZE,
 X25519_EXPECT_REU_BANK). This script never builds.
@@ -115,7 +116,8 @@ def main():
                 jsr(t, THUNK, timeout=60.0)
                 lo = read_bytes(t, lo_addr, 256)
                 hi = read_bytes(t, hi_addr, 256)
-                regs = read_bytes(t, 0xDF02, 7)   # c64 lo/hi, reu lo/hi/bank, len lo/hi
+                # c64 lo/hi, reu lo/hi/bank, len lo/hi, irq mask, addr ctrl
+                regs = read_bytes(t, 0xDF02, 9)
                 tag = f"reu_fetch_mul_row [{case}] a=0x{a:02X}"
                 bad = [b for b in range(256)
                        if lo[b] != (a * b) & 0xFF or hi[b] != (a * b) >> 8]
@@ -126,6 +128,8 @@ def main():
                     reg_err.append(f"reu addr lo ${regs[2]:02X} != $00")
                 if regs[5] | (regs[6] << 8) != 512:
                     reg_err.append(f"length {regs[5] | (regs[6] << 8)} != 512")
+                if regs[8] & 0xC0:   # $DF0A: only bits 7-6 are implemented
+                    reg_err.append(f"addr ctrl ${regs[8]:02X}: bits 7-6 != 00")
                 if bad:
                     b = bad[0]
                     print(f"  FAIL {tag}: {len(bad)}/256 entries wrong; "

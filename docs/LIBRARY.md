@@ -1622,8 +1622,9 @@ and is consumed by `tools/perf_diff.py` for diff tables. Run
   (`reu_c64_lo/hi`, `reu_len_lo/hi`, `reu_reu_hi`, `reu_reu_bank`)
   are re-written by `reu_clear_wide` and the inlined per-row DMA in
   `fe25519_mul`, so caller residue on those is also tolerated.
-  However, the library still leaves the REU registers in a
-  non-default state on return (configured for `reu_fetch_mul_row`).
+  The REU register state the library leaves on return is
+  unspecified (`reu_fetch_mul_row` sets every register it uses
+  itself, so it does not depend on it).
   If your host needs a clean post-call state for its own REU work,
   save `$DF02-$DF0A` before calling and restore afterward.
 

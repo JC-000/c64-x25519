@@ -322,7 +322,8 @@ sqtab_hi = LIB_SHARED_SQTAB_BASE + $0200
 ;   never write C), so the settle adds no register cost to any site it
 ;   expands at. This does NOT make reu_fetch_mul_row carry-safe: that
 ;   routine's own asl / adc #0 clobbers C, so its contract is "A and C,
-;   X/Y preserved" (x25519_init.s:357-362) both before and after
+;   X/Y preserved" (the Clobbers: line of reu_fetch_mul_row's banner in
+;   x25519_init.s) both before and after
 ;   v0.12.0. The slow path keeps
 ;   its sample and counter in two cross-TU internal bytes in
 ;   src/data.s (x25519_reu_settle_smp / _cnt — exported for linkage,
