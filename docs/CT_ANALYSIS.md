@@ -1277,7 +1277,9 @@ argument does not depend on them.
 > `reu_fetch_mul_row` or patches any code byte; it writes the five latch
 > registers and then `reu_reu_hi` / `reu_reu_bank` / `reu_command` itself
 > against `X25519_REU_BANK_DOUBLED`. The latch invariant and its
-> regression below are unchanged.
+> regression below are unchanged. `reu_fetch_mul_row` itself no longer
+> trusts the latch either: it writes every FETCH register on each call,
+> so its former "Caller contract" paragraph cited below is gone.
 
 PR #61 SMC-patches `reu_fetch_doubled_row`'s first 512-byte DMA to
 delegate to the canonical §8.2 `reu_fetch_mul_row` primitive. The

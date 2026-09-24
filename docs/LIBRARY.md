@@ -483,7 +483,7 @@ compile + VICE test cycle:
 |---|---|---|
 | `LIB_X25519_ZP_USAGE_BYTES` | `85` | Total bytes of ZP slots the library claims (sum of the `.exportzp`-ed slots in `src/zp_config.s`, `fe_wide` included) |
 | `LIB_X25519_REU_BANKS_USED` | `$3B` default / `$03` for `lib-x25519-1764` / `0` for `lib-x25519-onchip` | Bitmask of REU banks claimed for mul tables. **Default build** (banks 0, 1, 3, 4, 5): `$3B << X25519_REU_BANK`. **1764 variant** (`make lib-x25519-1764`, `SQR_DMA_K=0`): `$03 << X25519_REU_BANK` — banks 0, 1 only, drops the doubled-table cluster. Bank 2 is never claimed in either build. **onchip variant** (`make lib-x25519-onchip`, `X25519_ONCHIP_MUL=1`): plain `0` — no shift, no banks. Per SPEC §5 the zero *is* the "no REU" declaration, not an unset field; see §4.11. See [`REU_USAGE_ANALYSIS.md`](REU_USAGE_ANALYSIS.md) §"Group B SHIPPED" for the 1764 rationale + measured trade-offs |
-| `LIB_X25519_RESIDENT_BYTES` | `8521` default / `8355` for `lib-x25519-1764` / `8234` for `lib-x25519-onchip` | Approximate code + data + sqtab footprint that must remain CPU-resident. Dropped from 9209/8895 at the issue-#68 cold-segment split — the init-only code is now counted in `LIB_X25519_COLD_BYTES` (SPEC §5 disjoint partition; see §4.10). All three figures od65-measured; the onchip value has been measured-exact since the profile shipped in v0.8.0. v0.12.0 grew default/1764 by +93/+81 for the §8.2 v0.13.0 REU settle (§4.12); onchip touches no REU and is unchanged. Default +15 since, for `reu_fetch_doubled_row` issuing its own row DMA (#134; not present in 1764) |
+| `LIB_X25519_RESIDENT_BYTES` | `8547` default / `8381` for `lib-x25519-1764` / `8234` for `lib-x25519-onchip` | Approximate code + data + sqtab footprint that must remain CPU-resident. Dropped from 9209/8895 at the issue-#68 cold-segment split — the init-only code is now counted in `LIB_X25519_COLD_BYTES` (SPEC §5 disjoint partition; see §4.10). All three figures od65-measured; the onchip value has been measured-exact since the profile shipped in v0.8.0. v0.12.0 grew default/1764 by +93/+81 for the §8.2 v0.13.0 REU settle (§4.12); onchip touches no REU and is unchanged. Default +15 since, for `reu_fetch_doubled_row` issuing its own row DMA (#134; not present in 1764). Default and 1764 +26 since, for `reu_fetch_mul_row` writing every FETCH register itself (#164) |
 | `LIB_X25519_COLD_BYTES` | `947` default / `733` for `lib-x25519-1764` / `160` for `lib-x25519-onchip` | Approximate footprint a consumer MAY reclaim/overlay after init — the `LIB_X25519_INIT_CODE` segment (issue #68; see §4.10). The onchip segment holds `sqtab_init` alone, so it is much smaller. v0.12.0: +121/+85 for the nine boot-time settle sites (§4.12) |
 
 The values are approximate ("within 5% is fine" per SPEC §5), though
@@ -825,7 +825,7 @@ Manifest equates in the variant archive report the smaller claim:
 | Equate | Default build | 1764 variant |
 |---|---|---|
 | `LIB_X25519_REU_BANKS_USED` | `$3B` (banks 0, 1, 3, 4, 5) | `$03` (banks 0, 1) |
-| `LIB_X25519_RESIDENT_BYTES` | `8521` | `8355` |
+| `LIB_X25519_RESIDENT_BYTES` | `8547` | `8381` |
 | `LIB_X25519_COLD_BYTES` | `947` | `733` |
 | `LIB_X25519_ZP_USAGE_BYTES` | `85` | `85` (unchanged) |
 | `LIB_VERSION_*` | release version | same (same source tree) |
@@ -1218,7 +1218,7 @@ differential suite in a VICE instance with no REU attached.
 |---|---|---|
 | `LIB_X25519_REU_BANKS_USED` | `$3B` (banks 0, 1, 3, 4, 5) | `0` |
 | `LIB_X25519_SHARED_PRIMITIVES` | `$0007` (§8.1 + §8.2 + §8.3) | `$0005` (§8.1 + §8.3) |
-| `LIB_X25519_RESIDENT_BYTES` | `8521` | `8234` |
+| `LIB_X25519_RESIDENT_BYTES` | `8547` | `8234` |
 | `LIB_X25519_COLD_BYTES` | `947` | `160` |
 | `LIB_X25519_ZP_USAGE_BYTES` | `85` | `85` (unchanged — the generator allocates no new ZP) |
 | `LIB_PRECALC_*` exports | `sqtab`, `reu_mul`, `reu_mul_doubled`, the eight `x25519_*` RODATA tables | `reu_mul` and `reu_mul_doubled` absent; the rest unchanged |

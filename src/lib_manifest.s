@@ -171,12 +171,12 @@ _BASE_COLD     = 160
 .elseif SQR_DMA_K
 LIB_X25519_REU_BANKS_USED = $3B << X25519_REU_BANK
 .assert X25519_REU_BANK <= 26, error, "X25519_REU_BANK > 26 shifts the top of the 5-bank $3B window past bit 31 and the exported LIB_X25519_REU_BANKS_USED silently drops it (SPEC §5: banks 0-31)"
-_BASE_RESIDENT = 8521
+_BASE_RESIDENT = 8547
 _BASE_COLD     = 947
 .else
 LIB_X25519_REU_BANKS_USED = $03 << X25519_REU_BANK
 .assert X25519_REU_BANK <= 30, error, "X25519_REU_BANK > 30 shifts the hi-half bank of the $03 window past bit 31 and the exported LIB_X25519_REU_BANKS_USED silently drops it (SPEC §5: banks 0-31)"
-_BASE_RESIDENT = 8355
+_BASE_RESIDENT = 8381
 _BASE_COLD     = 733
 .endif
 
@@ -218,7 +218,7 @@ _BASE_COLD     = 733
 ; -table generation included) or 213 B at SQR_DMA_K = 0; the deferred
 ; §8.3 ct_mul_8x8 body + scratch = 63 B RESIDENT; the §8.2 fetch pair
 ; (SPEC v0.9.1-C: INIT and FETCH move together) additionally drops the
-; resident reu_fetch_mul_row body = 32 B RESIDENT. (Re-measured
+; resident reu_fetch_mul_row body = 58 B RESIDENT. (Re-measured
 ; 2026-08-28 for v0.12.0: the §8.2 v0.13.0 REU_SETTLE expansion adds
 ; 12 B per execute site plus one shared x25519_reu_settle_slow proc
 ; (RESIDENT, not deferrable — it also serves reu_probe and the
@@ -239,7 +239,7 @@ _D_COLD_REU = 427 - 315
 .else
 _D_COLD_REU = 213
 .endif
-_D_RES_REU = 32
+_D_RES_REU = 58
 .else
 _D_COLD_REU = 0
 _D_RES_REU = 0

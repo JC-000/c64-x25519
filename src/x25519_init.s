@@ -422,14 +422,11 @@ row:    .byte 0
 ; =============================================================================
 ; reu_fetch_mul_row - DMA a multiplication table row from REU to C64
 ;
-; Input: A = multiplier value (0-255) in mul_cached_a
+; Input: A = a (row index, 0-255). Also stored to mul_cached_a.
 ; Fetches 512 bytes: 256 lo bytes to mul_dma_lo, 256 hi bytes to mul_dma_hi
-; Clobbers: A and C. X and Y are preserved (unchanged by the v0.12.0
-;           §8.2 v0.13.0 settle: REU_SETTLE counts its bounded spin in
-;           memory, not in X). The carry is NOT preserved: the `asl`
-;           below destroys the entry carry and the `adc #0` overwrites
-;           it, so C on return is the bank-add's carry-out, not the
-;           caller's.
+; Clobbers: A and C. X and Y are preserved (REU_SETTLE counts its
+;           bounded spin in memory, not in X). The carry is NOT
+;           preserved: C on return is the bank-add's carry-out.
 ;
 ; The `bank_lda` regular local label (not cheap-`@`-local because we
 ; address it from outside the proc via `proc::label` syntax, which
@@ -438,13 +435,16 @@ row:    .byte 0
 ; address. No in-tree code patches it any more (reu_fetch_doubled_row
 ; does its own DMA #1); the export is kept, deprecated, for §6.5.
 ;
-; Caller contract (autoload-latch trust): this proc does NOT touch
-; reu_c64_lo/hi, reu_len_lo/hi, reu_reu_lo, or reu_addr_ctrl. Callers
-; MUST have established the canonical autoload-latch state
-; (mul_dma_lo / 512 / 0 / 0) before JSR'ing here. The two callers that
-; honor this contract are fe25519_mul's per-row inline DMA (which
-; runs after reu_clear_wide's autoload-restore tail) and any consumer
-; that calls it after reu_mul_init or fe25519_mul/sqr.
+; REU state: SPEC §8.2 puts no precondition on REU registers, so this
+; proc writes every register the FETCH depends on (C64 address, REU
+; address, bank, length, address control) and trusts no latch. It may
+; be called after any x25519 routine, including fe25519_sqr, whose
+; doubled-row DMA #2 leaves the latch at mul_dma_carry / 256. On
+; return (autoload) the registers hold mul_dma_lo / length 512 /
+; REU address lo $00 / address control $00, the same canonical state
+; reu_mul_init leaves. No in-tree hot path calls this proc
+; (fe25519_mul inlines its own fetch), so the extra stores never
+; execute there.
 ; =============================================================================
 ; Back to the resident LIB_X25519_CODE segment: this proc and everything through
 ; reu_clear_wide is runtime-hot (issue #68 cold-split boundary).
@@ -530,6 +530,18 @@ bank_lda:
         lda #X25519_REU_BANK
         adc #0                 ; bank = X25519_REU_BANK + (a >> 7)
         sta reu_reu_bank
+        ; Every other FETCH register, written rather than trusted (see
+        ; banner). lda/sta leave C, so C is still the bank-add's carry.
+        lda #<(mul_dma_lo)
+        sta reu_c64_lo
+        lda #>(mul_dma_lo)
+        sta reu_c64_hi
+        lda #0
+        sta reu_reu_lo
+        sta reu_len_lo
+        sta reu_addr_ctrl
+        lda #2
+        sta reu_len_hi         ; 512 bytes
         lda #%10110001         ; execute + autoload + FETCH (REU->C64)
         sta reu_command
         REU_SETTLE             ; §8.2 v0.13.0: confirm END OF BLOCK + settle
@@ -566,9 +578,9 @@ reu_fetch_mul_row_bank_patch := reu_fetch_mul_row::bank_lda + 1
 ; docs/design/issue_15_smc_patch_doubled_fetch.md).
 ;
 ; Autoload-latch invariant (LOAD-BEARING — do not break):
-;   fe25519_mul's inline row DMA and reu_fetch_mul_row trust the
-;   autoload latch for reu_c64_lo/hi, reu_len_lo/hi, reu_reu_lo and
-;   reu_addr_ctrl:
+;   fe25519_mul's inline row DMA trusts the autoload latch for
+;   reu_c64_lo/hi and reu_len_lo/hi (it writes reu_reu_lo and
+;   reu_addr_ctrl itself; reu_fetch_mul_row writes all of them):
 ;       reu_c64_lo/hi = mul_dma_lo
 ;       reu_len_lo/hi = $00 / $02 (i.e. 512-byte transfer)
 ;       reu_reu_lo    = $00
