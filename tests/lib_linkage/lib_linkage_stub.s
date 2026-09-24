@@ -31,8 +31,8 @@
 ;   (2) a second surface list drifts silently: the header could add, gate
 ;       or rename an import and this stub would keep linking against its
 ;       own stale copy.
-; What stays local is what the header cannot supply: the two `.importzp`
-; ZP-slot lines, `__MAIN_SIZE__` (a linker-provided consumer symbol), and
+; What stays local is what the header cannot supply: the roster-derived
+; `.importzp` of every ZP slot, `__MAIN_SIZE__` (a linker-provided consumer symbol), and
 ; every `.word`/`.byte`/`.addr` reference block -- ca65 emits an import
 ; record only for a REFERENCED symbol, so those references are what
 ; actually force the archive-member pulls this smoke test is checking.
@@ -113,13 +113,30 @@ public_version_refs:
         .word LIB_VERSION_PATCH, LIB_ABI_VERSION
 .endif
 
-; ZP slot exports from src/zp_config.s. .importzp + .byte references
-; force ld65 to pull zp_config.o out of the archive.
-.importzp fe25519_src1, fe25519_src2, fe25519_dst
-.importzp fe_carry, mul_carry
+; Every ZP slot, imported and referenced. The list is the library's own
+; x25519_zp_roster, expanded here, so a slot added to the roster is
+; imported with no edit to this file. zp_config.s is included inside a
+; scope only to obtain the macro: its definitions land in that scope
+; and do not collide with the global imports below.
+;
+; The supplier depends on the mode. By default zp_config.o exports every
+; slot. Under -D ZP_CONFIG_NO_EXPORTS=1 it exports none, and the library
+; imports none either, so a consumer supplies exactly the slots it
+; .importzp's. This stub deliberately imports every slot -- a superset
+; consumer, a modelling choice -- so the Makefile links zp_supply_stub.s,
+; which exports the same roster, and a supply missing any slot fails here
+; with ld65 "Unresolved external '<slot>'".
+.scope stub_zp_roster
+ZP_CONFIG_NO_EXPORTS = 1        ; scoped: keep zp_config.s from exporting
+.include "zp_config.s"
+.endscope
+.macro stub_zp_import p1, p2, name, addr, size
+  .importzp name
+  .byte name
+.endmacro
 public_zp_refs:
-        .byte fe25519_src1, fe25519_src2, fe25519_dst
-        .byte fe_carry, mul_carry
+        x25519_zp_roster stub_zp_import, 0, 0
+.delmacro stub_zp_import
 
 ; REU layout equates from src/reu_config.s. .word reference forces ld65
 ; to pull reu_config.o out of the archive.

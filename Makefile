@@ -51,7 +51,9 @@ CC65_CFG = cfg/x25519.cfg
 # TUs), but NOT consumer-model TUs that .importzp the slots — a -D of
 # a slot in an .importzp TU is a hard "already defined" error
 # (measured on our own verify stub). Consumer .importzp sites get the
-# overridden address at link time from the library objects.
+# overridden address at link time from zp_config.o, or, under
+# ZP_CONFIG_NO_EXPORTS, from tests/lib_linkage/zp_supply_stub.s, which is
+# assembled with ALL_DEFINES for that reason.
 # CA65FLAGS remains as a deprecated alias through the §6.5
 # rename window. Variant targets APPEND their profile defines (last
 # wins on conflicts) instead of clobbering consumer values — the
@@ -206,6 +208,7 @@ LIBX25519 = $(LIB_DIR)/libx25519.a
         lib-verify-footprint-negative-arm \
         lib-verify-negative lib-verify-guards-legc \
         lib-verify-zp lib-verify-zp-negative \
+        lib-verify-zp-supply lib-verify-zp-supply-negative \
         lib-verify-guards-legc-negative \
         lib-verify-guards-legc-negative-arm \
         lib-verify-citations lib-verify-citations-negative \
@@ -336,7 +339,7 @@ clean:
 	rm -rf build-fp build-fp-default build-fp-onchip
 	rm -rf build-guards-default build-guards-onchip build-guards-legc-negative
 	rm -rf build-neg build-neg-artifact
-	rm -rf $(ZPNEG_DIR)
+	rm -rf $(ZPNEG_DIR) $(ZPS_DIR) $(ZPSNEG_DIR)
 	# Spelled with the variables, not literals: arm B's tree is derived from
 	# NOBARE_NEG_DIR, and a literal copy of it here drifted out of step once
 	# already (F3).
@@ -388,6 +391,20 @@ $(LIB_DIR)/cfg/x25519-example.cfg: cfg/x25519-example.cfg | $(LIB_DIR)/cfg
 LIB_VERIFY_PRG = $(LIB_VERIFY_DIR)/lib_linkage_stub.prg
 LIB_VERIFY_STUB = tests/lib_linkage/lib_linkage_stub.s
 LIB_VERIFY_PROVIDER = tests/lib_linkage/shared_provider_stub.s
+
+# -D ZP_CONFIG_NO_EXPORTS=1 (the mode c64-wireguard builds in): zp_config.o
+# exports no slot and no library member imports one, so a consumer supplies
+# exactly the slots it .importzp's. The stub deliberately imports every
+# roster slot (a superset consumer, a modelling choice); in this mode it
+# links zp_supply_stub.s, which exports every roster slot. Scope:
+# lib-verify-shared leg 5 links the stub with no supplier and does not
+# support this mode (19 unresolved slots). .ifndef-gated, so definedness
+# is the axis,
+# as for LIB_NOBARE. LIB_VERIFY_ZP_SUPPLY_OBJ is overridable only so
+# lib-verify-zp-supply-negative can link a hand-listed or absent supplier.
+LIB_ZP_SUPPLY := $(if $(findstring ZP_CONFIG_NO_EXPORTS,$(ALL_DEFINES)),1,)
+LIB_VERIFY_ZP_SUPPLY = tests/lib_linkage/zp_supply_stub.s
+LIB_VERIFY_ZP_SUPPLY_OBJ ?= $(LIB_VERIFY_DIR)/zp_supply.o
 
 # The onchip x full-deferral define set (leg 5 of lib-verify-shared). Kept as
 # one variable so the archive and BOTH stubs are assembled from the identical
@@ -1124,6 +1141,109 @@ lib-verify-zp-negative:
 	@rm -rf $(ZPNEG_DIR)
 	@echo "OK: every §2 ZP check failed by name, and the positive control passed"
 
+# --- ZP_CONFIG_NO_EXPORTS consumer link (#143) --------------------------------
+# c64-wireguard's two configurations, from its
+# tools/integration/build_x25519.sh: CONTRACT_ZP_DEFINES="-D
+# ZP_CONFIG_NO_EXPORTS=1" in both, plus LIB_SHARED_SQTAB_BASE and
+# LIB_NO_BARE_EXPORTS, plus X25519_ONCHIP_MUL=1 for the second. The sqtab
+# base 32768 is a COPY of wireguard's current WG_SQTAB_BASE ($8000); nothing
+# here asserts on it, so drift there does not invalidate the leg.
+# These are built with wireguard's define sets and linked against our
+# superset stub, not wireguard's own link shape.
+# Each profile runs the full `lib lib-verify` (the stub imports every
+# roster slot; zp_supply_stub.s supplies them) and then nobare-check.
+ZPS_DIR = build-zp-supply
+# Each define is added only if the caller has not already passed it: ca65
+# rejects the same -D twice ("is already defined").
+ZPS_ADD = $(if $(findstring $(1),$(ALL_DEFINES)),,-D $(1)=$(2))
+ZPS_DEFINES = $(call ZPS_ADD,LIB_SHARED_SQTAB_BASE,32768) \
+	$(call ZPS_ADD,LIB_NO_BARE_EXPORTS,1)
+ZPS_ZP_DEFINES = $(call ZPS_ADD,ZP_CONFIG_NO_EXPORTS,1)
+ZPS_MAKE = $(MAKE) BUILD_DIR=$(ZPS_DIR) LIB_DIR=$(ZPS_DIR)/lib \
+	CA65FLAGS="$(CA65FLAGS)" \
+	CONTRACT_ZP_DEFINES="$(CONTRACT_ZP_DEFINES) $(ZPS_ZP_DEFINES)"
+
+# $(1) X25519_PROFILE, $(2) extra CONTRACT_DEFINES selecting it
+define ZPS_RUN
+	@echo "--- ZP supply, X25519_PROFILE=$(1): CONTRACT_DEFINES=\"$(strip $(CONTRACT_DEFINES) $(2) $(ZPS_DEFINES))\" CONTRACT_ZP_DEFINES=\"$(strip $(CONTRACT_ZP_DEFINES) $(ZPS_ZP_DEFINES))\""
+	@rm -rf $(ZPS_DIR); mkdir -p $(ZPS_DIR)
+	@$(ZPS_MAKE) CONTRACT_DEFINES="$(CONTRACT_DEFINES) $(2) $(ZPS_DEFINES)" \
+	    X25519_PROFILE=$(1) lib lib-verify >$(ZPS_DIR)/zp-supply.log 2>&1 \
+	  || { tail -20 $(ZPS_DIR)/zp-supply.log; echo "FAIL: ZP supply [$(1)] — lib lib-verify failed in the ZP_CONFIG_NO_EXPORTS configuration (log: $(ZPS_DIR)/zp-supply.log)"; exit 1; }
+	@grep '^OK: .*lib_linkage_stub.prg' $(ZPS_DIR)/zp-supply.log
+	@od65 --dump-exports $(ZPS_DIR)/lib/zp_config.o | grep -q 'Count: *0$$' \
+	  || { echo "FAIL: ZP supply [$(1)] — zp_config.o still exports slots; the build is not in ZP_CONFIG_NO_EXPORTS mode"; exit 1; }
+	@grep -q 'zp_supply\.o' $(ZPS_DIR)/lib_verify/stub.map \
+	  || { echo "FAIL: ZP supply [$(1)] — zp_supply.o is not in the link map; the slots came from somewhere else"; exit 1; }
+	@$(ZPS_MAKE) CONTRACT_DEFINES="$(CONTRACT_DEFINES) $(2) $(ZPS_DEFINES)" \
+	    NOBARE_CHECK_DIR=$(ZPS_DIR) X25519_PROFILE=$(1) \
+	    NOBARE_CHECK_MODE="ZP_CONFIG_NO_EXPORTS + LIB_NO_BARE_EXPORTS" nobare-check
+endef
+
+lib-verify-zp-supply:
+	@echo "=== lib-verify-zp-supply: stub links with the consumer supplying every ZP slot ==="
+	$(call ZPS_RUN,default,)
+	$(call ZPS_RUN,onchip,-D X25519_ONCHIP_MUL=1)
+	@rm -rf $(ZPS_DIR)
+	@echo "OK: default and onchip link under ZP_CONFIG_NO_EXPORTS with the roster-derived supply"
+
+# Negative leg. A probe slot is added to the roster on a scratch copy of
+# src/, in the default wireguard configuration:
+#   P  positive control: the derived supply links and resolves x25_probe
+#      (a tree that never linked would make H and A prove nothing).
+#   H  a HAND-LISTED supplier (today's 19 names, literal) must fail naming
+#      x25_probe: the stub's roster-derived import is what requires it.
+#   A  no supplier at all (#143's shape) must fail naming every roster
+#      slot, and ld65's count must equal the roster's line count.
+ZPSNEG_DIR = build-zp-supply-neg
+ZPSNEG_MAKE = $(ZPS_MAKE) BUILD_DIR=$(ZPSNEG_DIR) LIB_DIR=$(ZPSNEG_DIR)/lib \
+	SRC_DIR=$(ZPSNEG_DIR)/src CONTRACT_DEFINES="$(CONTRACT_DEFINES) $(ZPS_DEFINES)"
+ZPSNEG_HAND_SLOTS = fe25519_src1 fe25519_src2 fe25519_dst mul_pending \
+	mul_bound fe_carry fe_loop fe_mul_i fe_mul_j mul_ripple_start \
+	x25_prev_bit x25_byte_idx x25_bit_mask fe_sqr_pairs fe_cmp_mask \
+	fe_subp_rhs fe_add_carry_mask mul_carry fe_wide
+
+lib-verify-zp-supply-negative:
+	@echo "=== lib-verify-zp-supply-negative ==="
+	@rm -rf $(ZPSNEG_DIR); mkdir -p $(ZPSNEG_DIR)/src; cp -R $(SRC_DIR)/. $(ZPSNEG_DIR)/src/
+	@awk '{print} /^  m p1, p2, fe_wide, /{print "  m p1, p2, x25_probe,         $$30,  1"}' \
+	    $(ZPSNEG_DIR)/src/zp_config.s > $(ZPSNEG_DIR)/zp.tmp \
+	  && mv $(ZPSNEG_DIR)/zp.tmp $(ZPSNEG_DIR)/src/zp_config.s
+	@grep -q '^  m p1, p2, x25_probe, *[$$]30' $(ZPSNEG_DIR)/src/zp_config.s \
+	  || { echo "FAIL: fixture did not insert the probe roster line"; exit 1; }
+	@$(ZPSNEG_MAKE) lib lib-verify >/dev/null \
+	  || { echo "FAIL: P — the probe tree did not build and link with the derived supply"; exit 1; }
+	@grep -q '^al 000030 \.x25_probe$$' $(ZPSNEG_DIR)/lib_verify/stub.labels \
+	  || { echo "FAIL: P — x25_probe is not in the linked stub at \$$30"; exit 1; }
+	@echo "OK: P — derived supply links; stub.labels: $$(grep '\.x25_probe$$' $(ZPSNEG_DIR)/lib_verify/stub.labels)"
+	@{ echo '.include "zp_config.s"'; \
+	   for s in $(ZPSNEG_HAND_SLOTS); do echo ".exportzp $$s"; done; } > $(ZPSNEG_DIR)/hand_supply.s
+	@$(CA65) $(CA65FLAGS) $(CONTRACT_DEFINES) $(ZPS_DEFINES) $(CONTRACT_ZP_DEFINES) $(ZPS_ZP_DEFINES) \
+	    -I $(ZPSNEG_DIR)/src -o $(ZPSNEG_DIR)/hand_supply.o $(ZPSNEG_DIR)/hand_supply.s
+	@rm -f $(ZPSNEG_DIR)/lib_verify/*.prg
+	@out=$$($(ZPSNEG_MAKE) LIB_VERIFY_ZP_SUPPLY_OBJ=$(ZPSNEG_DIR)/hand_supply.o \
+	        $(ZPSNEG_DIR)/lib_verify/lib_linkage_stub.prg 2>&1); rc=$$?; \
+	 [ $$rc -ne 0 ] || { echo "FAIL: H — linked with a hand-listed supply missing x25_probe; the stub's import is not roster-derived"; exit 1; }; \
+	 printf '%s\n' "$$out" | grep -q "Unresolved external 'x25_probe'" \
+	   && echo "OK: H — $$(printf '%s\n' "$$out" | grep -F "Unresolved external" | tr '\n' ' ')/ $$(printf '%s\n' "$$out" | grep 'unresolved external(s)')" \
+	   || { echo "FAIL: H — failed, but not naming x25_probe:"; printf '%s\n' "$$out" | tail -5; exit 1; }
+	@rm -f $(ZPSNEG_DIR)/lib_verify/*.prg
+	@out=$$($(ZPSNEG_MAKE) LIB_VERIFY_ZP_SUPPLY_OBJ= \
+	        $(ZPSNEG_DIR)/lib_verify/lib_linkage_stub.prg 2>&1); rc=$$?; \
+	 [ $$rc -ne 0 ] || { echo "FAIL: A — linked with no ZP supply at all"; exit 1; }; \
+	 slots=$$(sed -n 's/^  m p1, p2, \([A-Za-z0-9_]*\),.*/\1/p' $(ZPSNEG_DIR)/src/zp_config.s); \
+	 n=$$(printf '%s\n' "$$slots" | grep -c .); fail=0; \
+	 for s in $$slots; do \
+	   printf '%s\n' "$$out" | grep -q "Unresolved external '$$s'" \
+	     || { echo "FAIL: A — ld65 did not name roster slot $$s"; fail=1; }; \
+	 done; \
+	 printf '%s\n' "$$out" | grep -q "Error: $$n unresolved external(s)" \
+	   || { echo "FAIL: A — ld65's unresolved count is not the roster's $$n:"; printf '%s\n' "$$out" | grep 'unresolved'; fail=1; }; \
+	 [ $$fail = 0 ] || exit 1; \
+	 echo "OK: A — $$(printf '%s\n' "$$out" | grep 'unresolved external(s)'), every roster slot named"
+	@rm -rf $(ZPSNEG_DIR)
+	@echo "OK: ZP supply negative — P linked, H and A failed by name"
+
 lib-verify-negative:
 	@echo "=== lib-verify-negative: §15.1 per-check negative legs for lib-verify ==="
 	rm -rf $(NEG_DIR) $(NEG_ART_DIR)
@@ -1715,7 +1835,8 @@ lib-verify-single-scan-negative-arm:
 # runs); there is no CI in this repo, so that is the strongest reachability
 # available without putting a 3-profile library rebuild inside `lib-verify`,
 # which runs seven times.
-lib-verify-shared: lib-verify-app-owned-header lib-verify-single-scan
+lib-verify-shared: lib-verify-app-owned-header lib-verify-single-scan \
+                   lib-verify-zp-supply
 	@echo "=== lib-verify-shared: SPEC §8.x deferral-build linkage matrix ==="
 	rm -rf build-shared
 	$(MAKE) BUILD_DIR=build-shared LIB_DIR=build-shared/lib \
@@ -1787,7 +1908,7 @@ lib-verify-shared: lib-verify-app-owned-header lib-verify-single-scan
 # The scope carries, and here is why rather than an assertion that it does:
 #
 #   * All four asserts are UNGATED. src/main.s:40, :54 and :55 sit outside
-#     any .if/.ifdef, and tests/lib_linkage/lib_linkage_stub.s:152 likewise,
+#     any .if/.ifdef, and the MAIN-budget .assert in lib_linkage_stub.s likewise,
 #     so every profile assembles the identical assert with the identical
 #     operator and operands. No profile knob adds, removes or re-gates any
 #     of them — there is no configuration in which the check is absent, and
@@ -2602,34 +2723,15 @@ lib-x25519-1764:
 # An earlier revision of this comment claimed it reproduced them; it did not,
 # and the onchip one failed on our own profile-blind expectations.
 #
-# Two reasons it stops there, the second of which outlives the first.
-#
-# Why it stops there, named rather than left as a gap: reproducing either
-# wireguard configuration additionally requires the ZP-suppressed mode, and
-# tests/lib_linkage cannot link under -D ZP_CONFIG_NO_EXPORTS=1 at all — five
-# unresolved externals with that define as the only knob, on a pristine tree.
-# That is issue #143, and it predates this target. A leg written today to the
-# goal of reproducing those configurations would have to drop either the stub
-# link or the ZP define, and either route puts a false claim back in this
-# comment — which is the defect this target exists to repair, not a new plan.
-#
-# What the parameterisation does give: the expectation sets below are
-# profile-aware and every knob is forwarded, so
+# `make lib-verify-zp-supply` (in lib-verify-shared) builds the archive with
+# both wireguard define sets, ZP_CONFIG_NO_EXPORTS included, and links it
+# against our superset stub -- not wireguard's own link shape -- then reuses
+# nobare-check. This target is the parameterised form: every knob is
+# forwarded and the expectation sets are profile-aware, so e.g.
 #     make lib-nobare X25519_PROFILE=onchip \
-#          CONTRACT_DEFINES="-D X25519_ONCHIP_MUL=1"
-# builds and grades the onchip profile in nobare mode, and once #143 is fixed
-# the same invocation plus CONTRACT_ZP_DEFINES reaches the real consumer
-# configuration with no change here. Until then no target in this repo builds
-# either wireguard configuration, and this one does not claim to.
-#
-# The DURABLE reason, which holds even after #143 is fixed: the other define
-# both configurations pass is `-D LIB_SHARED_SQTAB_BASE=<n>`, and that value
-# is the CONSUMER's placement choice, not ours. Hard-coding wireguard's
-# current number here would pin a library-side check to one consumer's memory
-# map and turn their next relocation into our red build — a library must not
-# hold a consumer's layout still. So even with #143 closed, the right shape is
-# a parameterised target the consumer's own integration script drives with its
-# own values, not a target in this repo that names them.
+#          CONTRACT_DEFINES="-D X25519_ONCHIP_MUL=1" \
+#          CONTRACT_ZP_DEFINES="-D ZP_CONFIG_NO_EXPORTS=1"
+# grades that combination here too.
 #
 # It does NOT cover `c64-https` at all, which assembles our sources with ca65
 # and archives with ar65 directly, bypassing this build system entirely — no
@@ -2856,10 +2958,9 @@ lib-nobare:
 	@echo "SPEC §1 archive: build/lib/x25519-nobare.a"
 	@echo "(graded: X25519_PROFILE=$(X25519_PROFILE), CONTRACT_DEFINES=\"$(CONTRACT_DEFINES) -D LIB_NO_BARE_EXPORTS=1\","
 	@echo " CONTRACT_ZP_DEFINES=\"$(CONTRACT_ZP_DEFINES)\" — that one configuration and no other."
-	@echo " NOT either c64-wireguard configuration: both add -D LIB_SHARED_SQTAB_BASE"
-	@echo " and -D ZP_CONFIG_NO_EXPORTS=1, and tests/lib_linkage cannot link under"
-	@echo " the latter at all (issue #143). NOT c64-https, which bypasses this"
-	@echo " build system entirely and cannot be covered by any target here.)"
+	@echo " The two c64-wireguard configurations are graded by make lib-verify-zp-supply."
+	@echo " NOT c64-https, which bypasses this build system entirely and cannot be"
+	@echo " covered by any target here.)"
 
 # --- The negative leg for it -------------------------------------------------
 #
@@ -3017,13 +3118,17 @@ dist:
 	fi
 	@tools/build_release.sh $(VERSION)
 
-$(LIB_VERIFY_PRG): $(LIB_VERIFY_STUB) $(LIB_VERIFY_PROVIDER) $(LIBX25519) cfg/x25519-example.cfg | $(LIB_VERIFY_DIR)
+$(LIB_VERIFY_PRG): $(LIB_VERIFY_STUB) $(LIB_VERIFY_PROVIDER) $(LIB_VERIFY_ZP_SUPPLY) $(SRC_DIR)/zp_config.s $(LIBX25519) cfg/x25519-example.cfg | $(LIB_VERIFY_DIR)
 	$(CA65) $(CA65FLAGS) $(CONTRACT_DEFINES) -I $(SRC_DIR) -o $(LIB_VERIFY_DIR)/stub.o $(LIB_VERIFY_STUB)
 	$(CA65) $(CA65FLAGS) $(CONTRACT_DEFINES) -I $(SRC_DIR) -o $(LIB_VERIFY_DIR)/shared_provider.o $(LIB_VERIFY_PROVIDER)
+ifeq ($(LIB_ZP_SUPPLY),1)
+	$(CA65) $(ALL_DEFINES) -I $(SRC_DIR) -o $(LIB_VERIFY_DIR)/zp_supply.o $(LIB_VERIFY_ZP_SUPPLY)
+endif
 	$(LD65) -C cfg/x25519-example.cfg -o $@ \
 	    -Ln $(LIB_VERIFY_DIR)/stub.labels \
 	    -m $(LIB_VERIFY_DIR)/stub.map \
-	    $(LIB_VERIFY_DIR)/stub.o $(LIB_VERIFY_DIR)/shared_provider.o $(LIBX25519)
+	    $(LIB_VERIFY_DIR)/stub.o $(LIB_VERIFY_DIR)/shared_provider.o \
+	    $(if $(LIB_ZP_SUPPLY),$(LIB_VERIFY_ZP_SUPPLY_OBJ)) $(LIBX25519)
 
 $(LIB_VERIFY_DIR):
 	mkdir -p $(LIB_VERIFY_DIR)
