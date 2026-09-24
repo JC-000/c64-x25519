@@ -541,7 +541,7 @@ Two exported equates, both `.ifndef`-guarded:
 | Symbol | Default | What it controls |
 |---|---|---|
 | `X25519_REU_BANK` | `0` | Base bank for all six tables |
-| `X25519_REU_OFFSET` | `$0000` | Within-bank base offset (currently must remain `$0000`; tables span full banks) |
+| `X25519_REU_OFFSET` | `$0000` | Within-bank base offset. Pinned: any other value is an assemble-time error (tables span full banks) |
 
 **Bank allocation, relative to `X25519_REU_BANK`:**
 
@@ -570,9 +570,9 @@ library's own `make` / `make lib` always uses the default. Consumer
 projects rebuild from source with their preferred bank base.
 
 `X25519_REU_OFFSET` is published as a contract-compliance equate;
-the current library implementation places each table at offset 0
-within its bank, so the override has no effect today. It exists so
-consumers can assert against it; a future release may honor it.
+the library places each table at offset 0 within its bank, so an
+override to any other value is rejected at assemble time. Relocate the
+tables with `X25519_REU_BANK` instead.
 
 ## 4.6 Shared quarter-square table (c64-lib-contract §8.1)
 

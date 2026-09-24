@@ -42,9 +42,9 @@
 ;
 ; X25519_REU_OFFSET is published as a contract-compliance equate, but
 ; the current library implementation places each table at offset 0
-; within its bank (the tables span full banks). Changing the offset
-; would require code changes; the equate exists today so consumers can
-; assert against it.
+; within its bank (the tables span full banks), so the equate is pinned
+; to 0 by a hard assert below; it exists so consumers can assert against
+; it.
 ; =============================================================================
 
 .ifndef REU_CONFIG_S_INCLUDED
@@ -163,6 +163,10 @@ LIB_SHARED_REU_MUL_BANKS_USED = (1 .shl LIB_SHARED_REU_MUL_BANK) | (1 .shl (LIB_
 ;                    adopted because it is the one that guards the export.
 .assert LIB_SHARED_REU_MUL_OFFSET = $0000, error, "reu_mul must start at offset 0 within its bank pair (SPEC §8.2 v0.x.0)"
 .assert LIB_SHARED_REU_MUL_BANK < 31,      error, "reu_mul base bank must leave room for the hi-half bank at base+1 inside the 32-bit §5 bank mask (SPEC §8.2)"
+; X25519_REU_OFFSET is pinned: no code path reads it (every table access
+; uses offset 0 within its bank), so any other value would be exported but
+; not honoured.
+.assert X25519_REU_OFFSET = 0, error, "X25519_REU_OFFSET must be 0: the REU tables are not offset-relocatable (they span full banks); relocate them with X25519_REU_BANK instead"
 
 ; --- SPEC §8.2 ZP scratch contract ---
 ;
