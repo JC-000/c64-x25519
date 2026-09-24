@@ -393,9 +393,14 @@ LIB_VERIFY_STUB = tests/lib_linkage/lib_linkage_stub.s
 LIB_VERIFY_PROVIDER = tests/lib_linkage/shared_provider_stub.s
 
 # -D ZP_CONFIG_NO_EXPORTS=1 (the mode c64-wireguard builds in): zp_config.o
-# exports no slot, so the consumer supplies them. The stub imports every
-# roster slot in both modes; in this one it links zp_supply_stub.s, which
-# exports every roster slot. .ifndef-gated, so definedness is the axis,
+# exports no slot and no library member imports one, so a consumer supplies
+# exactly the slots it .importzp's. The stub deliberately imports every
+# roster slot (a superset consumer, a modelling choice); in this mode it
+# links zp_supply_stub.s, which exports every roster slot. Scope: only
+# lib-verify-zp-supply models this mode; the other stub-linking targets
+# (lib-verify-shared leg 5, lib-verify-guards, single-scan,
+# app-owned-header) link no supplier and do not support it. .ifndef-gated,
+# so definedness is the axis,
 # as for LIB_NOBARE. LIB_VERIFY_ZP_SUPPLY_OBJ is overridable only so
 # lib-verify-zp-supply-negative can link a hand-listed or absent supplier.
 LIB_ZP_SUPPLY := $(if $(findstring ZP_CONFIG_NO_EXPORTS,$(ALL_DEFINES)),1,)
@@ -1142,7 +1147,10 @@ lib-verify-zp-negative:
 # tools/integration/build_x25519.sh: CONTRACT_ZP_DEFINES="-D
 # ZP_CONFIG_NO_EXPORTS=1" in both, plus LIB_SHARED_SQTAB_BASE and
 # LIB_NO_BARE_EXPORTS, plus X25519_ONCHIP_MUL=1 for the second. The sqtab
-# base is its value when this was written; the leg does not depend on it.
+# base 32768 is a COPY of wireguard's current WG_SQTAB_BASE ($8000); nothing
+# here asserts on it, so drift there does not invalidate the leg.
+# These are built with wireguard's define sets and linked against our
+# superset stub, not wireguard's own link shape.
 # Each profile runs the full `lib lib-verify` (the stub imports every
 # roster slot; zp_supply_stub.s supplies them) and then nobare-check.
 ZPS_DIR = build-zp-supply
@@ -1155,11 +1163,11 @@ ZPS_MAKE = $(MAKE) BUILD_DIR=$(ZPS_DIR) LIB_DIR=$(ZPS_DIR)/lib \
 # $(1) X25519_PROFILE, $(2) extra CONTRACT_DEFINES selecting it
 define ZPS_RUN
 	@echo "--- ZP supply, X25519_PROFILE=$(1): CONTRACT_DEFINES=\"$(strip $(CONTRACT_DEFINES) $(2) $(ZPS_DEFINES))\" CONTRACT_ZP_DEFINES=\"$(strip $(CONTRACT_ZP_DEFINES) $(ZPS_ZP_DEFINES))\""
-	@rm -rf $(ZPS_DIR)
+	@rm -rf $(ZPS_DIR); mkdir -p $(ZPS_DIR)
 	@$(ZPS_MAKE) CONTRACT_DEFINES="$(CONTRACT_DEFINES) $(2) $(ZPS_DEFINES)" \
-	    X25519_PROFILE=$(1) lib lib-verify >$(ZPS_DIR).log 2>&1 \
-	  || { tail -20 $(ZPS_DIR).log; rm -f $(ZPS_DIR).log; echo "FAIL: ZP supply [$(1)] — lib lib-verify failed in the ZP_CONFIG_NO_EXPORTS configuration"; exit 1; }
-	@grep '^OK: .*lib_linkage_stub.prg' $(ZPS_DIR).log; rm -f $(ZPS_DIR).log
+	    X25519_PROFILE=$(1) lib lib-verify >$(ZPS_DIR)/zp-supply.log 2>&1 \
+	  || { tail -20 $(ZPS_DIR)/zp-supply.log; echo "FAIL: ZP supply [$(1)] — lib lib-verify failed in the ZP_CONFIG_NO_EXPORTS configuration (log: $(ZPS_DIR)/zp-supply.log)"; exit 1; }
+	@grep '^OK: .*lib_linkage_stub.prg' $(ZPS_DIR)/zp-supply.log
 	@od65 --dump-exports $(ZPS_DIR)/lib/zp_config.o | grep -q 'Count: *0$$' \
 	  || { echo "FAIL: ZP supply [$(1)] — zp_config.o still exports slots; the build is not in ZP_CONFIG_NO_EXPORTS mode"; exit 1; }
 	@grep -q 'zp_supply\.o' $(ZPS_DIR)/lib_verify/stub.map \
@@ -2712,8 +2720,9 @@ lib-x25519-1764:
 # An earlier revision of this comment claimed it reproduced them; it did not,
 # and the onchip one failed on our own profile-blind expectations.
 #
-# Both wireguard configurations, ZP_CONFIG_NO_EXPORTS included, are built and
-# linked by `make lib-verify-zp-supply` (in lib-verify-shared), which reuses
+# `make lib-verify-zp-supply` (in lib-verify-shared) builds the archive with
+# both wireguard define sets, ZP_CONFIG_NO_EXPORTS included, and links it
+# against our superset stub -- not wireguard's own link shape -- then reuses
 # nobare-check. This target is the parameterised form: every knob is
 # forwarded and the expectation sets are profile-aware, so e.g.
 #     make lib-nobare X25519_PROFILE=onchip \

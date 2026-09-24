@@ -120,9 +120,11 @@ public_version_refs:
 ; and do not collide with the global imports below.
 ;
 ; The supplier depends on the mode. By default zp_config.o exports every
-; slot. Under -D ZP_CONFIG_NO_EXPORTS=1 it exports none and the consumer
-; must supply them: the Makefile then links zp_supply_stub.s, which
-; exports the same roster. A consumer supply missing any slot fails here
+; slot. Under -D ZP_CONFIG_NO_EXPORTS=1 it exports none, and the library
+; imports none either, so a consumer supplies exactly the slots it
+; .importzp's. This stub deliberately imports every slot -- a superset
+; consumer, a modelling choice -- so the Makefile links zp_supply_stub.s,
+; which exports the same roster, and a supply missing any slot fails here
 ; with ld65 "Unresolved external '<slot>'".
 .scope stub_zp_roster
 ZP_CONFIG_NO_EXPORTS = 1        ; scoped: keep zp_config.s from exporting
