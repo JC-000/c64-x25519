@@ -654,7 +654,7 @@ The four canonical §8.x names are declared with **`.global`**, not
 |---|---|---|
 | `mul_tables_init` | `.global` | §8.1 |
 | `reu_mul_tables_init` | `.global` | §8.2 |
-| `reu_fetch_mul_row_bank_patch` | `.global` | §8.2 (fetch half) |
+| `reu_fetch_mul_row_bank_patch` | `.global` | none — x25519-own hook, deprecated (not §8.2 surface) |
 | `ct_mul_8x8` | `.global` | §8.3 |
 
 The reason is that a deferral switch does not say *who* provides the
@@ -958,12 +958,12 @@ reu_fetch_mul_row_bank_patch := reu_fetch_mul_row::bank_lda + 1
 ```
 
 Address of the immediate-operand byte of the `lda #X25519_REU_BANK`
-instruction inside `reu_fetch_mul_row`. An SMC caller can `sta` here
-to retarget the fetch to a different REU bank base without rebuilding
-the library. No-op for canonical callers; consumed today by
-`reu_fetch_doubled_row`'s DMA #1 (see §4.10) to retarget to
-`X25519_REU_BANK_DOUBLED` for one call, then restore. The label is a
-regular local (not `@cheap`) per ca65's `proc::label` scope rules.
+instruction inside `reu_fetch_mul_row`. **Deprecated:** it is not part
+of the SPEC §8.2 surface, no other §8.2 provider exports it, and nothing
+in this library patches it any more — `reu_fetch_doubled_row` issues
+its own DMA against the doubled banks. It is still exported by owner
+builds (not under `SHARED_REU_MUL_FETCH`) for the §6.5 deprecation
+window; do not build on it.
 
 ### Symbolic bank names
 

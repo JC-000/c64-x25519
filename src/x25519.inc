@@ -450,7 +450,8 @@
 .endif
 .if ::X25519_ONCHIP_MUL = 0
 .global reu_mul_tables_init          ; §8.2 canonical init entry
-.global reu_fetch_mul_row_bank_patch ; §8.2 SMC bank-patch hook (byte
+; DEPRECATED (§6.5 window): not §8.2 surface; nothing in-tree patches it.
+.global reu_fetch_mul_row_bank_patch ; x25519 SMC bank-patch hook (byte
                                      ; address of reu_fetch_mul_row's
                                      ; bank-LDA immediate). Dropped by
                                      ; SHARED_REU_MUL_FETCH, which moves

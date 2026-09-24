@@ -24,12 +24,12 @@
 .ifndef SHARED_REU_MUL_FETCH
 .export reu_fetch_mul_row
 .else
-; §8.2 fetch deferral (SPEC v0.9.1): the canonical per-row fetch and
-; its promoted SMC bank-patch label come from the provider. v0.9.1-C
-; rules INIT and FETCH move together (coupling assert in
+; §8.2 fetch deferral: the canonical per-row fetch comes from the
+; provider, and it is the ONLY fetch name imported — SPEC v1.2.2 §8.2
+; names no patch site, so nothing here may reach into the provider's
+; code. INIT and FETCH move together (coupling assert in
 ; reu_config.s); import-never-stub per §8.1's rule.
 .import reu_fetch_mul_row
-.import reu_fetch_mul_row_bank_patch
 .endif
 .endif
 .if ::SQR_DMA_K
@@ -124,8 +124,7 @@ reu_mul_tables_init = reu_mul_init
 ; docs/design/issue_68_cold_segment_split.md and LIBRARY.md §4.10.
 ; The runtime-hot REU fetch helpers below (reu_fetch_mul_row,
 ; reu_fetch_doubled_row, reu_clear_wide) MUST stay in LIB_X25519_CODE
-; — they run on every fe25519_mul/sqr and reu_fetch_mul_row is
-; SMC-patched at runtime through reu_fetch_mul_row_bank_patch.
+; — they run on every fe25519_mul/sqr.
 .segment "LIB_X25519_INIT_CODE"
 
 .proc reu_mul_init
@@ -365,21 +364,16 @@ reu_init_b:     .byte 0
 ; address it from outside the proc via `proc::label` syntax, which
 ; cheap-locals don't support) tags the LDA #X25519_REU_BANK instruction
 ; so reu_fetch_mul_row_bank_patch (below) can export its immediate-byte
-; address as an SMC patch point. This is a no-op for canonical callers;
-; it is consumed by reu_fetch_doubled_row's DMA #1 (above the inline
-; carry-fetch) to retarget the bank base to X25519_REU_BANK_DOUBLED for
-; the duration of one call, then restored. See the
-; c64-lib-contract issue #15 design notes at
-; docs/design/issue_15_smc_patch_doubled_fetch.md.
+; address. No in-tree code patches it any more (reu_fetch_doubled_row
+; does its own DMA #1); the export is kept, deprecated, for §6.5.
 ;
 ; Caller contract (autoload-latch trust): this proc does NOT touch
 ; reu_c64_lo/hi, reu_len_lo/hi, reu_reu_lo, or reu_addr_ctrl. Callers
 ; MUST have established the canonical autoload-latch state
 ; (mul_dma_lo / 512 / 0 / 0) before JSR'ing here. The two callers that
-; honor this contract are (a) fe25519_mul's per-row inline DMA (which
-; runs after reu_clear_wide's autoload-restore tail) and (b)
-; reu_fetch_doubled_row's DMA #1 (which explicitly re-writes the four
-; registers before the JSR — see banner there).
+; honor this contract are fe25519_mul's per-row inline DMA (which
+; runs after reu_clear_wide's autoload-restore tail) and any consumer
+; that calls it after reu_mul_init or fe25519_mul/sqr.
 ; =============================================================================
 ; Back to the resident LIB_X25519_CODE segment: this proc and everything through
 ; reu_clear_wide is runtime-hot (issue #68 cold-split boundary).
@@ -473,9 +467,8 @@ bank_lda:
 
 ; SMC patch point export. Address of the immediate-operand byte of the
 ; `lda #X25519_REU_BANK` instruction inside reu_fetch_mul_row. +1 skips
-; the LDA opcode and lands on the immediate byte; an SMC caller can STA
-; here to retarget the fetch to a different REU bank base without
-; rebuilding the library. No-op for in-tree / canonical callers.
+; the LDA opcode and lands on the immediate byte.
+; DEPRECATED: not §8.2 surface and unused in-tree; kept for §6.5 only.
 reu_fetch_mul_row_bank_patch := reu_fetch_mul_row::bank_lda + 1
 .export reu_fetch_mul_row_bank_patch
 .endif ; SHARED_REU_MUL_FETCH not defined (owner build carries the body)
@@ -487,77 +480,53 @@ reu_fetch_mul_row_bank_patch := reu_fetch_mul_row::bank_lda + 1
 ; Input: A = multiplier value in mul_cached_a
 ; Fetches 512 bytes from banks 4-5 to mul_dma_lo/hi (doubled lo+hi),
 ; then 256 bytes from bank 3 to mul_dma_carry (17th-bit carry flags).
-; Clobbers: A and C (C via the delegated reu_fetch_mul_row's asl/adc;
-;           REU_SETTLE itself clobbers A only). X and Y preserved.
+; Clobbers: A and C (C from DMA #1's asl/adc; REU_SETTLE itself
+;           clobbers A only). X and Y preserved.
 ; NOTE: Leaves REU registers in a non-default state; caller must restore
 ; if the regular mul-row FETCH config is needed afterward (see
 ; reu_clear_wide's autoload-restore tail, which is what fe25519_sqr
 ; relies on between its calls and any subsequent fe25519_mul).
 ;
-; -----------------------------------------------------------------------------
-; c64-lib-contract issue #15 refactor (v0.7.0 prep):
-;
-; DMA #1 (the 512-byte doubled-lo/hi fetch) is delegated to the canonical
-; 3-register-touch `reu_fetch_mul_row` primitive (only writes
-; reu_reu_hi / reu_reu_bank / reu_command), with the bank-base immediate
-; byte SMC-patched to X25519_REU_BANK_DOUBLED for the duration of the
-; call and restored to X25519_REU_BANK immediately after return. This
-; collapses ~16 bytes of duplicated REU-register staging in the library
-; image and unlocks SPEC §8.x sharing of the fetch primitive.
+; Both DMAs are performed here, against x25519's own DOUBLED / CARRY
+; banks. DMA #1 does NOT go through reu_fetch_mul_row: under
+; SHARED_REU_MUL_FETCH that entry belongs to another library, and §8.2
+; gives no way to point it at a different bank (issue #134; the earlier
+; SMC-patch-and-restore design is in
+; docs/design/issue_15_smc_patch_doubled_fetch.md).
 ;
 ; Autoload-latch invariant (LOAD-BEARING — do not break):
-;   reu_fetch_mul_row trusts the autoload latch for reu_c64_lo/hi,
-;   reu_len_lo/hi, reu_reu_lo, and reu_addr_ctrl. Specifically it
-;   expects:
+;   fe25519_mul's inline row DMA and reu_fetch_mul_row trust the
+;   autoload latch for reu_c64_lo/hi, reu_len_lo/hi, reu_reu_lo and
+;   reu_addr_ctrl:
 ;       reu_c64_lo/hi = mul_dma_lo
 ;       reu_len_lo/hi = $00 / $02 (i.e. 512-byte transfer)
 ;       reu_reu_lo    = $00
 ;       reu_addr_ctrl = $00
-;   Two callers establish this latched state:
-;     (a) the tail of `reu_mul_init` (one-shot init), and
-;     (b) the tail of `reu_clear_wide` (re-establishes the latch on
-;         every fe25519_sqr / fe25519_mul entry).
-;   fe25519_sqr's current call shape is:
-;       jsr reu_clear_wide       ; (re-)establishes canonical latch
-;       loop:
-;         jsr reu_fetch_doubled_row  ; uses canonical latch on entry,
-;                                    ; STOMPS it via DMA #2 below.
-;   The "stomp" in DMA #2 is harmless WITHIN this proc because:
-;     - DMA #2 writes its own reu_c64_lo/hi, reu_len_hi (=$01),
-;       reu_addr_ctrl, reu_reu_lo before firing, so it never reads
-;       a stale latch value.
-;     - The NEXT iteration's DMA #1 re-establishes the canonical
-;       latch by re-writing those four registers BEFORE delegating
-;       to reu_fetch_mul_row (see explicit `sta reu_c64_lo` / `_hi`
-;       / `len_lo` / `addr_ctrl` / `reu_reu_lo` sequence below).
-;   Without those explicit re-writes, iterations 2..N would inherit
-;   DMA #2's latched mul_dma_carry/256/... and reu_fetch_mul_row
-;   would DMA 256 bytes into mul_dma_carry, silently corrupting the
-;   doubled-lo/hi tables. This is the same W2-class state-leak class
-;   that the v0.4.0 `reu_clear_wide` rewrite closed (see that proc's
-;   banner). Regression: `tools/test_fe_sqr_then_mul.py`.
-; -----------------------------------------------------------------------------
+;   DMA #2 below STOMPS that latch (mul_dma_carry / 256), which is why
+;   DMA #1 rewrites all five registers on every call rather than
+;   trusting the latch: iterations 2..N of fe25519_sqr's loop would
+;   otherwise inherit DMA #2's state and fetch 256 bytes into
+;   mul_dma_carry, corrupting the doubled-lo/hi rows. After this proc
+;   the latch is left as DMA #2 set it; reu_clear_wide's tail restores
+;   the canonical state before the next fe25519_mul. Regression:
+;   `tools/test_fe_sqr_then_mul.py`.
+;
+; CT: straight-line apart from REU_SETTLE (L31, branch on hardware
+; state only); mul_cached_a is used only as a DMA address, never in a
+; branch. Same instruction sequence for every input.
 ;
 ; Gated on `SQR_DMA_K`: when SQR_DMA_K = 0 (the v0.6 1764-variant
 ; build), `fe25519_sqr` never dispatches to the DMA path so this proc
-; is dead code. Gating it out drops dead references to
-; reu_fetch_mul_row_bank_patch from the K=0 build image (mirrors the
-; existing SQR_DMA_K gate inside reu_mul_init above and
-; LIB_X25519_REU_BANKS_USED's $3B↔$03 flip in src/lib_manifest.s).
+; is dead code (mirrors the SQR_DMA_K gate inside reu_mul_init above
+; and LIB_X25519_REU_BANKS_USED's $3B↔$03 flip in src/lib_manifest.s).
 ; The matching `.export reu_fetch_doubled_row` at the top of this
 ; file is gated under the same condition, and `src/fe25519.s`'s
-; `.import` + DMA-dispatch block are gated too — see the issue #15
-; design doc at docs/design/issue_15_smc_patch_doubled_fetch.md.
+; `.import` + DMA-dispatch block are gated too.
 ; =============================================================================
 .if ::SQR_DMA_K
 .proc reu_fetch_doubled_row
-        ; --- DMA #1: 512 bytes to mul_dma_lo from banks 4-5, offset a*512
-        ;
-        ; Re-establish canonical autoload-latch state (see banner above).
-        ; These five writes are NOT redundant: DMA #2 of the previous
-        ; iteration stomped reu_c64_lo/hi (=mul_dma_carry) and
-        ; reu_len_hi (=$01). They must be canonical BEFORE delegating
-        ; to reu_fetch_mul_row, which trusts the latch.
+        ; --- DMA #1: 512 bytes to mul_dma_lo/hi from the DOUBLED bank
+        ;     pair, offset a*512. Latch registers first (see banner).
         lda #<(mul_dma_lo)
         sta reu_c64_lo
         lda #>(mul_dma_lo)
@@ -568,41 +537,18 @@ reu_fetch_mul_row_bank_patch := reu_fetch_mul_row::bank_lda + 1
         sta reu_addr_ctrl
         lda #2
         sta reu_len_hi         ; 512 bytes
-        ; SMC: retarget reu_fetch_mul_row at the DOUBLED bank base for
-        ; this one call, then restore the canonical X25519_REU_BANK
-        ; before RTS. fe25519_mul currently INLINES its per-row DMA
-        ; (it does not JSR reu_fetch_mul_row), so a missed restore
-        ; would not immediately corrupt fe25519_mul. The restore is
-        ; nonetheless unconditional for two reasons:
-        ;   (1) R1 hygiene — the proc is R1-safe in isolation, the
-        ;       SMC byte's post-call state is always X25519_REU_BANK,
-        ;       no caller-side restore obligation.
-        ;   (2) Forward-compat — a future c64-lib-contract consumer
-        ;       (or a SHARED_REU_MUL_INIT user) that JSRs
-        ;       reu_fetch_mul_row directly after fe25519_sqr would
-        ;       silently read from bank +4 if the restore were
-        ;       skipped, recreating the W2-class corruption class.
+        lda mul_cached_a
+        asl                    ; A = a*2, C = bit 7 of a
+        sta reu_reu_hi
         lda #X25519_REU_BANK_DOUBLED
-        sta reu_fetch_mul_row_bank_patch
-        ; CALLER AUDIT (#127), load-bearing and not belt-and-braces: at
-        ; this point A holds X25519_REU_BANK_DOUBLED, not the row index.
-        ; Before v0.15.0 that was harmless because reu_fetch_mul_row
-        ; re-loaded mul_cached_a itself; now that it honours §8.2's
-        ; `A = a` entry, passing the bank here would store the BANK into
-        ; mul_cached_a and fetch a garbage row — turning a stale-row read
-        ; into a wrong-row read. This is why the shim and the audit had to
-        ; land together.
-        lda mul_cached_a       ; §8.2: A = a on entry to reu_fetch_mul_row
-        jsr reu_fetch_mul_row
-        lda #X25519_REU_BANK
-        sta reu_fetch_mul_row_bank_patch
+        adc #0                 ; bank = DOUBLED + (a >> 7)
+        sta reu_reu_bank
+        lda #%10110001         ; execute + autoload + FETCH (REU->C64)
+        sta reu_command
+        REU_SETTLE             ; §8.2: confirm END OF BLOCK + settle
 
         ; --- DMA #2: 256 bytes to mul_dma_carry from CARRY bank,
-        ;     offset a*256. Stays inline: different length (256 not 512),
-        ;     different target buffer, different reu_reu_hi derivation
-        ;     (raw `mul_cached_a`, not `mul_cached_a << 1`). Cannot fold
-        ;     into reu_fetch_mul_row without changing that primitive's
-        ;     contract.
+        ;     offset a*256 (raw a, not a << 1).
         lda #<(mul_dma_carry)
         sta reu_c64_lo
         lda #>(mul_dma_carry)
@@ -646,11 +592,10 @@ reu_fetch_mul_row_bank_patch := reu_fetch_mul_row::bank_lda + 1
 ; reu_fetch_doubled_row's inline DMA #2 (256 bytes to mul_dma_carry
 ; from bank +3) and read the 17th-bit carry table by mistake. This
 ; was caught by the mul(1,1)-after-sqr(1) → 0 regression (W2 root
-; cause analysis). The issue #15 SMC-patch refactor of DMA #1 does
-; NOT change this story: DMA #1 now delegates to reu_fetch_mul_row,
-; whose autoload-completed state is canonical (mul_dma_lo / 512), so
-; the post-fetch_doubled_row latched state is determined entirely by
-; the inline DMA #2 — same residue, same restore obligation.
+; cause analysis). The post-fetch_doubled_row latched state is
+; determined entirely by its DMA #2 (DMA #1's autoload-completed state
+; is mul_dma_lo / 512 and is overwritten), so the restore obligation
+; is the same whichever way DMA #1 is issued.
 ;
 ; Clobbers: A, X
 ; =============================================================================

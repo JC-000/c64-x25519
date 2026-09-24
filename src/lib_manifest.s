@@ -71,14 +71,14 @@
 ;   sections from reu_mul_init):
 ;
 ;     SQR_DMA_K > 0 (default, =22):
-;       LIB_X25519_CODE total ≈ 3895 B  (x25519 717 + fe25519 2750 +
-;                               mul_8x8 63 + x25519_init 213 + util 152)
+;       LIB_X25519_CODE total ≈ 3913 B  (x25519 717 + fe25519 2750 +
+;                               mul_8x8 63 + x25519_init 231 + util 152)
 ;       LIB_X25519_DATA total ≈ 3584 B  (x25519_reu_fault + the two
 ;                               settle bytes are absorbed by the
 ;                               pre-existing page pad)
 ;       SQTAB         1024 B
 ;       ---------------------------------------------------------------
-;                            ≈ 8503 B RESIDENT
+;                            ≈ 8521 B RESIDENT
 ;       LIB_X25519_INIT_CODE ≈ 947 B COLD (x25519_init 787 =
 ;                               reu_mul_init 427 + reu_probe 360;
 ;                               mul_8x8 160 = sqtab_init + sq_* temps)
@@ -96,7 +96,9 @@
 ;        to this itemisation, which is why it read 2723 / 3868 / 8476
 ;        until 2026-08-30. If you adjust one, adjust the other: the
 ;        equates are what consumers see, this breakdown is what
-;        explains them, and only the equates are checked by anything.)
+;        explains them, and only the equates are checked by anything.
+;        +15 RESIDENT since: reu_fetch_doubled_row issues its own DMA #1
+;        instead of SMC-patching reu_fetch_mul_row, x25519_init 216 -> 231.)
 ;
 ;     SQR_DMA_K = 0 (lib-x25519-1764 variant):
 ;       LIB_X25519_CODE total ≈ 3747 B  (x25519 717 + fe25519 2696 +
@@ -230,7 +232,7 @@ _BASE_COLD     = 160
 .elseif SQR_DMA_K
 LIB_X25519_REU_BANKS_USED = $3B << X25519_REU_BANK
 .assert X25519_REU_BANK <= 26, error, "X25519_REU_BANK > 26 shifts the top of the 5-bank $3B window past bit 31 and the exported LIB_X25519_REU_BANKS_USED silently drops it (SPEC §5: banks 0-31)"
-_BASE_RESIDENT = 8506
+_BASE_RESIDENT = 8521
 _BASE_COLD     = 947
 .else
 LIB_X25519_REU_BANKS_USED = $03 << X25519_REU_BANK
