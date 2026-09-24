@@ -205,6 +205,7 @@ LIBX25519 = $(LIB_DIR)/libx25519.a
         lib-verify-footprint lib-verify-footprint-negative lib-verify-precalc \
         lib-verify-footprint-negative-arm \
         lib-verify-negative lib-verify-guards-legc \
+        lib-verify-zp lib-verify-zp-negative \
         lib-verify-guards-legc-negative \
         lib-verify-guards-legc-negative-arm \
         lib-verify-citations lib-verify-citations-negative \
@@ -335,6 +336,7 @@ clean:
 	rm -rf build-fp build-fp-default build-fp-onchip
 	rm -rf build-guards-default build-guards-onchip build-guards-legc-negative
 	rm -rf build-neg build-neg-artifact
+	rm -rf $(ZPNEG_DIR)
 	# Spelled with the variables, not literals: arm B's tree is derived from
 	# NOBARE_NEG_DIR, and a literal copy of it here drifted out of step once
 	# already (F3).
@@ -915,6 +917,26 @@ LIB_VERIFY_PRECALC_CMD = python3 tools/check_precalc_enumeration.py \
 lib-verify-precalc: lib $(LIB_VERIFY_PRG)
 	@$(LIB_VERIFY_PRECALC_CMD)
 
+# §2 zero-page roster reconciliation (#136/#148). The pairwise-disjointness
+# asserts live in src/zp_config.s and cover the roster only; this checks
+# that src/zp_config.s itself defines nothing outside the roster, that
+# zp_config.o exports exactly the roster, and that LIB_X25519_ZP_USAGE_BYTES
+# is its sum. SCOPE: it reads src/zp_config.s only. A slot defined in
+# constants.s or any other TU is NOT seen (measured: x25_probe = $50 there
+# passes). Extending it to every TU was measured and not done: the
+# library TUs define dozens of non-roster zero-page-sized constants
+# (versions, masks, precalc enumerations, SQR_DMA_K, proc_port, ...),
+# indistinguishable from a slot by address size, so it would need a
+# hand-kept allowlist.
+LIB_VERIFY_ZP_CMD = python3 tools/check_zp_roster.py \
+	--defines "$(ALL_DEFINES)" \
+	--zp-obj $(LIB_DIR)/zp_config.o \
+	--manifest-obj $(LIB_DIR)/lib_manifest.o \
+	--src $(SRC_DIR)/zp_config.s
+
+lib-verify-zp: lib
+	@$(LIB_VERIFY_ZP_CMD)
+
 lib-verify: lib-verify-docs lib-verify-citations lib-verify-isolation lib $(LIB_VERIFY_PRG)
 	@set -e; \
 	test -s $(LIB_VERIFY_PRG) || (echo "FAIL: $(LIB_VERIFY_PRG) is empty" && exit 1); \
@@ -951,6 +973,7 @@ lib-verify: lib-verify-docs lib-verify-citations lib-verify-isolation lib $(LIB_
 	done; \
 	$(LIB_VERIFY_FOOTPRINT_CMD); \
 	$(LIB_VERIFY_PRECALC_CMD); \
+	$(LIB_VERIFY_ZP_CMD); \
 	bytes=$$(wc -c < $(LIB_VERIFY_PRG)); \
 	echo "OK: $(LIB_VERIFY_PRG) is $$bytes bytes, $(X25519_PROFILE)-profile symbol surface verified (mask \$$$(LIB_VERIFY_MASK_EXPECT))"
 
@@ -1027,6 +1050,74 @@ define NEG_LEG
 	   || (echo "FAIL: $(1) — lib-verify failed, but not with the named message:" \
 	       && printf '%s\n' "$$out" | tail -5 && exit 1)
 endef
+
+# --- §2 ZP negative legs (#136/#148) -----------------------------------------
+# Each arm must FAIL and print the message naming the colliding slots; the
+# two source-edit arms work on a throwaway copy of src/. Z0 is the positive
+# control: a legal relocation of fe_wide must build and reconcile.
+ZPNEG_DIR = build-zp-neg
+ZPNEG_MAKE = $(MAKE) BUILD_DIR=$(ZPNEG_DIR) LIB_DIR=$(ZPNEG_DIR)/lib \
+	CA65FLAGS="$(CA65FLAGS)" CONTRACT_DEFINES="$(CONTRACT_DEFINES)"
+
+# $(1) arm label, $(2) extra make args, $(3) fixed string the output must contain
+define ZPNEG_LEG
+	@rm -rf $(ZPNEG_DIR); \
+	 out=$$($(ZPNEG_MAKE) $(2) lib 2>&1); rc=$$?; \
+	 if [ $$rc -eq 0 ]; then \
+	   echo "FAIL: $(1) — make lib exited 0; the ZP check is inert"; exit 1; \
+	 fi; \
+	 printf '%s\n' "$$out" | grep -qF '$(3)' \
+	   && echo "OK: $(1) — $$(printf '%s\n' "$$out" | grep -m1 -F '$(3)')" \
+	   || (echo "FAIL: $(1) — make lib failed, but not with the named message:" \
+	       && printf '%s\n' "$$out" | grep -m5 -i error && exit 1)
+endef
+
+lib-verify-zp-negative:
+	@echo "=== lib-verify-zp-negative: the §2 ZP checks must fail by name ==="
+	@rm -rf $(ZPNEG_DIR)
+	@$(ZPNEG_MAKE) CONTRACT_ZP_DEFINES="-D fe_wide=0x30" lib-verify-zp \
+	  && echo "OK: Z0 positive control — -D fe_wide=0x30 builds and reconciles"
+	$(call ZPNEG_LEG,Z1 fe25519_src1 inside fe_wide,CONTRACT_ZP_DEFINES="-D fe25519_src1=0x50",ZP slots fe25519_src1 [$$50-$$51] and fe_wide [$$40-$$7F] overlap)
+	$(call ZPNEG_LEG,Z2 fe_carry onto fe_loop,CONTRACT_ZP_DEFINES="-D fe_carry=0x27",ZP slots fe_carry [$$27-$$27] and fe_loop [$$27-$$27] overlap)
+	$(call ZPNEG_LEG,Z3 fe25519_src2 onto fe25519_src1,CONTRACT_ZP_DEFINES="-D fe25519_src2=0x1f",ZP slots fe25519_src1 [$$1E-$$1F] and fe25519_src2 [$$1F-$$20] overlap)
+	$(call ZPNEG_LEG,Z4a fe25519_src1 past zero page,CONTRACT_ZP_DEFINES="-D fe25519_src1=0xff",ZP slot fe25519_src1 [$$FF-$$100] does not fit in zero page)
+	$(call ZPNEG_LEG,Z4b bare -D fe_carry (defines 0),CONTRACT_ZP_DEFINES="-D fe_carry",ZP slot fe_carry [$$00-$$00] overlaps the 6510 processor port $$00-$$01)
+	$(call ZPNEG_LEG,Z4 fe_wide past zero page,CONTRACT_ZP_DEFINES="-D fe_wide=0xc1",fe_wide [$$C1-$$100] must lie wholly in zero page)
+	@echo "--- Z5: a probe slot at 0x50 added as a roster line (source edit)"
+	@rm -rf $(ZPNEG_DIR); mkdir -p $(ZPNEG_DIR)/src; cp -R $(SRC_DIR)/. $(ZPNEG_DIR)/src/
+	@awk '{print} /^  m p1, p2, fe_wide, /{print "  m p1, p2, x25_probe,         $$50,  1"}' \
+	    $(ZPNEG_DIR)/src/zp_config.s > $(ZPNEG_DIR)/zp.tmp \
+	  && mv $(ZPNEG_DIR)/zp.tmp $(ZPNEG_DIR)/src/zp_config.s
+	@grep -q '^  m p1, p2, x25_probe, *[$$]50' $(ZPNEG_DIR)/src/zp_config.s \
+	  || (echo "FAIL: Z5 fixture did not insert the probe roster line" && exit 1)
+	@out=$$($(ZPNEG_MAKE) SRC_DIR=$(ZPNEG_DIR)/src lib 2>&1); rc=$$?; \
+	 [ $$rc -ne 0 ] || { echo "FAIL: Z5 — make lib exited 0 with an overlapping roster slot"; exit 1; }; \
+	 printf '%s\n' "$$out" | grep -qF 'ZP slots fe_wide [$$40-$$7F] and x25_probe [$$50-$$50] overlap' \
+	   && echo "OK: Z5 — $$(printf '%s\n' "$$out" | grep -m1 -F 'x25_probe')" \
+	   || { echo "FAIL: Z5 — not the named message:"; printf '%s\n' "$$out" | grep -m5 -i error; exit 1; }
+	@echo "--- Z6: the same probe declared OUTSIDE the roster, the pre-roster way"
+	@rm -rf $(ZPNEG_DIR); mkdir -p $(ZPNEG_DIR)/src; cp -R $(SRC_DIR)/. $(ZPNEG_DIR)/src/
+	@awk '/^\.endif ; ZP_CONFIG_S_INCLUDED/{print ".ifndef x25_probe"; \
+	      print "  x25_probe = $$50"; print ".endif"; \
+	      print ".ifndef ZP_CONFIG_NO_EXPORTS"; print ".exportzp x25_probe"; \
+	      print ".endif"} {print}' \
+	    $(ZPNEG_DIR)/src/zp_config.s > $(ZPNEG_DIR)/zp.tmp \
+	  && mv $(ZPNEG_DIR)/zp.tmp $(ZPNEG_DIR)/src/zp_config.s
+	@grep -q '^  x25_probe = [$$]50' $(ZPNEG_DIR)/src/zp_config.s \
+	  || (echo "FAIL: Z6 fixture did not insert the raw probe slot" && exit 1)
+	@echo "    make lib must SUCCEED here: the slot bypasses the ca65 asserts,"
+	@echo "    which is the hazard. The reconciliation below is what catches it."
+	@$(ZPNEG_MAKE) SRC_DIR=$(ZPNEG_DIR)/src lib >/dev/null
+	@od65 --dump-exports $(ZPNEG_DIR)/lib/zp_config.o | grep -q '"x25_probe"' \
+	  || (echo "FAIL: Z6 — the probe never reached zp_config.o's exports; the leg would prove nothing" && exit 1)
+	@out=$$($(ZPNEG_MAKE) SRC_DIR=$(ZPNEG_DIR)/src lib-verify-zp 2>&1); rc=$$?; \
+	 [ $$rc -ne 0 ] || { echo "FAIL: Z6 — check_zp_roster passed with a slot outside the roster"; exit 1; }; \
+	 printf '%s\n' "$$out" | grep -qF "defines 'x25_probe' (= \$$50) outside the x25519_zp_roster" \
+	   && printf '%s\n' "$$out" | grep -qF "exports ZP slot 'x25_probe'" \
+	   && { echo "OK: Z6 —"; printf '%s\n' "$$out" | grep -F 'x25_probe'; } \
+	   || { echo "FAIL: Z6 — not the named messages:"; printf '%s\n' "$$out" | tail -5; exit 1; }
+	@rm -rf $(ZPNEG_DIR)
+	@echo "OK: every §2 ZP check failed by name, and the positive control passed"
 
 lib-verify-negative:
 	@echo "=== lib-verify-negative: §15.1 per-check negative legs for lib-verify ==="

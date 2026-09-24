@@ -795,7 +795,7 @@
         ; Patch ALL FOUR copies of the unrolled inner loop.
         lda #<(fe_wide)
         clc
-        adc fe_mul_i           ; A = (fe_wide + i) & $ff  (stays in $40..$5F)
+        adc fe_mul_i           ; A = fe_wide + i, no carry-out (fe_wide+63 <= $FF, asserted in zp_config.s)
         sta @accum_ld1+1
         sta @accum_st1+1
         sta @accum_ld1_b+1
@@ -836,7 +836,7 @@
         ; Carry invariant: C=0 on every entry to @mul_inner. The back-branch
         ; `bcc @mul_inner` after `cpx #32` keeps C=0 when the loop continues
         ; (X<32 -> cpx clears C). Initial entry falls through with C=0 from
-        ; the `adc #1` patch step (A = fe_wide+i+1 <= $60, never overflows).
+        ; the `adc #1` patch step (A = fe_wide+i+1 <= fe_wide+32 < $100, never overflows).
         ; Each chain step ends with `lda #0 / adc #0 / sta mul_pending` -
         ; that final `adc #0` always produces C=0 (max 0+0+1=1, no overflow).
         ; So C=0 is preserved across body->body within a single @mul_inner pass.
@@ -1969,7 +1969,7 @@ sqr_ripple_start:  .byte 0
         ; Zero fe_wide[0..36] - widened by 2 vs. the pre-L28 path so the
         ; unconditional 2-byte cascade at iteration i=31 (which writes
         ; fe_wide+35, fe_wide+36 = $63, $64) lands on zero scratch.
-        ; fe_wide is the 64-byte ZP buffer at $40-$7F (src/constants.s),
+        ; fe_wide is the 64-byte ZP buffer (src/zp_config.s asserts it fits),
         ; well within range.
 .if ::X25519_ONCHIP_MUL = 0
         ; H2 defensive REU register init (mirrors S2 in x25519_scalarmult).

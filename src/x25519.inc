@@ -280,16 +280,20 @@
 ;   $2C-$2D  x25_byte_idx, x25_bit_mask
 ;   $2E      fe_sqr_pairs         (fe25519_sqr unrolled cross-loop counter)
 ;   $2F      mul_ripple_start     (Phase 7: public end-of-inner ripple start)
-;   $40-$7F  fe_wide              (64-byte product accumulator; ZP-pinned by .assert)
+;   $40-$7F  fe_wide              (64-byte product accumulator)
 ;
 ;   $FB-$FC  zp_ptr1 — TEST HARNESS ONLY (defined locally in main.s
 ;                       since contract #83; not exported, not shipped,
 ;                       NOT part of the library's claimed ZP surface).
 ;
+; These are the defaults. Every slot above, fe_wide included, is
+; `.exportzp`-ed by zp_config.o and relocatable by rebuilding the library
+; with CONTRACT_ZP_DEFINES="-D <slot>=0x<addr>". The build rejects an
+; override that overlaps another slot (naming both), or that leaves zero
+; page or touches the 6510 port at $00-$01 (naming the slot).
 ; The library does NOT preserve any of these across calls. If your host
 ; program uses any of the listed slots, save it before calling and
-; restore after, OR pre-define the equate before .include'ing
-; constants.s (see docs/LIBRARY.md §4.2 for the host override protocol).
+; restore after, or relocate the slot (see docs/LIBRARY.md §4.2).
 ;
 ; CT certification: with Phase 7 landed, every catalogued
 ; secret-data-dependent branch and (zp),y page-cross leak

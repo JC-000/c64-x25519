@@ -73,9 +73,6 @@ zp_tmp2 = $03           ; temp byte
 ; fe25519_src1/_src2/_dst (and the other public ZP slots) are now
 ; exported by src/zp_config.s per c64-lib-contract §2; do NOT re-export
 ; them here or ld65 errors on "Duplicate external identifier".
-; fe_wide stays in constants.s (pinned CT/SMC invariant; not movable),
-; so it's still exported here to land in the VICE label file.
-.exportzp fe_wide
 .export cassette_buf
 .export main_loop                 ; needed by tools/test_issue33_adversarial.py
                                   ; for trampoline hijack on U64E hardware

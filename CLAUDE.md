@@ -239,7 +239,7 @@ Dep sketch: `x25519.s → fe25519.s → mul_8x8.s` and `x25519.s → x25519_init
 ### Hardware contract
 
 - **REU:** 1750 or equivalent, ≥512 KB default (claims 5 banks = mask `$3B`: mul tables + doubled/carry; bank 2 in the window is NOT claimed). The 1764 variant claims banks 0–1 only (`$03`, 256 KB); the onchip variant claims none. Library uses REU autoload; leaves `$DF00–$DF0A` ready-for-next-call. Callers that also touch the REU must save/restore.
-- **Zero page:** library owns `$14–$7F` while running and does NOT preserve it across calls. (`$FB-$FE` is test-harness-only scratch, local to `main.s` since contract #83 — not part of the library claim.) Hosts can override the ZP layout via `.ifndef` guards in `src/constants.s` (see `docs/LIBRARY.md` §4.2) to compose with sibling crypto libs.
+- **Zero page:** library owns `$14–$7F` while running and does NOT preserve it across calls. (`$FB-$FE` is test-harness-only scratch, local to `main.s` since contract #83 — not part of the library claim.) Hosts can override the ZP layout via `.ifndef` guards in `src/zp_config.s` (see `docs/LIBRARY.md` §4.2) to compose with sibling crypto libs.
 - **No RNG.** Caller generates / stores / zeros keys.
 
 ### Constant-time discipline (NON-NEGOTIABLE)

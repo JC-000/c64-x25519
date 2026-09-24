@@ -15,11 +15,12 @@
 ;                  fe_carry, fe_loop, fe_mul_i/j, x25_prev_bit
 ;   $2C-$2F        x25_byte_idx, x25_bit_mask, fe_sqr_pairs,
 ;                  mul_ripple_start
-;   $40-$7F        fe_wide (64-byte product accumulator, ZP-pinned)
+;   $40-$7F        fe_wide (64-byte product accumulator)
 ;
-; Hosts can override most equates via `.ifndef` (see docs/LIBRARY.md §4.2).
-; fe_wide is intentionally NOT host-overridable: it must stay in ZP for
-; the SMC patch sites in fe25519_mul/sqr to work correctly.
+; Every slot above is declared once, in src/zp_config.s's roster, and is
+; host-overridable via `.ifndef` (see docs/LIBRARY.md §4.2). fe_wide may
+; move anywhere its whole 64-byte span stays in zero page; zp_config.s
+; asserts that, and asserts every pair of slots disjoint.
 ; =============================================================================
 
 .ifndef CONSTANTS_S_INCLUDED
@@ -143,20 +144,6 @@ cassette_buf    = $0334         ; cassette buffer (safe scratch area)
 ZP_CONFIG_NO_EXPORTS = 1
 .endif
 .include "zp_config.s"
-
-; fe_wide product buffer pinned to zero page ($40..$7F)
-;
-; This enables zp,X addressing (2 bytes, 4 cycles) vs abs,X (3 bytes, 5
-; cycles) and — more importantly — is a CT/SMC invariant. The library's
-; SMC inner loops (fe25519_mul, fe25519_sqr) patch ONLY the low byte of
-; `fe_wide,X` operands at runtime, which silently assumes the high byte
-; of every fe_wide store/load address is $00. Letting a host override
-; fe_wide outside ZP would corrupt SMC patch sites with no link error.
-;
-; Therefore fe_wide is intentionally NOT wrapped in `.ifndef`, and the
-; .assert below makes any out-of-ZP placement a hard link error.
-fe_wide         = $40
-.assert (fe_wide & $FF00) = 0, lderror, "fe_wide must be in zero page (CT/SMC invariant)"
 
 ; --- issue #72: on-chip multiply build profile ---
 ; X25519_ONCHIP_MUL=1 replaces fe25519_mul's per-row REU DMA fetch with
