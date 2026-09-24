@@ -28,10 +28,9 @@ header is `src/x25519.inc`; this file is the human-readable guide.
   post-Phase-7). `$FB-$FE` is reserved for the test
   harness only and is NOT part of the library's claimed ZP
   surface. See `src/x25519.inc` for the full map. Each
-  library-owned ZP equate in `src/constants.s` is wrapped in
+  library-owned ZP equate in `src/zp_config.s` is wrapped in
   `.ifndef` so a host project composing multiple c64 crypto
-  libraries can pre-define its own ZP layout before
-  `.include`'ing `constants.s`; see §4.2.
+  libraries can relocate it when rebuilding the library; see §4.2.
 
 ## 2. Building
 
@@ -339,17 +338,21 @@ and is wrapped in `.ifndef <name>` / `.endif`, so a host project that
 wants to place the library's ZP scratch at different addresses can:
 
 1. **Override via `ca65 -D`** (recommended). Pass `-D
-   fe25519_src1=0x40` on the `ca65` command line when building the
+   fe25519_src1=0x30` on the `ca65` command line when building the
    library. All translation units that include `zp_config.s` see the
    override. The library must be rebuilt from source with the same
    `-D` values for every `.o` file; the slot value is baked in at
    assemble time. (`-D name[=value]` is ca65's actual symbol-define
    flag per SPEC v0.7.1 §2 — `--asm-define` is `cl65`'s spelling and
    is rejected by a direct `ca65` invocation. For hex values use
-   ca65's `0x` form — `-D fe25519_src1=0x40` — per SPEC v0.8.6: an
-   unquoted `$40` is eaten by the shell as a positional parameter and
-   silently defines the slot at `$00`; in make recipes `$$40` yields
-   0 and `$$$$40` yields the shell's PID, both with no diagnostic.)
+   ca65's `0x` form — `-D fe25519_src1=0x30` — per SPEC v0.8.6: an
+   unquoted `$30` is eaten by the shell as a positional parameter and
+   defines the slot as 0; in make recipes `$$30` also yields 0 and
+   `$$$$30` yields the shell's PID with `30` appended. Make, the shell
+   and ca65 say nothing about the mangling itself; for this library's
+   slots the build then rejects the result naming the slot — `0` as
+   `overlaps the 6510 processor port $00-$01`, a PID-sized value as
+   `does not fit in zero page`.)
 
 2. **Override via a wrapper `.s` file.** Pre-define the equate, then
    `.include "zp_config.s"` (or `.include "constants.s"`, which
@@ -362,9 +365,9 @@ wants to place the library's ZP scratch at different addresses can:
    `.include`-ing `constants.s` (which would also drag in BASIC /
    KERNAL / VIC / SID / CIA / REU hardware equates).
 
-Wrapped equates (all inside `src/zp_config.s`, also `.exportzp`-ed):
+Wrapped equates (all inside `src/zp_config.s`, also `.exportzp`-ed; each
+is one line of the file's `x25519_zp_roster`, with its size):
 
-- General scratch: `zp_ptr1`, `zp_tmp1`, `zp_tmp2`
 - fe25519 working: `fe25519_src1`, `fe25519_src2`, `fe25519_dst`,
   `fe_carry`, `fe_loop`, `fe_mul_i`, `fe_mul_j`
 - Phase 7 CT scratch (`fe25519_add` / `fe25519_sub` / `fe_cmp_p_ct`
@@ -375,9 +378,15 @@ Wrapped equates (all inside `src/zp_config.s`, also `.exportzp`-ed):
 - x25519 working: `x25_prev_bit`, `x25_byte_idx`, `x25_bit_mask`,
   `fe_sqr_pairs`
 - mul_8x8 working (reused by fe25519): `mul_carry`
-- Wide product buffer: `fe_wide` (32-byte ZP region at `$40..$7F`,
-  declared in `src/constants.s` with a hard-asserted link check —
-  NOT host-overridable; CT/SMC invariant)
+- Wide product buffer: `fe_wide` (64 bytes, default `$40..$7F`). It may
+  move anywhere its whole span stays in zero page: fe25519_mul/sqr
+  self-modify only the one-byte zero-page operand of their `fe_wide,X`
+  sites.
+
+Every override is checked at assemble time: each slot's byte span must
+lie in `$02..$FF` (zero page, clear of the 6510 port), and every pair of
+slots must be disjoint. An overlap fails the build naming both slots, e.g.
+`ZP slots fe25519_src1 [$50-$51] and fe_wide [$40-$7F] overlap`.
 
 Non-library equates are **not** wrapped: KERNAL routines (`chrout`,
 `getin`), hardware registers (`vic_*`, `cia1_*`, `sid_*`, `proc_port`),
@@ -385,17 +394,16 @@ KERNAL-defined system ZP (`kbd_buf_count`, `jiffy_clock`), REU
 registers (`reu_*`), and the build-time threshold constant
 `SQR_DMA_K` — the host cannot relocate any of these.
 
-Example: to move `fe_wide` from `$40..$7F` to `$60..$9F` in a host
-project that needs `$40..$5F` for its own data:
+Example: to move `fe_wide` from `$40..$7F` to `$30..$6F`, rebuild the
+library with the override reaching every library translation unit:
 
-```ca65
-; host_zp.inc — included before constants.s
-fe_wide = $60
-
-; host_app.s
-.include "host_zp.inc"      ; pre-define fe_wide
-.include "x25519.inc"       ; pulls in constants.s; our fe_wide wins
+```sh
+make lib CONTRACT_ZP_DEFINES="-D fe_wide=0x30"
 ```
+
+Consumer modules that `.importzp fe_wide` get `$30` from `zp_config.o`
+at link time; do not pass the `-D` to them (a `-D` of an imported name
+is `Symbol already defined`).
 
 This pattern is consistent with the sibling c64 crypto libraries
 (`c64-ChaCha20-Poly1305`'s `lib/constants_lib.s`) so a downstream
@@ -473,7 +481,7 @@ compile + VICE test cycle:
 
 | Symbol | Default value | What it reports |
 |---|---|---|
-| `LIB_X25519_ZP_USAGE_BYTES` | `85` | Total bytes of ZP slots the library claims (sum of `.exportzp`-ed slots in `src/zp_config.s` + the pinned `fe_wide` region) |
+| `LIB_X25519_ZP_USAGE_BYTES` | `85` | Total bytes of ZP slots the library claims (sum of the `.exportzp`-ed slots in `src/zp_config.s`, `fe_wide` included) |
 | `LIB_X25519_REU_BANKS_USED` | `$3B` default / `$03` for `lib-x25519-1764` / `0` for `lib-x25519-onchip` | Bitmask of REU banks claimed for mul tables. **Default build** (banks 0, 1, 3, 4, 5): `$3B << X25519_REU_BANK`. **1764 variant** (`make lib-x25519-1764`, `SQR_DMA_K=0`): `$03 << X25519_REU_BANK` — banks 0, 1 only, drops the doubled-table cluster. Bank 2 is never claimed in either build. **onchip variant** (`make lib-x25519-onchip`, `X25519_ONCHIP_MUL=1`): plain `0` — no shift, no banks. Per SPEC §5 the zero *is* the "no REU" declaration, not an unset field; see §4.11. See [`REU_USAGE_ANALYSIS.md`](REU_USAGE_ANALYSIS.md) §"Group B SHIPPED" for the 1764 rationale + measured trade-offs |
 | `LIB_X25519_RESIDENT_BYTES` | `8506` default / `8355` for `lib-x25519-1764` / `8234` for `lib-x25519-onchip` | Approximate code + data + sqtab footprint that must remain CPU-resident. Dropped from 9209/8895 at the issue-#68 cold-segment split — the init-only code is now counted in `LIB_X25519_COLD_BYTES` (SPEC §5 disjoint partition; see §4.10). All three figures od65-measured; the onchip value has been measured-exact since the profile shipped in v0.8.0. v0.12.0 grew default/1764 by +93/+81 for the §8.2 v0.13.0 REU settle (§4.12); onchip touches no REU and is unchanged |
 | `LIB_X25519_COLD_BYTES` | `947` default / `733` for `lib-x25519-1764` / `160` for `lib-x25519-onchip` | Approximate footprint a consumer MAY reclaim/overlay after init — the `LIB_X25519_INIT_CODE` segment (issue #68; see §4.10). The onchip segment holds `sqtab_init` alone, so it is much smaller. v0.12.0: +121/+85 for the nine boot-time settle sites (§4.12) |
@@ -1410,7 +1418,7 @@ $001C           mul_carry (mul_8x8 / fe25519 reuse)
 $001E-$002A     fe25519_src1/src2/dst, fe_carry, fe_loop, fe_mul_i/j, x25_prev_bit, x25_byte_idx, x25_bit_mask
 $0024-$0025     mul_pending / mul_bound (Phase 7, in freed fe_misc range)
 $002C-$002F     x25 scratch + fe_sqr_pairs + mul_ripple_start
-$0040-$007F     fe_wide (32-byte ZP product accumulator; ZP-pinned by .assert)
+$0040-$007F     fe_wide (64-byte ZP product accumulator; default, relocatable)
 $00A0-$00A2     jiffy clock (read by bench_*; masked under x25519_scalarmult sei)
 $00C6           kbd buffer count (test harness only)
 $00FB-$00FC     zp_ptr1 (test harness only — NOT part of library ZP claim)

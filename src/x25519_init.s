@@ -656,7 +656,7 @@ reu_fetch_mul_row_bank_patch := reu_fetch_mul_row::bank_lda + 1
 ; =============================================================================
 .proc reu_clear_wide
         ; CPU clear of fe_wide[0..63] in zero page ($40..$7F).
-        ; (fe_wide is .assert'd to ZP; see src/constants.s. zp,X
+        ; (fe_wide is .assert'd to ZP; see src/zp_config.s. zp,X
         ;  store is 4 cyc; 64 iters * 4 cyc = ~256 cy plus DEX/BPL.)
         lda #0
         ldx #63

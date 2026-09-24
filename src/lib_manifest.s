@@ -25,20 +25,15 @@
 ; changes any one of them.
 ;
 ; LIB_X25519_ZP_USAGE_BYTES
-;   Total bytes of ZP slots c64-x25519 claims while running. Sum of
-;   every `.exportzp`-ed slot in src/zp_config.s plus the (unexported)
-;   fe_wide region in constants.s:
+;   Total bytes of ZP slots c64-x25519 claims while running: the sum of
+;   the sizes in src/zp_config.s's roster (x25519_zp_bytes), which is
+;   also the set of `.exportzp`-ed slots. Derived, not restated; 85 B
+;   with the current roster:
 ;     $14-$16 fe_cmp_mask/fe_subp_rhs/fe_add_carry_mask  = 3 B
 ;     $1C     mul_carry                                  = 1 B
 ;     $1E-$2A fe25519_src1..x25_prev_bit (contiguous)     = 13 B
 ;     $2C-$2F x25_byte_idx..mul_ripple_start              = 4 B
-;     $40-$7F fe_wide (CT/SMC-pinned)                     = 64 B
-;     ------------------------------------------------------------
-;                                                          85 B total
-;   (Prior in-source comments and README claimed "87 bytes" via a
-;   stale double-count of $24-$25 within the $1E-$2A range; PR #51
-;   landed the textual cleanup so README / constants.s / x25519.inc
-;   / LIBRARY.md now agree with this equate.)
+;     $40-$7F fe_wide                                     = 64 B
 ;
 ; LIB_X25519_REU_BANKS_USED
 ;   Bitmask of REU banks claimed for the precomputed multiplication
@@ -207,7 +202,7 @@
 ; assemble time when SQR_DMA_K is known and at link time for the
 ; bank-base shift.
 
-LIB_X25519_ZP_USAGE_BYTES = 85
+LIB_X25519_ZP_USAGE_BYTES = x25519_zp_bytes
 .if ::X25519_ONCHIP_MUL
 ; Onchip profile (issue #72): zero REU banks — this zero IS the SPEC §5
 ; "no REU" declaration ("Zero if no REU", SPEC.md §5; polyval

@@ -84,8 +84,9 @@
         php              ; save caller's processor status (I flag incl.)
         sei              ; mask IRQs for the full call — defends
                          ; against mid-REU-DMA preemption and against
-                         ; consumer ISRs clobbering our 83 ZP bytes
-                         ; ($1A-$2E, $40-$7F).  See A2/A5 memos.
+                         ; consumer ISRs clobbering our ZP slots
+                         ; (LIB_X25519_ZP_USAGE_BYTES; src/zp_config.s).
+                         ; See A2/A5 memos.
 
         ; --- Defensive REU register init (issue #33) ---
         ; The inlined per-row DMA in fe25519_mul/_sqr/_mul_a24 relies on

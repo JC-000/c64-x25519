@@ -21,7 +21,7 @@
 .segment "LIB_X25519_DATA"
 
 ; --- fe25519 field arithmetic ---
-; fe_wide[0..63] is now in zero page at $40..$7F (see constants.s)
+; fe_wide[0..63] is in zero page ($40..$7F by default; see src/zp_config.s)
 ;
 ; Page-aligned 32-byte buffers: each buffer's low byte is one of
 ; {$00, $20, $40, $60, $80, $A0, $C0, $E0}, so Y ∈ [0..31] never
