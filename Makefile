@@ -396,11 +396,10 @@ LIB_VERIFY_PROVIDER = tests/lib_linkage/shared_provider_stub.s
 # exports no slot and no library member imports one, so a consumer supplies
 # exactly the slots it .importzp's. The stub deliberately imports every
 # roster slot (a superset consumer, a modelling choice); in this mode it
-# links zp_supply_stub.s, which exports every roster slot. Scope: only
-# lib-verify-zp-supply models this mode; the other stub-linking targets
-# (lib-verify-shared leg 5, lib-verify-guards, single-scan,
-# app-owned-header) link no supplier and do not support it. .ifndef-gated,
-# so definedness is the axis,
+# links zp_supply_stub.s, which exports every roster slot. Scope:
+# lib-verify-shared leg 5 links the stub with no supplier and does not
+# support this mode (19 unresolved slots). .ifndef-gated, so definedness
+# is the axis,
 # as for LIB_NOBARE. LIB_VERIFY_ZP_SUPPLY_OBJ is overridable only so
 # lib-verify-zp-supply-negative can link a hand-listed or absent supplier.
 LIB_ZP_SUPPLY := $(if $(findstring ZP_CONFIG_NO_EXPORTS,$(ALL_DEFINES)),1,)
@@ -1154,8 +1153,12 @@ lib-verify-zp-negative:
 # Each profile runs the full `lib lib-verify` (the stub imports every
 # roster slot; zp_supply_stub.s supplies them) and then nobare-check.
 ZPS_DIR = build-zp-supply
-ZPS_DEFINES = -D LIB_SHARED_SQTAB_BASE=32768 -D LIB_NO_BARE_EXPORTS=1
-ZPS_ZP_DEFINES = -D ZP_CONFIG_NO_EXPORTS=1
+# Each define is added only if the caller has not already passed it: ca65
+# rejects the same -D twice ("is already defined").
+ZPS_ADD = $(if $(findstring $(1),$(ALL_DEFINES)),,-D $(1)=$(2))
+ZPS_DEFINES = $(call ZPS_ADD,LIB_SHARED_SQTAB_BASE,32768) \
+	$(call ZPS_ADD,LIB_NO_BARE_EXPORTS,1)
+ZPS_ZP_DEFINES = $(call ZPS_ADD,ZP_CONFIG_NO_EXPORTS,1)
 ZPS_MAKE = $(MAKE) BUILD_DIR=$(ZPS_DIR) LIB_DIR=$(ZPS_DIR)/lib \
 	CA65FLAGS="$(CA65FLAGS)" \
 	CONTRACT_ZP_DEFINES="$(CONTRACT_ZP_DEFINES) $(ZPS_ZP_DEFINES)"
@@ -1905,7 +1908,7 @@ lib-verify-shared: lib-verify-app-owned-header lib-verify-single-scan \
 # The scope carries, and here is why rather than an assertion that it does:
 #
 #   * All four asserts are UNGATED. src/main.s:40, :54 and :55 sit outside
-#     any .if/.ifdef, and tests/lib_linkage/lib_linkage_stub.s:152 likewise,
+#     any .if/.ifdef, and the MAIN-budget .assert in lib_linkage_stub.s likewise,
 #     so every profile assembles the identical assert with the identical
 #     operator and operands. No profile knob adds, removes or re-gates any
 #     of them — there is no configuration in which the check is absent, and
