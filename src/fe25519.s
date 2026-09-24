@@ -781,8 +781,8 @@
         ; A already holds src1[i]; mul_cached_a store removed (dead in fe_mul).
         asl                    ; A = multiplier * 2, carry = bit 7
         sta reu_reu_hi
-        lda #0
-        adc #0                 ; bank = carry from shift
+        lda #LIB_SHARED_REU_MUL_BANK
+        adc #0                 ; bank = §8.2 table base + (a >> 7)
         sta reu_reu_bank
         lda #%10110001         ; execute + autoload + FETCH (REU->C64)
         sta reu_command

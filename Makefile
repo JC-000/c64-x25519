@@ -235,7 +235,7 @@ CA65_OBJS = $(BUILD_DIR)/main.o $(LIB_OBJS)
 
 LIBX25519 = $(LIB_DIR)/libx25519.a
 
-.PHONY: all clean test test-slow test-ref test-vice lib lib-verify \
+.PHONY: all clean test test-slow test-ref test-vice test-vice-reloc lib lib-verify \
         lib-verify-shared lib-app-owned lib-verify-guards lib-verify-docs \
         lib-verify-footprint lib-verify-footprint-negative lib-verify-precalc \
         lib-verify-footprint-negative-arm \
@@ -291,6 +291,7 @@ test-slow: $(PRG)
 	python3 tools/test_rfc7748_iterated.py --slow; \
 	python3 tools/test_rfc7748_iter1000.py --iterations 1; \
 	python3 tools/test_ct_ladder_cycles.py
+	$(MAKE) test-vice-reloc
 # The four audit-2026-08-28 tests above (fe_adversarial_bigint,
 # x25519_adversarial_kat, ct_ladder_cycles, rfc7748_iter1000 at 1
 # iteration) plus the repaired edge_u / rfc7748_iterated members were
@@ -313,6 +314,42 @@ test-vice: $(PRG)
 	python3 tools/test_ct_reduce_wide_cycles.py; \
 	python3 tools/test_fe_reduce_wide_carry.py; \
 	python3 tools/test_fe_reduce_wide_bound.py
+	$(MAKE) test-vice-reloc
+
+# Relocated-bank build (#158). The default build uses bank 0, where a
+# hardcoded bank 0 is indistinguishable from the knob, so this leg rebuilds
+# with X25519_REU_BANK=RELOC_BANK (window base..base+5, disjoint from the
+# default 0..5) and runs, on that build:
+#   - the fe25519_mul and fe25519_sqr stress (mul row fetch, sqr doubled
+#     and carry fetches, and the reu_mul_init stashes that fill them);
+#   - test_reu_fetch_mul_row.py, which JSRs the §8.2 entry
+#     reu_fetch_mul_row directly for rows on both table banks.
+# reu_probe is NOT covered. Each script reads the linked labels and refuses
+# to run unless X25519_REU_BANK and LIB_X25519_SHARED_REU_MUL_BANK both
+# equal RELOC_BANK. Skipped under onchip (no REU code) and C64_NO_REU.
+RELOC_DIR     = build-reloc
+RELOC_BANK    = 9
+RELOC_REUSIZE = 2048
+RELOC_SKIP    = $(strip $(filter onchip,$(X25519_PROFILE)) \
+                $(findstring X25519_ONCHIP_MUL=1,$(ALL_DEFINES)) \
+                $(if $(C64_NO_REU),C64_NO_REU))
+test-vice-reloc:
+ifneq ($(RELOC_SKIP),)
+	@echo "SKIP test-vice-reloc: no REU in this configuration ($(RELOC_SKIP)); the relocated-bank leg only applies to REU builds"
+else
+	rm -rf $(RELOC_DIR)
+	$(MAKE) BUILD_DIR=$(RELOC_DIR) LIB_DIR=$(RELOC_DIR)/lib \
+	        CA65FLAGS="$(CA65FLAGS)" CONTRACT_ZP_DEFINES="$(CONTRACT_ZP_DEFINES)" \
+	        CONTRACT_DEFINES="$(CONTRACT_DEFINES) -D X25519_REU_BANK=$(RELOC_BANK)" \
+	        all
+	@set -e; \
+	export X25519_BUILD_DIR=$(RELOC_DIR) X25519_REUSIZE=$(RELOC_REUSIZE) \
+	       X25519_EXPECT_REU_BANK=$(RELOC_BANK); \
+	echo "=== VICE stress on relocated REU bank $(RELOC_BANK) ==="; \
+	python3 tools/test_fe_mul_stress.py; \
+	python3 tools/test_fe_sqr_stress.py; \
+	python3 tools/test_reu_fetch_mul_row.py
+endif
 
 # Reference-only self-test (no VICE, no build required).
 test-ref:

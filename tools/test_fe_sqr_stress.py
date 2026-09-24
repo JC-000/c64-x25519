@@ -18,8 +18,11 @@ from c64_test_harness import (
 )
 
 PROJECT_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
-PRG_PATH = os.path.join(PROJECT_ROOT, "build", "x25519.prg")
-LABELS_PATH = os.path.join(PROJECT_ROOT, "build", "labels.txt")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import vice_build  # noqa: E402
+
+PRG_PATH = vice_build.prg_path()
+LABELS_PATH = vice_build.labels_path()
 
 P = (1 << 255) - 19
 
@@ -181,13 +184,9 @@ def main():
     rng = random.Random(seed)
 
     labels = Labels.from_file(LABELS_PATH)
-    # C64_NO_REU=1 launches VICE with no REU at all: runtime proof that a
-    # no-REU build profile (e.g. X25519_ONCHIP_MUL) never polls $DFxx.
-    # The default build reads REU mul tables and needs the REU attached.
-    if os.environ.get("C64_NO_REU"):
-        reu_args = ["+reu"]
-    else:
-        reu_args = ["-reu", "-reusize", "512"]
+    # C64_NO_REU / X25519_REUSIZE / X25519_EXPECT_REU_BANK: see vice_build.py.
+    vice_build.check_expected_bank(labels)
+    reu_args = vice_build.reu_args()
     config = ViceConfig(prg_path=PRG_PATH, warp=True, ntsc=True, sound=False,
                         extra_args=reu_args)
 
