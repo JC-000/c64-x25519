@@ -1,29 +1,9 @@
 build/
-# One per profile target's BUILD_DIR; keep in sync with the Makefile's
-# `rm -rf` list (lib-x25519-1764, lib-x25519-onchip, lib-app-owned,
-# lib-verify-guards, lib-verify-shared, lib-verify-guards-legc-negative,
-# lib-nobare, lib-nobare-negative, lib-verify-zp-supply[-negative]).
-build-1764/
-build-onchip/
-build-app-owned/
-build-guards/
-build-shared/
-build-guards-default/
-build-guards-onchip/
-build-guards-legc-negative/
-build-fp/
-build-fp-default/
-build-fp-onchip/
-build-neg/
-build-neg-artifact/
-build-nobare/
-build-nobare-neg/
-build-nobare-neg-b/
-build-app-owned-header/
-build-aoh-neg/
-build-zp-neg/
-build-zp-supply/
-build-zp-supply-neg/
+# Every other build tree is a top-level build-* directory (the naming rule
+# stated beside the Makefile's `clean`), matched by pattern so no list drifts.
+/build-*/
+# Lock a top-level make holds in this tree (Makefile, issue #140).
+/.make.lock
 __pycache__/
 *.pyc
 .DS_Store

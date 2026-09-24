@@ -47,8 +47,8 @@ zp_tmp2 = $03           ; temp byte
 ; shape §15 exists to remove, and in the very file docs/LIBRARY.md tells
 ; consumers to mirror. Importing the equate makes the three §6.7 asserts
 ; uniform: three asserts, three published symbols, no magic number.
-; lib_manifest.o is in CA65_OBJS (Makefile:119) so the operand always
-; resolves, and the macro invocation is ungated (lib_manifest.s:410), so
+; precalc_manifest.o is in CA65_OBJS (through LIB_OBJS) so the operand always
+; resolves, and its LIB_PRECALC_TABLE "sqtab" invocation is ungated, so
 ; it resolves in every profile.
 .import LIB_X25519_PRECALC_sqtab_SIZE
 .assert __SQTAB_START__ = LIB_SHARED_SQTAB_BASE, lderror, "cfg SQTAB region base disagrees with LIB_SHARED_SQTAB_BASE"

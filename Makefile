@@ -36,6 +36,39 @@
 # Conformance today is §1-§8 of v1.1.0, and `lib-verify` covers it.
 # =============================================================================
 
+# --- One top-level make per working tree (issue #140) ------------------------
+# The verify trees are fixed-name and most targets `rm -rf` theirs first, so
+# two concurrent runs in one tree break each other. A top-level make does not
+# read the body below: it re-runs itself under lockf(1) on .make.lock, with
+# -t 0 so a held lock is refused at once (lockf exits 75). The kernel drops
+# the lock when the inner make exits, however it exits (SIGKILL included), so
+# there is no stale state. Where /usr/bin/lockf is absent the body runs
+# directly, unlocked. .NOTPARALLEL covers `make -j` inside one run.
+# Composing this file with other makefiles (-f or include) is refused: files
+# read before it are caught here, files read after it when the lock recipe
+# expands. The body's paths are relative to this directory anyway. MAKEFILES
+# files are allowed (anything they include is not) and are read by both the
+# outer and the inner make (via the environment).
+ifeq ($(MAKELEVEL)$(X25519_LOCKED)$(if $(wildcard /usr/bin/lockf),,nolockf),0)
+X25519_SELF  := $(lastword $(MAKEFILE_LIST))
+X25519_LOCK  := $(CURDIR)/.make.lock
+X25519_GOALS := $(if $(MAKECMDGOALS),$(MAKECMDGOALS),x25519-default-goal)
+X25519_FOREIGN = $(filter-out $(X25519_SELF) $(MAKEFILES),$(MAKEFILE_LIST))
+X25519_NOCOMPOSE = composing the x25519 Makefile with other makefiles, by -f or include ($(X25519_FOREIGN)), is unsupported; run it with $$(MAKE) -C <its directory>
+ifneq ($(X25519_FOREIGN),)
+$(error $(X25519_NOCOMPOSE))
+endif
+.PHONY: $(X25519_GOALS) x25519-lock
+$(X25519_GOALS): x25519-lock ; @:
+x25519-lock:
+	$(if $(X25519_FOREIGN),$(error $(X25519_NOCOMPOSE)))
+	@[ ! -L "$(X25519_LOCK)" ] || rm -f "$(X25519_LOCK)"; \
+	 X25519_LOCKED=1 /usr/bin/lockf -s -k -t 0 "$(X25519_LOCK)" $(MAKE) -f '$(X25519_SELF)' $(MAKECMDGOALS); \
+	 rc=$$?; [ $$rc -ne 75 ] || echo "another make run holds $(X25519_LOCK); use a separate worktree" >&2; \
+	 exit $$rc
+else
+.NOTPARALLEL:
+
 # ca65/ld65 toolchain (cc65 suite)
 CA65 = ca65
 LD65 = ld65
@@ -327,23 +360,19 @@ $(LIB_DIR):
 $(LIB_DIR)/cfg:
 	mkdir -p $(LIB_DIR)/cfg
 
+# Naming rule: every tree a target creates outside $(BUILD_DIR) is a
+# top-level directory named build-*. clean and .gitignore match that PATTERN
+# rather than a list of names, because the hand-kept list drifted. find
+# -type d without -L matches only real directories one level down (never a
+# file, a symlink's target, or .claude/worktrees), and clean refuses if git
+# tracks anything under a path it would delete.
 clean:
+	@if git ls-files -- 'build/*' 'build-*' 2>/dev/null | grep -q .; then \
+	  echo "clean: refusing -- git tracks files under build/ or build-*:"; \
+	  git ls-files -- 'build/*' 'build-*' | head -5; exit 1; fi
 	rm -f $(BUILD_DIR)/*.o $(PRG) $(LABELS) $(LABELS).raw $(CONTRACT_STAMP)
-	rm -rf $(LIB_DIR)
-	# Profile targets build into their own BUILD_DIR and clean it on entry,
-	# but nothing swept them afterwards, so they lingered as untracked trees.
-	rm -rf build-1764 build-onchip build-app-owned build-guards build-shared
-	rm -rf build-app-owned-header build-aoh-neg
-	rm -rf build-single-scan-default build-single-scan-1764 build-single-scan-onchip
-	rm -rf build-single-scan-defer build-single-scan-neg
-	rm -rf build-fp build-fp-default build-fp-onchip
-	rm -rf build-guards-default build-guards-onchip build-guards-legc-negative
-	rm -rf build-neg build-neg-artifact
-	rm -rf $(ZPNEG_DIR) $(ZPS_DIR) $(ZPSNEG_DIR)
-	# Spelled with the variables, not literals: arm B's tree is derived from
-	# NOBARE_NEG_DIR, and a literal copy of it here drifted out of step once
-	# already (F3).
-	rm -rf $(NOBARE_DIR) $(NOBARE_NEG_DIR) $(NOBARE_NEG_B_DIR)
+	rm -rf $(LIB_DIR) $(LIB_VERIFY_DIR)
+	find . -maxdepth 1 -type d -name 'build-*' -print -exec rm -rf {} +
 
 # --- Relocatable library archive ---------------------------------------------
 #
@@ -851,6 +880,24 @@ lib-verify-fill-negative:
 	 rm -rf build-fillneg; \
 	 echo "OK: the basis cross-check sees 255 B of ld65 fill, names LIB_X25519_DATA, and says UNDER-reports"
 
+# Scope: the expected counts below are those of the default profile in
+# bare mode. The onchip and 1764 profiles and LIB_NO_BARE_EXPORTS change that
+# name set and were measured failing on the counts rather than on the
+# property, so they are refused by name. Fail-safe on the value-gated
+# switches: ANY SQR_DMA_K define is refused (the default needs none, and
+# spellings such as 0x0 also select 1764), as is any X25519_ONCHIP_MUL define
+# other than bare or literal =0 (both 0 to ca65). SHARED_* and
+# LIB_SHARED_SQTAB_BASE leave the counts unchanged and are not refused.
+ISONEG_DEFS := $(patsubst -D%,%,$(ALL_DEFINES))
+ISONEG_OFF_SCOPE = $(strip $(filter X25519_PROFILE=onchip X25519_PROFILE=1764,X25519_PROFILE=$(X25519_PROFILE)) \
+  $(filter-out X25519_ONCHIP_MUL=0,$(filter X25519_ONCHIP_MUL=%,$(ISONEG_DEFS))) \
+  $(filter SQR_DMA_K SQR_DMA_K=%,$(ISONEG_DEFS)) \
+  $(if $(LIB_NOBARE),LIB_NO_BARE_EXPORTS))
+ifneq ($(filter lib-verify-isolation-negative,$(MAKECMDGOALS)),)
+ifneq ($(ISONEG_OFF_SCOPE),)
+$(error lib-verify-isolation-negative is scoped to the default profile in bare mode; refusing: $(ISONEG_OFF_SCOPE))
+endif
+endif
 lib-verify-isolation-negative: lib
 	@echo "=== lib-verify-isolation-negative: an unsafe export extraction must be CAUGHT ==="
 	@out=$$(python3 tools/check_member_isolation.py --archive $(LIBX25519) \
@@ -2742,8 +2789,8 @@ lib-x25519-1764:
 # AND linked outputs on it exactly as for any other knob.
 # THREE trees, counted from the recipes below and not from any prose: the
 # variant build, the negative leg's control build, and arm B's copy of it with
-# one member's object removed. All three are named here, swept by `clean` and
-# listed in .gitignore — an unnamed `$(NOBARE_NEG_B_DIR)` spelled inline was
+# one member's object removed. All three are named here, and `clean` and
+# .gitignore cover them by the build-* pattern — an unnamed `$(NOBARE_NEG_B_DIR)` spelled inline was
 # missed by both (F3), which is the same way the first two were missed (F2).
 NOBARE_DIR       = build-nobare
 NOBARE_NEG_DIR   = build-nobare-neg
@@ -3132,3 +3179,5 @@ endif
 
 $(LIB_VERIFY_DIR):
 	mkdir -p $(LIB_VERIFY_DIR)
+
+endif # issue #140 lock wrapper (opened at the top of this file)
