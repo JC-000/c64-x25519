@@ -72,7 +72,7 @@ so a base above 26 shifted the top bank off the 32-bit mask and exported
 a claim that under-reported it — `od65`-measured (base 26 → `0xEC000000`
 correct; base 27 → `0xD8000000`, bank 32 gone), now guarded by two
 profile-aware asserts. Issue #122 closed: the Makefile guard table's
-gate citations, nine of twelve of which pointed at blank lines or prose,
+gate citations, nine of thirteen of which pointed at blank lines or prose,
 are replaced by six checked sites in `tools/check_gate_citations.py` and
 verified on every `lib-verify`. contract#167 and #164 are **closed** upstream — ABI stays 3, now by §7
 ruling. [contract#177](https://github.com/JC-000/c64-lib-contract/issues/177),

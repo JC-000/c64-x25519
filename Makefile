@@ -441,7 +441,7 @@ endif
 # The gate SITES are not listed here. They live as checked data in
 # tools/check_gate_citations.py and are printed by `make lib-verify-citations`,
 # which lib-verify depends on. That is a fix for issue #122, not a stylistic
-# preference: this comment previously carried twelve hand-maintained file:line
+# preference: this comment previously carried thirteen hand-maintained file:line
 # citations and NINE of them pointed at blank lines, prose comments or ordinary
 # instructions. The src/fe25519.s pair was off by one and off by nine — correct
 # when written, drifted as lines were inserted above them. Nothing read them, so
@@ -842,7 +842,7 @@ lib-verify-isolation-negative: lib
 #
 # The _NEEDS_DEF_* / _NEEDS_VAL_* block above documents why the two switch
 # families demand opposite spellings. Its evidence is a set of file:line
-# citations, and at v0.13.0 nine of twelve pointed at blank lines, prose
+# citations, and at v0.13.0 nine of thirteen pointed at blank lines, prose
 # comments or ordinary instructions — the src/fe25519.s pair off by one and
 # off by nine, i.e. correct when written and drifted underneath.
 #

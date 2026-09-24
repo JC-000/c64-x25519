@@ -10,7 +10,7 @@ every spelling that defines the symbol selects it; value-gated switches
 the default path.
 
 That rule is only as good as the citations a reader follows to re-derive it.
-At v0.13.0 nine of twelve pointed at blank lines, prose comments or ordinary
+At v0.13.0 nine of thirteen pointed at blank lines, prose comments or ordinary
 instructions (issue #122); the `src/fe25519.s` pair was off by one and off by
 nine, i.e. correct when written and drifted as lines were inserted above.
 Nothing read them, so nothing caught it.
