@@ -77,10 +77,11 @@
 ;                   address; either name resolves to the same proc.
 ;                   Multi-lib hosts should prefer this name.
 ;
-;   reu_mul_init    Build full 8x8->16 multiplication tables in REU banks 0-5
-;                   (256 lo + 256 hi bytes per a, plus pre-doubled tables for
-;                   fe25519_sqr, plus a 64-byte zero block in bank 2 for
-;                   reu_clear_wide). REQUIRES sqtab_init to have been called
+;   reu_mul_init    Build full 8x8->16 multiplication tables in REU banks
+;                   base+0/1 (256 lo + 256 hi bytes per a) and, at
+;                   SQR_DMA_K > 0, the pre-doubled/carry tables for
+;                   fe25519_sqr in base+3..+5 (bank base+2 is not
+;                   written). Owner builds only. REQUIRES sqtab_init to have been called
 ;                   first. Takes ~1-2 seconds. No inputs. Clobbers: A, X, Y.
 ;                   Clears x25519_reu_fault at entry (see below).
 ;
@@ -99,8 +100,9 @@
 ;                     bit 0 ($01)  a spin bound expired without END OF
 ;                                  BLOCK — a transfer was not confirmed
 ;                     bit 1 ($02)  $DF00 bit 5 (VERIFY ERROR) was seen
-;                   Cleared to 0 at reu_mul_init and reu_probe entry;
-;                   never cleared otherwise, so a host reads it after a
+;                   Cleared to 0 at the entry of each x25519 boot
+;                   routine that touches the REU (its REU table builds
+;                   and reu_probe); never cleared otherwise, so a host reads it after a
 ;                   scalarmult to learn whether every DMA since the last
 ;                   init/probe completed. reu_probe folds a non-zero
 ;                   value into its C=0 return (the contract's SHOULD:
@@ -111,6 +113,22 @@
 ;
 ;   Order:          jsr sqtab_init
 ;                   jsr reu_mul_init
+;
+;   x25519_sqr_tables_init  (§8.2 deferral builds, SQR_DMA_K > 0 only)
+;                   Under -D SHARED_REU_MUL_INIT reu_mul_init is not in the
+;                   archive: the provider's reu_mul_tables_init builds the
+;                   shared a*b pair (base, base+1) and nothing else.
+;                   fe25519_sqr also reads x25519's private doubled/carry
+;                   banks (base+3..+5); this entry derives them from the
+;                   provider's table. Skipping it leaves those banks
+;                   holding whatever the REU held, and every square (so
+;                   every scalarmult) is wrong. Clears x25519_reu_fault.
+;                   Clobbers: A, X, Y. Order under deferral:
+;                     jsr mul_tables_init        ; §8.1 (whoever owns it)
+;                     jsr reu_mul_tables_init    ; §8.2 provider
+;                     jsr x25519_sqr_tables_init ; x25519's private banks
+;                   Not exported by the 1764 variant (SQR_DMA_K = 0),
+;                   which reads no private banks and needs no call.
 ;
 ; ----------------------------------------------------------------------------
 ; PUBLIC ENTRY POINTS (x25519)
@@ -471,6 +489,11 @@
 .ifdef SHARED_REU_MUL_INIT
 .import LIB_X25519_SHARED_PRIMITIVES
 .assert (LIB_X25519_SHARED_PRIMITIVES & LIB_SHARED_PRIMITIVES_REU_MUL) = 0, lderror, "SHARED_REU_MUL_INIT was defined for this header, but the archive it links against still owns the 8.2 primitive"
+.import x25519_sqr_tables_init       ; x25519-private: builds the doubled/
+                                     ; carry banks from the provider's
+                                     ; table. SQR_DMA_K > 0 archives only;
+                                     ; ca65 drops the import if unused, so
+                                     ; a 1764-variant consumer is unaffected
 .else
 .import reu_mul_init                 ; x25519-private init name; never part
                                      ; of the composed-link surface — only
@@ -567,7 +590,7 @@
 ; documented above (§ x25519_reu_fault) and in LIBRARY.md §4.12, but the
 ; .import was missing here until v0.12.0-post, so a consumer following
 ; that documentation had to hand-write the import. Call it BEFORE the
-; first reu_mul_init -- it does not preserve the autoload latch.
+; REU table builds -- it does not preserve the autoload latch.
 ; Returns C=1 when an REU responded, C=0 when absent or faulted.
 ; Gated with the rest of the REU surface: absent from the onchip archive.
 .import reu_probe

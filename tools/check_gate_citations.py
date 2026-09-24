@@ -53,7 +53,7 @@ REPO = Path(__file__).resolve().parent.parent
 CITATIONS = [
     ("SHARED_SQTAB_INIT",    "DEF", "src/sqtab_init.s",  53),
     ("SHARED_CT_MUL_8X8",    "DEF", "src/mul_8x8.s",     47),
-    ("SHARED_REU_MUL_INIT",  "DEF", "src/x25519_init.s", 107),
+    ("SHARED_REU_MUL_INIT",  "DEF", "src/x25519_init.s", 197),
     ("SHARED_REU_MUL_FETCH", "DEF", "src/x25519_init.s", 24),
     ("X25519_ONCHIP_MUL",    "VAL", "src/x25519_init.s", 20),
     ("SQR_DMA_K",            "VAL", "src/x25519_init.s", 35),

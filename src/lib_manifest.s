@@ -91,11 +91,12 @@
 ; LIB_X25519_COLD_BYTES
 ;   Approximate code + data footprint that a consumer MAY overlay-page
 ;   or reclaim (SPEC §5; disjoint from RESIDENT). As of the issue-#68
-;   split this is real: the LIB_X25519_INIT_CODE segment holds the
-;   init-only procs (sqtab_init, reu_mul_init, reu_probe), placed last
-;   in MAIN by the shipped cfgs so a consumer can reuse the RAM as a
-;   contiguous tail after its boot sequence has called the init entry
-;   points. ld65 exports __LIB_X25519_INIT_CODE_LOAD__/_SIZE__
+;   split this is real: the LIB_X25519_INIT_CODE segment holds every
+;   init-only proc the profile builds (the boot-time table builds and
+;   reu_probe), placed last in MAIN by the shipped cfgs so a consumer
+;   can reuse the RAM as a contiguous tail after its boot sequence has
+;   made every init call its configuration needs (src/x25519.inc,
+;   "Order"). ld65 exports __LIB_X25519_INIT_CODE_LOAD__/_SIZE__
 ;   (define = yes) for computing the reclaim window. Init entry points
 ;   MUST NOT be called again after reclaim.
 ;
@@ -232,7 +233,9 @@ _D_COLD_SQ = 0
 .endif
 .if .defined(SHARED_REU_MUL_INIT) .and (::X25519_ONCHIP_MUL = 0)
 .if ::SQR_DMA_K
-_D_COLD_REU = 427
+; 427 B reu_mul_init leaves; 315 B x25519_sqr_tables_init (the private
+; doubled/carry-bank build a deferring K>0 archive still owes) arrives.
+_D_COLD_REU = 427 - 315
 .else
 _D_COLD_REU = 213
 .endif
