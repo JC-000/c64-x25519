@@ -100,9 +100,9 @@
 ;                     bit 0 ($01)  a spin bound expired without END OF
 ;                                  BLOCK — a transfer was not confirmed
 ;                     bit 1 ($02)  $DF00 bit 5 (VERIFY ERROR) was seen
-;                   Cleared to 0 at reu_mul_init, x25519_sqr_tables_init
-;                   and reu_probe entry;
-;                   never cleared otherwise, so a host reads it after a
+;                   Cleared to 0 at the entry of each x25519 boot
+;                   routine that touches the REU (its REU table builds
+;                   and reu_probe); never cleared otherwise, so a host reads it after a
 ;                   scalarmult to learn whether every DMA since the last
 ;                   init/probe completed. reu_probe folds a non-zero
 ;                   value into its C=0 return (the contract's SHOULD:
@@ -590,7 +590,7 @@
 ; documented above (§ x25519_reu_fault) and in LIBRARY.md §4.12, but the
 ; .import was missing here until v0.12.0-post, so a consumer following
 ; that documentation had to hand-write the import. Call it BEFORE the
-; first reu_mul_init -- it does not preserve the autoload latch.
+; REU table builds -- it does not preserve the autoload latch.
 ; Returns C=1 when an REU responded, C=0 when absent or faulted.
 ; Gated with the rest of the REU surface: absent from the onchip archive.
 .import reu_probe

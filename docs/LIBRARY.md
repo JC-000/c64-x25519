@@ -1064,9 +1064,9 @@ cross-repo PR — do not edit locally.
 
 ## 4.10 Cold-segment split: reclaiming init-only code (issue #68)
 
-The init-only procs — `sqtab_init` / `mul_tables_init`,
-`reu_mul_init` / `reu_mul_tables_init`, and `reu_probe` — live in a
-dedicated ld65 segment, **`LIB_X25519_INIT_CODE`** (SPEC §4 naming),
+Every init-only proc x25519 builds in the configured profile — the
+boot-time table builds your configuration calls (the "Order" block in
+`src/x25519.inc`) and `reu_probe` — lives in a dedicated ld65 segment, **`LIB_X25519_INIT_CODE`** (SPEC §4 naming),
 sized `LIB_X25519_COLD_BYTES` (per-profile values in §4.4). Everything runtime-hot — the field arithmetic, the
 ladder, the REU fetch helpers, and the §8.3 `ct_mul_8x8` body — stays
 in `LIB_X25519_CODE` (plain `CODE` prior to the issue-#70 SPEC §4
@@ -1087,10 +1087,10 @@ for bss-type segments, so a file-backed segment declared *after* a
 non-empty BSS loads `__BSS_SIZE__` bytes below its linked address —
 silent runtime corruption with no link error.
 
-**Reclaiming.** After your boot sequence has called `sqtab_init` and
-`reu_mul_init` (and `reu_probe`, if you use it — it must run *before*
-the first `reu_mul_init`), the segment's RAM is dead and you may reuse
-it. With `define = yes`, ld65 exports the window symbolically:
+**Reclaiming.** After your boot sequence has made every x25519 init
+call its configuration needs (the "Order" block in `src/x25519.inc`;
+`reu_probe`, if you use it, runs *before* them), the segment's RAM is
+dead and you may reuse it. With `define = yes`, ld65 exports the window symbolically:
 
 ```ca65
 .import __LIB_X25519_INIT_CODE_LOAD__, __LIB_X25519_INIT_CODE_SIZE__
@@ -1284,12 +1284,11 @@ post-execute settle meeting the bracketed floor — **≥ 49 cycles at
 **unbracketed** by the contract; **c64-x25519 claims conformance at
 ≤ 48 MHz only** and makes no statement about 64 MHz.
 
-All thirteen execute sites in the library — the four resident ones
-(`reu_fetch_mul_row`, `reu_fetch_doubled_row`'s DMA #1 and DMA #2,
-`fe25519_mul`'s inlined row fetch; all but `reu_fetch_mul_row` are on
-the in-tree hot path) and the nine at boot (five
-stashes in `reu_mul_init`, four in `reu_probe`) — are followed by the
-`REU_SETTLE` macro from `src/constants.s`. It reads `$DF00` **once per
+Every REU execute in the library, resident (the row fetches on the
+`fe25519_mul` / `fe25519_sqr` hot path, and `reu_fetch_mul_row`) or boot-time
+(the table builds and `reu_probe`), is followed by the
+`REU_SETTLE` macro from `src/constants.s`; `docs/CT_ANALYSIS.md` L31a–c
+catalogue the sites. It reads `$DF00` **once per
 iteration** (a read clears bits 5–7, so the value is captured in A and
 tested there), exits on bit 6, and records faults. One I/O-mapped read
 is what costs ~49 cycles at turbo on the U64E, which is why a single
@@ -1344,8 +1343,9 @@ surfaces a missing REU at init. The library does both:
 - `x25519_reu_fault` (exported, one byte in `LIB_X25519_DATA`) is
   **sticky**: `REU_SETTLE` ORs in `$01` when its bound expires
   without END OF BLOCK and `$02` when `$DF00` bit 5 (VERIFY ERROR)
-  was observed. It is cleared to 0 at `reu_mul_init`,
-  `x25519_sqr_tables_init` and `reu_probe` entry and never otherwise, so a host can read it after a
+  was observed. It is cleared to 0 at the entry of each x25519 boot
+  routine that touches the REU (its REU table builds and `reu_probe`)
+  and never otherwise, so a host can read it after a
   scalarmult to learn whether every DMA since the last init/probe was
   confirmed. Always 0 under the onchip profile.
 - `reu_probe` returns C = 0 if the byte is non-zero after its four

@@ -121,7 +121,8 @@ mul_cached_a:
         .byte 0                ; cached src1[i] for inlined multiply
 
 ; --- REU settle fault byte (c64-lib-contract SPEC v0.13.0 §8.2) ---
-; Sticky. Cleared at reu_mul_init / reu_probe entry; the REU_SETTLE
+; Sticky. Cleared at the entry of each boot routine that touches the
+; REU (the init entries and reu_probe, src/x25519.inc); the REU_SETTLE
 ; macro (src/constants.s) ORs in $01 when its bounded spin expires
 ; without seeing END OF BLOCK and $02 when $DF00 bit 5 (VERIFY ERROR)
 ; was observed. Never cleared by the library otherwise — a host reads

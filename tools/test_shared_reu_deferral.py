@@ -7,7 +7,9 @@ default SQR_DMA_K, linked with tests/deferral/reu_mul_provider.s as the
 §8.2 provider. The PRG boots sqtab_init -> provider reu_mul_tables_init ->
 x25519_sqr_tables_init, the sequence a deferring consumer uses.
 
-Checks, in VICE with a 512 KB REU:
+Checks, in VICE with the REU vice_build.reu_args() selects (X25519_REUSIZE,
+default 512 KB). Under C64_NO_REU it prints SKIP and exits 0: the
+deferral build has no meaning without an REU.
   * x25519_reu_fault is 0 after boot;
   * fe25519_mul(a, a) and fe25519_sqr(a) against Python integers. mul reads
     only the provider's pair (base, base+1); sqr also reads x25519's private
@@ -35,6 +37,7 @@ from c64_test_harness import (
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import ref_x25519  # noqa: E402  (pyca/cryptography-backed oracle)
+import vice_build  # noqa: E402
 
 PROJECT_ROOT = os.path.normpath(
     os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
@@ -91,6 +94,10 @@ def main():
     seed = random.randint(0, 2**32 - 1)
     if "--seed" in sys.argv:
         seed = int(sys.argv[sys.argv.index("--seed") + 1])
+    if os.environ.get("C64_NO_REU"):
+        print("SKIP test_shared_reu_deferral: C64_NO_REU set; the §8.2 "
+              "deferral build only applies with an REU")
+        return
     print(f"Random seed: {seed} (reproduce with --seed {seed})")
     rng = random.Random(seed)
 
@@ -104,7 +111,7 @@ def main():
             sys.exit(1)
 
     config = ViceConfig(prg_path=PRG_PATH, warp=True, ntsc=True, sound=False,
-                        extra_args=["-reu", "-reusize", "512"])
+                        extra_args=vice_build.reu_args())
     failures = []
     with ViceInstanceManager(config=config) as mgr:
         inst = mgr.acquire()

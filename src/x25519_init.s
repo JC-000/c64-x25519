@@ -8,8 +8,8 @@
 ; by that single I/O read leaves the >= 49-cycle post-execute settle the
 ; contract brackets at 48 MHz on the U64E. Conformance is claimed at
 ; <= 48 MHz only; 64 MHz is unbracketed. Faults land in the sticky
-; x25519_reu_fault byte (src/data.s), cleared at reu_mul_init,
-; x25519_sqr_tables_init and reu_probe entry.
+; x25519_reu_fault byte (src/data.s), cleared at the entry of each
+; boot routine here that touches the REU.
 ; =============================================================================
 
 .setcpu "6502"
@@ -458,7 +458,7 @@ row:    .byte 0
 ; unconditional $DF00 read did NOT show exactly "bit 6 set, bit 5
 ; clear". Never taken on hardware so far (bit 6 was set on the first
 ; read in all 19,416 measured calls) nor under VICE; kept out of line
-; so the thirteen expansion sites carry 12 bytes each, and so the clause's
+; so each expansion site carries 12 bytes, and so the clause's
 ; logic is written once.
 ;
 ; Input:    A = (status & $60) ^ $40 from the macro's read.
@@ -731,8 +731,9 @@ reu_fetch_mul_row_bank_patch := reu_fetch_mul_row::bank_lda + 1
 ; This routine saves and restores enough REU state that subsequent
 ; sqtab_init / reu_mul_init / x25519_scalarmult calls work as if it
 ; had not run. It does NOT preserve the autoload latch state, so it
-; should be called BEFORE the first reu_mul_init, not in the middle
-; of a session.
+; should be called BEFORE the REU table builds (reu_mul_init, or the
+; provider's init + x25519_sqr_tables_init under §8.2 deferral), not
+; in the middle of a session.
 ;
 ; Cost: ~200-250 cycles. Caller-controlled — not invoked by the
 ; library itself; downstream hosts targeting mixed C64 hardware can
@@ -741,7 +742,7 @@ reu_fetch_mul_row_bank_patch := reu_fetch_mul_row::bank_lda + 1
 ; Clobbers: A, X, Y. Touches REU bank 7 offset $0000 (restored).
 ; =============================================================================
 ; Cold segment again (issue #68): reu_probe is boot-only by contract —
-; its banner mandates calling it BEFORE the first reu_mul_init because
+; its banner mandates calling it BEFORE the REU table builds because
 ; it does not preserve the autoload latch.
 .segment "LIB_X25519_INIT_CODE"
 

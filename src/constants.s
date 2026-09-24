@@ -284,8 +284,9 @@ sqtab_hi = LIB_SHARED_SQTAB_BASE + $0200
 ; fault is recorded = X25519_REU_SETTLE_ITER (one in the macro,
 ; ITER-1 in the slow path).
 ;
-; REU_SETTLE — the settle, as a macro (not a proc) because three of the
-; thirteen execute sites are on the fe25519_mul / fe25519_sqr hot path.
+; REU_SETTLE — the settle, as a macro (not a proc) because some execute
+; sites are on the fe25519_mul / fe25519_sqr hot path. Rule: every REU
+; execute in the library is followed by REU_SETTLE.
 ;
 ;   Fast path (the only path ever observed on hardware, and the only
 ;   path under VICE): lda abs / and / eor / beq = 11 cycles,
@@ -302,8 +303,8 @@ sqtab_hi = LIB_SHARED_SQTAB_BASE + $0200
 ;   bit 5 was ever observed, $01 if the bound expired without bit 6.
 ;   The clause says confirm bit 6; a verify-fault sample never ends the
 ;   spin early. (This library issues no VERIFY command, so bit 5 is a
-;   hardware fault, not a mismatch.) The byte is cleared at
-;   reu_mul_init / reu_probe entry and never otherwise, so a host can
+;   hardware fault, not a mismatch.) The byte is cleared at the
+;   entry of each boot routine that touches the REU and never otherwise, so a host can
 ;   inspect it after any call (src/x25519.inc); reu_probe folds a
 ;   non-zero value into its C=0 return — the contract's SHOULD that a
 ;   bounded-spin failure surfaces the way a missing REU does at init.
