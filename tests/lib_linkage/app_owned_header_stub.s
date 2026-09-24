@@ -52,8 +52,9 @@
 .export reu_mul_tables_init          ; §8.2 canonical init entry, app-owned
 .endif
 .ifdef SHARED_REU_MUL_FETCH
-.export reu_fetch_mul_row            ; §8.2 fetch half, app-owned
-.export reu_fetch_mul_row_bank_patch
+.export reu_fetch_mul_row            ; §8.2 fetch half, app-owned (the
+                                     ; x25519-private bank-patch hook is
+                                     ; not §8.2 surface; owners omit it)
 .endif
 .ifdef SHARED_CT_MUL_8X8
 ; The whole §8.3 surface src/mul_8x8.s exports under the same switch —
@@ -78,8 +79,6 @@ reu_mul_tables_init:
 .endif
 .ifdef SHARED_REU_MUL_FETCH
 reu_fetch_mul_row:
-        lda #$00
-reu_fetch_mul_row_bank_patch := reu_fetch_mul_row + 1
         rts
 .endif
 .ifdef SHARED_CT_MUL_8X8

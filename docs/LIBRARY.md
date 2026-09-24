@@ -647,15 +647,20 @@ duplicate.
 
 ### §8.x canonical names and `x25519.inc` (#130)
 
-The four canonical §8.x names are declared with **`.global`**, not
+The three canonical §8.x names are declared with **`.global`**, not
 `.import`:
 
 | name | declared as | §8.x clause |
 |---|---|---|
 | `mul_tables_init` | `.global` | §8.1 |
 | `reu_mul_tables_init` | `.global` | §8.2 |
-| `reu_fetch_mul_row_bank_patch` | `.global` | none — x25519-own hook, deprecated (not §8.2 surface) |
 | `ct_mul_8x8` | `.global` | §8.3 |
+
+`reu_fetch_mul_row_bank_patch` is also declared `.global`, but it is
+not a canonical name: it is x25519-private and deprecated, not §8.2
+surface. Owner builds export it; a `SHARED_REU_MUL_FETCH` build does
+not, no sibling provider supplies it, and a §8.2 owner need not define
+it. Everything below is about the three canonical names.
 
 The reason is that a deferral switch does not say *who* provides the
 primitive. SPEC §8.0 allows either a sibling adopter or the consumer's
@@ -1335,17 +1340,17 @@ clobber **A and the carry flag** -- X and Y are preserved. The carry is
 *not* preserved: `reu_fetch_mul_row` computes its bank byte with
 `asl` (which destroys the entry carry) followed by `adc #0` (which
 overwrites it), so C on return is that add's carry-out;
-`reu_fetch_doubled_row` inherits this through its `jsr
-reu_fetch_mul_row`. The §8.2 settle keeps its bounded spin counter in
+`reu_fetch_doubled_row` clobbers C the same way, through the identical
+`asl` / `adc #0` bank computation in its own DMA #1. The §8.2 settle keeps its bounded spin counter in
 memory (`x25519_reu_settle_cnt`), not in X, so the pre-existing
 "clobbers A" convention is unchanged in the X/Y dimension and a
 consumer that JSRs `reu_fetch_mul_row` directly need not save X or Y --
 but it must not carry a live C across the call. (Earlier drafts of the
-settle used X as the counter; the routine banners at
-`src/x25519_init.s:357-362` and `:471-472` are authoritative. The
-settle's own banner at `:406` does claim C preserved, and that is correct
-and verified -- it is the fetch routines' arithmetic, not the settle,
-that clobbers C.)
+settle used X as the counter; the `Clobbers:` lines in the banners of
+`reu_fetch_mul_row` and `reu_fetch_doubled_row` in `src/x25519_init.s`
+are authoritative. The banner of `x25519_reu_settle_slow` does claim C
+preserved, and that is correct and verified -- it is the fetch routines'
+arithmetic, not the settle, that clobbers C.)
 
 Cost: +1,106,192 cycles per `x25519_scalarmult` (+0.42 %;
 262,318,045 → 263,424,237 cycles, 15,389.3 → 15,454.2 jif on this

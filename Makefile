@@ -1253,7 +1253,11 @@ lib-verify-footprint-negative-arm:
 #   src/x25519.inc(397): Error: Cannot import exported symbol 'ct_mul_8x8'
 #   src/x25519.inc(405): Error: Cannot import exported symbol 'reu_fetch_mul_row_bank_patch'
 #
-# The fix is `.global` on those four names, NOT a switch gate. A gate was
+# (The fourth, reu_fetch_mul_row_bank_patch, is x25519-private and
+# deprecated, not §8.2 surface: an owner of §8.2 fetch does not define it,
+# so it has no arm below. Its header line stays `.global`.)
+#
+# The fix is `.global` on those names, NOT a switch gate. A gate was
 # tried and rejected on evidence: the deferral switches do not say WHO
 # provides the primitive (a sibling, or the consumer itself -- both are
 # spelled with the same defines, see lib-app-owned), so gating on them
@@ -1319,15 +1323,13 @@ lib-verify-app-owned-header-arm:
 # Negative leg. Perturbs the SOURCE, not the assertion: one canonical
 # name's `.global` is turned back into an `.import` in a throwaway copy of
 # src/, which IS the pre-#130 defect, and the harness must then fail AND
-# name that symbol. Four arms, one per canonical name, because the defect
-# is per-name -- #130 shipped with all four wrong while the back-compat
-# aliases right beside them were correct.
+# name that symbol. Three arms, one per canonical §8.x name, because the
+# defect is per-name -- #130 shipped with each of them wrong while the
+# back-compat aliases right beside them were correct.
 AOHNEG_SYM_sqtab     := mul_tables_init
 AOHNEG_DEFINES_sqtab := -D SHARED_SQTAB_INIT
 AOHNEG_SYM_reu       := reu_mul_tables_init
 AOHNEG_DEFINES_reu   := -D SHARED_REU_MUL_INIT -D SHARED_REU_MUL_FETCH
-AOHNEG_SYM_fetch     := reu_fetch_mul_row_bank_patch
-AOHNEG_DEFINES_fetch := -D SHARED_REU_MUL_INIT -D SHARED_REU_MUL_FETCH
 AOHNEG_SYM_ct        := ct_mul_8x8
 AOHNEG_DEFINES_ct    := -D SHARED_CT_MUL_8X8
 
@@ -1342,9 +1344,8 @@ lib-verify-app-owned-header-negative:
 	@echo "    FAIL when a canonical §8.x name goes back to a bare .import ==="
 	$(MAKE) AOHNEG_NAME=sqtab lib-verify-app-owned-header-negative-arm
 	$(MAKE) AOHNEG_NAME=reu   lib-verify-app-owned-header-negative-arm
-	$(MAKE) AOHNEG_NAME=fetch lib-verify-app-owned-header-negative-arm
 	$(MAKE) AOHNEG_NAME=ct    lib-verify-app-owned-header-negative-arm
-	@echo "OK: the APP_OWNED check is falsifiable for all four canonical"
+	@echo "OK: the APP_OWNED check is falsifiable for all three canonical"
 	@echo "    §8.x names, one at a time"
 
 lib-verify-app-owned-header-negative-arm:
