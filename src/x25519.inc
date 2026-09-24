@@ -215,18 +215,6 @@
 ;                       lookup via mul38_lo_tab[A] / mul38_hi_tab[A].
 ;                       Migration: `ldy A / lda mul38_lo_tab,y` etc.
 ;
-;   reu_fetch_mul_row   REU DMA helper for a single 512-byte mul row.
-;                       Replaced by the inline DMA setup at the top of
-;                       fe25519_mul. No external migration needed if you
-;                       call fe25519_mul; otherwise inline the bank
-;                       computation + reu_command write yourself — AND
-;                       the §8.2 v0.13.0 settle after it (v0.12.0; the
-;                       settle adds no register cost — REU_SETTLE keeps
-;                       its spin counter in memory. The helper itself
-;                       clobbers A and C, preserving X and Y: its
-;                       asl / adc #0 bank computation destroys the
-;                       entry carry and then overwrites it).
-;
 ;   x25_basepoint       32-byte read-only buffer holding the Curve25519
 ;                       basepoint {9, 0, ..., 0}. Used only by
 ;                       x25519_base. Migration: call x25519_base, or
@@ -357,10 +345,21 @@
 ;   the claimed banks are 0, 1, 3, 4, 5. The library REQUIRES at least
 ;   a 512 KB REU. Larger REUs are fine — only those 5 banks are touched.
 ;
-;   The library uses the REU's autoload feature and leaves the REU
-;   command/length/address registers in a state ready for the next
-;   reu_fetch_mul_row. If your application also uses the REU, save and
-;   restore the REU register set ($DF00-$DF0A) around X25519 calls.
+;   The library uses the REU's autoload feature. The REU register
+;   state it leaves on return is unspecified (fe25519_sqr, for one,
+;   leaves the latch at mul_dma_carry / 256 bytes). If your application
+;   also uses the REU, save and restore the REU register set
+;   ($DF00-$DF0A) around X25519 calls.
+;
+;   reu_fetch_mul_row (SPEC §8.2 canonical per-row fetch; A = a on
+;   entry) sets every register it uses itself, so it may be called in
+;   any REU state. Row a lands in mul_dma_lo / mul_dma_hi. Clobbers A
+;   and C; X and Y preserved. To issue the fetch yourself instead,
+;   write the full FETCH register set: C64 address = mul_dma_lo,
+;   REU address lo $00 / hi (a << 1) / bank X25519_REU_BANK + (a >> 7),
+;   length $0200, address control $00; then command $B1 (execute +
+;   autoload + FETCH) and the §8.2 settle (confirm END OF BLOCK in
+;   $DF00). Do not rely on the autoload latch.
 ;
 ; ----------------------------------------------------------------------------
 ; INTERRUPTS / TIMING

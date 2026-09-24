@@ -1245,7 +1245,8 @@ both load-bearing:
 1. **The defence is vacuous there.** S2 protects an in-flight DMA from
    caller-set register residue. The profile issues no DMA at all —
    `reu_clear_wide`'s CPU clear stays, its autoload-restore tail is
-   gated out (`src/x25519_init.s:551-571`), and `fe25519_mul`'s per-row
+   gated out (the `.if ::X25519_ONCHIP_MUL = 0` block inside
+   `reu_clear_wide` in `src/x25519_init.s`), and `fe25519_mul`'s per-row
    fetch is replaced by the on-chip generator. There is no transfer
    for residue to corrupt.
 2. **The defence would be actively harmful there.** S2 works by
@@ -1277,7 +1278,9 @@ argument does not depend on them.
 > `reu_fetch_mul_row` or patches any code byte; it writes the five latch
 > registers and then `reu_reu_hi` / `reu_reu_bank` / `reu_command` itself
 > against `X25519_REU_BANK_DOUBLED`. The latch invariant and its
-> regression below are unchanged.
+> regression below are unchanged. `reu_fetch_mul_row` itself no longer
+> trusts the latch either: it writes every FETCH register on each call,
+> so its former "Caller contract" paragraph cited below is gone.
 
 PR #61 SMC-patches `reu_fetch_doubled_row`'s first 512-byte DMA to
 delegate to the canonical §8.2 `reu_fetch_mul_row` primitive. The
@@ -1352,8 +1355,9 @@ profile forces `SQR_DMA_K = 0`, so the entire doubled-fetch dispatch
 — and with it the autoload-latch invariant this section documents —
 is gated out. The profile goes further and removes the REU path
 altogether: `reu_fetch_mul_row` itself is gated out
-(`src/x25519_init.s:355-376`), along with `reu_clear_wide`'s
-autoload-restore tail (`:551-571`; the CPU clear stays). The S3
+(the `.if ::X25519_ONCHIP_MUL = 0` block around it in
+`src/x25519_init.s`), along with `reu_clear_wide`'s autoload-restore
+tail (the same gate inside that proc; the CPU clear stays). The S3
 invariant is therefore vacuously satisfied under the profile, and
 `tools/test_fe_sqr_then_mul.py` — while still a valid correctness
 test there — no longer exercises the bug class it was written for.
