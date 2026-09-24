@@ -42,9 +42,8 @@ that archive with `ar65 x` rather than read from the loose .o copies
 two separate Makefile rules over the same objects, so "they cannot
 diverge" is an inference about the build system, not a property of the
 artifact a consumer vendors.  Extraction costs one `ar65 x` per run and
-removes the inference.  Validated against all seven profiles: default
-8503/947, onchip 8234/160, 1764 8355/733, shared-sqtab 8503/787,
-shared-reu 8471/520, shared-ct 8440/947, shared-all 8408/360.
+removes the inference.  Runs in all seven profiles via `lib-verify`;
+the per-profile values are the Makefile's LIB_VERIFY_*_EXPECT locks.
 
 Why od65 and not object bytes
 -----------------------------
@@ -259,6 +258,9 @@ def check_link_fill(seg_map, map_path, segments):
         worst-case per-segment charge on exactly that ground, and that is a
         defensible but DIFFERENT claim. Do not let a future reader read
         this as the bound.
+      * It does NOT check gaps BETWEEN segments (e.g. the 0..255 B pad
+        `align = 256` puts before LIB_X25519_DATA). That pad is placement,
+        not footprint; the cfgs and docs/LIBRARY.md tell consumers to budget it.
 
     WHY IT EXISTS. §5 requires the footprint equates to be safe-direction --
     "round up, never down" -- because a consumer binds them to a budget at
@@ -287,11 +289,18 @@ def check_link_fill(seg_map, map_path, segments):
     """
     spans = read_map_spans(map_path)
     problems = []
+    missing = []
     for seg in segments:
         summed = sum(sizes.get(seg, 0) for sizes in seg_map.values())
         placed = spans.get(seg)
         if placed is None:
-            continue          # segment absent in this profile
+            if summed == 0:
+                continue      # no member emits it in this profile
+            missing.append(
+                "  %s: archive members emit %d B but the map has no row for "
+                "it -- the link examined placed none of this segment"
+                % (seg, summed))
+            continue
         if placed != summed:
             direction = "UNDER-reports" if summed < placed else "over-reports"
             problems.append(
@@ -302,7 +311,7 @@ def check_link_fill(seg_map, map_path, segments):
         else:
             print("  OK: %-22s object-size sum == placed span (%d B, no link fill)"
                   % (seg, summed))
-    return problems
+    return problems, missing
 
 
 def total(seg_map, segments):
@@ -499,10 +508,11 @@ def main():
     # Cross-check the BASIS itself against a real link, when a map is
     # available. See check_link_fill()'s docstring for exactly which claim
     # this makes and which it deliberately does not.
+    map_ok = True
     if args.map:
         print("--- basis cross-check: object-size sum vs placed span "
               "(§5 safe-direction) ---")
-        fill_problems = check_link_fill(
+        fill_problems, missing_rows = check_link_fill(
             seg_map, args.map,
             ["LIB_X25519_CODE", "LIB_X25519_DATA", "LIB_X25519_INIT_CODE"])
         if fill_problems:
@@ -517,6 +527,17 @@ def main():
                   "budget assert pass while the library overruns. Fix the "
                   "basis (or charge the fill); do not relax this check.")
             ok = False
+        if missing_rows:
+            print()
+            print("FAIL: the --map link does not place every segment the "
+                  "archive emits, so the basis cannot be cross-checked:")
+            for line in missing_rows:
+                print(line)
+            print()
+            print("This is a fault in the link examined (a stale map, or a "
+                  "stub that no longer pulls the member), not in the "
+                  "equates. Fix which link produces --map.")
+            map_ok = False
 
     if not ok:
         print()
@@ -524,6 +545,8 @@ def main():
               "archive. Re-derive them in src/lib_manifest.s and the matching "
               "LIB_VERIFY_*_EXPECT locks in the Makefile from the numbers "
               "above -- do not adjust this checker.")
+        sys.exit(1)
+    if not map_ok:
         sys.exit(1)
 
     print("OK: both §5 footprint equates are derived from the shipped "
