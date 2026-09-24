@@ -85,7 +85,7 @@
 ;       (v0.12.0 arrived as TWO deltas, and this breakdown must be
 ;        updated for both — the second one is what made it drift:
 ;          (a) +93 RESIDENT / +121 COLD for the §8.2 v0.13.0
-;              REU_SETTLE — 9 B at each of the 12 execute sites, 3
+;              REU_SETTLE — 12 B at each of the 12 execute sites, 3
 ;              resident + 9 cold, plus the shared resident
 ;              x25519_reu_settle_slow proc and the fault-byte clears.
 ;              Was 3775 / 8383 / 826 at v0.11.x -> 3868 / 8476 / 947.
@@ -281,7 +281,7 @@ _BASE_COLD     = 733
 ; (SPEC v0.9.1-C: INIT and FETCH move together) additionally drops the
 ; resident reu_fetch_mul_row body = 32 B RESIDENT. (Re-measured
 ; 2026-08-28 for v0.12.0: the §8.2 v0.13.0 REU_SETTLE expansion adds
-; 9 B per execute site plus one shared x25519_reu_settle_slow proc
+; 12 B per execute site plus one shared x25519_reu_settle_slow proc
 ; (RESIDENT, not deferrable — it also serves reu_probe and the
 ; doubled-row DMA #2), so reu_mul_init grew 364 -> 427 / 186 -> 213
 ; and reu_fetch_mul_row 20 -> 32. Measured by assembling x25519_init.s

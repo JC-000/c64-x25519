@@ -1105,7 +1105,7 @@ lib-verify-negative:
 #     COLD           947 -> 160   (x25519_init.o's 787 B
 #                                  LIB_X25519_INIT_CODE goes away entirely;
 #                                  mul_8x8.o's 160 B is all that remains)
-#     x25519_init.o  LIB_X25519_CODE 213 -> 10   (NOT to zero -- the §8.2
+#     x25519_init.o  LIB_X25519_CODE 231 -> 10   (NOT to zero -- the §8.2
 #                                  members shrink to a 10-byte residue,
 #                                  they do not vanish)
 #     fe25519.o      LIB_X25519_CODE 2750 -> 2692
@@ -1116,10 +1116,10 @@ lib-verify-negative:
 #
 #   Those two are the ENDPOINTS of the range, which is checkable rather
 #   than asserted: across all seven profiles RESIDENT spans 8234 (onchip)
-#   to 8503 (default and shared-sqtab) and COLD spans 160 (onchip) to 947
+#   to 8521 (default and shared-sqtab) and COLD spans 160 (onchip) to 947
 #   (default and shared-ct), and every remaining profile sits inside both
-#   intervals -- 1764 8355/733, shared-sqtab 8503/787, shared-reu
-#   8471/520, shared-ct 8440/947, shared-all 8408/360. So default and
+#   intervals -- 1764 8355/733, shared-sqtab 8521/787, shared-reu
+#   8489/520, shared-ct 8458/947, shared-all 8426/360. So default and
 #   onchip BRACKET the composition range the check has to handle, and a
 #   demonstration at both ends shows the check fails correctly across that
 #   range rather than in one arbitrary configuration.

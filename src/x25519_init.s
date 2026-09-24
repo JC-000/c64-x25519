@@ -387,7 +387,7 @@ reu_init_b:     .byte 0
 ; unconditional $DF00 read did NOT show exactly "bit 6 set, bit 5
 ; clear". Never taken on hardware so far (bit 6 was set on the first
 ; read in all 19,416 measured calls) nor under VICE; kept out of line
-; so the twelve expansion sites carry 9 bytes each, and so the clause's
+; so the thirteen expansion sites carry 12 bytes each, and so the clause's
 ; logic is written once.
 ;
 ; Input:    A = (status & $60) ^ $40 from the macro's read.
