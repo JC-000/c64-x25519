@@ -68,7 +68,7 @@ Its SIZE is derived, not written down here.  An earlier cut hardcoded
 exists to remove hand-maintained numbers -- the same defect one level
 down.  It now reads `LIB_X25519_PRECALC_sqtab_SIZE`, which the library
 publishes through its §8.4 precalc enumeration
-(`LIB_PRECALC_TABLE "sqtab", 1024, ...` at src/lib_manifest.s:410) and
+(`LIB_PRECALC_TABLE "sqtab", 1024, ...` in src/precalc_manifest.s) and
 which ld65 exports into the label file.  So the resident claim and the
 §8.4 declaration cannot disagree by construction.  It is additionally
 cross-checked against `__SQTAB_SIZE__`, the region size the LINKER
@@ -122,7 +122,7 @@ import tempfile
 # hardcoded 1024, which was a third hand-maintained number in a tool whose
 # whole purpose is to remove hand-maintained numbers. It is now read from
 # the library's own §8.4 precalc enumeration, exported at link time from
-# the LIB_PRECALC_TABLE "sqtab" invocation in src/lib_manifest.s:410, and
+# the LIB_PRECALC_TABLE "sqtab" invocation in src/precalc_manifest.s, and
 # cross-checked against the cfg region the linker actually reserved.
 SQTAB_SIZE_SYMBOL = "LIB_X25519_PRECALC_sqtab_SIZE"
 SQTAB_REGION_SIZE_SYMBOL = "__SQTAB_SIZE__"

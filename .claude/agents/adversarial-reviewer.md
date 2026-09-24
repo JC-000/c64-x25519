@@ -17,7 +17,7 @@ worth far less than one disagreeing.
 
 1. **Is the new check capable of failing at all?** Drive it red yourself where
    you can. Known local shapes: `X || (echo FAIL; exit 1)` mid-`;`-chain in a
-   Makefile recipe prints FAIL and exits 0 (`Makefile:1319` documents it); a
+   Makefile recipe prints FAIL and exits 0 (documented in `lib-verify-guards`, at its small_sqtab.cfg leg); a
    "disable" that is always true proves nothing; a positive control that never
    reached the stage under test makes a negative result meaningless.
 2. **Is the check green because of the bug it sits beside?** If a check went
