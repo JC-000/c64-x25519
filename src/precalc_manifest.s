@@ -112,3 +112,19 @@ LIB_PRECALC_TABLE "reu_mul",         131072, PRECALC_REGION_REU, PRECALC_SHARED_
 ;                                                                  total: 196608 B
 LIB_PRECALC_TABLE "reu_mul_doubled", 196608, PRECALC_REGION_REU, PRECALC_SHARED_NO, "X25519"
 .endif
+
+; Page-aligned 256 B constant tables from src/data.s (REGION RODATA: built
+; at assemble time, never written), present in every profile
+; (data.s has no profile gates). Read abs,y with a secret index by
+; mul_by_38 (mul38_*), fe25519_sqr's diagonal (sqr_*) and fe25519_mul_a24
+; (a24_*). Named x25519_<symbol>: the bare LIB_PRECALC_<name>_* triple is
+; identical across libraries, so a private table name carries the library
+; prefix to avoid a Duplicate external identifier in a composed link.
+LIB_PRECALC_TABLE "x25519_mul38_lo_tab", 256,    PRECALC_REGION_RODATA, PRECALC_SHARED_NO,  "X25519"
+LIB_PRECALC_TABLE "x25519_mul38_hi_tab", 256,    PRECALC_REGION_RODATA, PRECALC_SHARED_NO,  "X25519"
+LIB_PRECALC_TABLE "x25519_sqr_lo",      256,    PRECALC_REGION_RODATA, PRECALC_SHARED_NO,  "X25519"
+LIB_PRECALC_TABLE "x25519_sqr_hi",      256,    PRECALC_REGION_RODATA, PRECALC_SHARED_NO,  "X25519"
+LIB_PRECALC_TABLE "x25519_a24_b0",      256,    PRECALC_REGION_RODATA, PRECALC_SHARED_NO,  "X25519"
+LIB_PRECALC_TABLE "x25519_a24_b1",      256,    PRECALC_REGION_RODATA, PRECALC_SHARED_NO,  "X25519"
+LIB_PRECALC_TABLE "x25519_a24_b2",      256,    PRECALC_REGION_RODATA, PRECALC_SHARED_NO,  "X25519"
+LIB_PRECALC_TABLE "x25519_a24_b3",      256,    PRECALC_REGION_RODATA, PRECALC_SHARED_NO,  "X25519"

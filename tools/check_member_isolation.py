@@ -3,8 +3,8 @@ r"""Assert c64-lib-contract SPEC v1.2.2 §6.1 member isolation over a shipped ar
 
 The clause, quoted from the TAG this conforms to. SS6.1 was corrected twice
 on 2026-09-06; the v1.2.0 wording lacked the prefixed-counterparts exception,
-under which precalc_manifest.o -- 9 bare plus 9 prefixed -- would itself have
-been non-conformant. Quote the tag, not main:
+under which precalc_manifest.o -- bare triples beside their prefixed ones --
+would itself have been non-conformant. Quote the tag, not main:
 
     ld65 links whole archive members. A symbol a consumer may displace --
     suppress under LIB_NO_BARE_EXPORTS, or define itself under APP_OWNED
