@@ -82,7 +82,7 @@ The cut is governed by a stated scope rule, and it is the thing to apply to any 
 
 **What NOT to do about the retired sections.** Forty-six comment lines in the `Makefile` (measured), plus `tools/check_footprint.py`, `tools/ct_mul_brute_check.py`, `docs/CT_ANALYSIS.md` and every `docs/RELEASE_NOTES_v0.1*.md`, cite §6.3 / §6.6 / §6.7 / §15. **Leave them.** RETIRED.md makes `v0.17.1` their permanent home and says in terms that adopters should not rewrite such citations; doing so would be forty-six chances to introduce a wrong claim while fixing nothing a reader gets wrong. What was fixed instead is the *status* those citations carry, stated once at the top of the `Makefile` and once each in the three tools/docs above: **a retired-section citation here describes repo policy this project chose to keep, not a live obligation.**
 
-**The machinery stays.** `lib-verify-guards` (seven legs), `lib-verify-negative` (N0–N7), `lib-verify-footprint` and `-footprint-negative`, `ct_mul_brute_check.py --mutate`, and the `CONTRACT_STAMP` leg-C knob-invalidation family were all built to discharge clauses that no longer exist. They are kept because they work, and because this family of checks has caught real defects here: leg C caught a shipped exit-0-wrong-artifact bug (#113/#114), and the footprint evidence pass caught a check structurally incapable of failing (#121). That is two named finds, not one per target — the rest are kept on the same reasoning, not on their own track record. The contract agrees — RETIRED.md: *"Keep the practice; do not keep it as an obligation this contract imposes."* Deleting any of it would be the wrong reading of a release whose headline is that **text** was deleted. The one thing now wrong is to describe any of them as required for conformance.
+**The machinery stays.** `lib-verify-guards` (legs A, A2, A3, B, the leg C family run for default and onchip, and since #167 `lib-verify-dry-run`), `lib-verify-negative` (N0–N7), `lib-verify-footprint` and `-footprint-negative`, `ct_mul_brute_check.py --mutate`, and the `CONTRACT_STAMP` leg-C knob-invalidation family were all built to discharge clauses that no longer exist. They are kept because they work, and because this family of checks has caught real defects here: leg C caught a shipped exit-0-wrong-artifact bug (#113/#114), and the footprint evidence pass caught a check structurally incapable of failing (#121). That is two named finds, not one per target — the rest are kept on the same reasoning, not on their own track record. The contract agrees — RETIRED.md: *"Keep the practice; do not keep it as an obligation this contract imposes."* Deleting any of it would be the wrong reading of a release whose headline is that **text** was deleted. The one thing now wrong is to describe any of them as required for conformance.
 
 **Two rulings that closed open questions this file used to hedge on.** Both are settled; do not re-open them.
 
@@ -139,7 +139,11 @@ make lib-verify-citations  # assert the Makefile guard table's file:line gate
                      #   (#122; prerequisite of lib-verify)
 make lib-verify-shared  # linkage matrix for the four SHARED_* deferral builds (R6)
 make lib-verify-guards  # §6.6/§6.7 NEGATIVE legs — guards must fail with named errors
-                     #   (leg C family runs for BOTH default and onchip)
+                     #   (leg C family runs for BOTH default and onchip), then
+                     #   lib-verify-dry-run: -n/-q/-t with changed knobs must
+                     #   write nothing and answer as master did after its rm
+                     #   (out of date with a rule, No rule without), real
+                     #   builds must still invalidate (#167)
 make lib-verify-footprint  # §5 RESIDENT/COLD DERIVED from od65 over the shipped
                      #   archive, not restated. Also runs inside lib-verify, so
                      #   all seven profiles get it.
@@ -162,6 +166,11 @@ make lib-verify-guards-legc-negative  # leg C's C1/C2/C1b pass on a COUNT OF
                      #   incl. C2's stale-artifact and C1/C1b's no-rebuild
                      #   properties. 16 of 18 leg assertions observed failing;
                      #   the two exceptions are named in the target (#133)
+make lib-verify-dry-run-negative  # #167: a pristine-copy control, then one arm
+                     #   per knob-guard rule, each sabotaged in a git ls-files
+                     #   copy and required to fail AT ITS OWN LEG; the rules no
+                     #   arm reddens are named, with how that was measured, in
+                     #   the target
 python3 tools/ct_mul_brute_check.py --mutate  # §8.3 tool's own negative leg;
                      #   must report counted mismatches, not error out (needs VICE)
 make lib-app-owned   # §6.3 all-primitives-app-owned archive (x25519-app-owned.a)
