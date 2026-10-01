@@ -187,16 +187,107 @@ PRG = $(BUILD_DIR)/x25519.prg
 LABELS = $(BUILD_DIR)/labels.txt
 LIB_VERIFY_DIR = $(BUILD_DIR)/lib_verify
 
+# --- ...but not under -n / -q / -t (issue #167) ------------------------------
+# The block below is $(shell) at PARSE time, and make parses under -n, -q and
+# -t as under a real run. Measured on v0.16.0: after `make lib`,
+# `make -n lib CONTRACT_DEFINES='-D X25519_ONCHIP_MUL=1'` left 0 of 13
+# objects and no archive, with the stamp rewritten to the onchip knobs; -q and
+# -npq did the same. Under -t it is worse than a lost tree: touch re-creates
+# every deleted target as a 0-byte file, the stamp already says the new knobs
+# match, and the next real `make lib` with those knobs ran 0 ca65 and exited
+# 0 holding a 0-byte x25519.a. A $(MAKE) recipe line runs even under -n and
+# the child inherits the flag, so the body here -- parsed by exactly such a
+# child wherever the lockf block at the top re-runs make -- sees it too.
+#
+# So under those three the knob change is reported and NOTHING is written:
+# neither the rm nor the stamp. Skipping only the rm would be the dangerous
+# half -- a stamp claiming the new knobs over the old knobs' objects makes the
+# next real build reuse them and exit 0 with the previous configuration's
+# artifact, which is #113/#114 exactly.
+#
+# Writing nothing is not enough on its own: the old files then look up to
+# date, and the consumer idiom `$(MAKE) -C <lib> -q build/lib/x25519.a ... ||
+# $(MAKE) -C <lib> lib ...` kept the previous config's archive, exit 0. So
+# the no-exec branch also sets X25519_KNOB_FORCE, and the block at the END of
+# this file makes every EXISTING file the rm would have deleted answer as it
+# would once deleted: a file with a rule is out of date (-q answers 1 under a sub-make, -n
+# previews the rebuild); one with no rule (x25519.a, labels.txt, the profile
+# archives, the lib_verify stub's side outputs, an object whose source is
+# gone) stops with rc 2 "No rule to make target ... once the changed knobs",
+# which is what master answered after its rm. Absent targets and typos get
+# make's own "No rule", as on master. That set is X25519_KNOB_OUTPUTS, one
+# list read by both, so the two do not name different files. -t keeps the
+# force: on files that already exist it changes mtimes, not bytes, and as the
+# stamp still names the old knobs, the next real build either invalidates
+# (new knobs) or correctly reuses them (old knobs). A target that does not
+# exist yet is created empty by -t, exactly as without the force -- `-t all`
+# makes a 0-byte main.o and PRG either way -- because that is what -t does.
+# The variable is set in that branch and, being `override`, by nothing else:
+# not the environment, not the command line.
+#
+# Two boundaries, both measured against master on 3.81 and left as they are:
+#   * -k. The rc 2 for a rule-less file comes from $(error), which stops the
+#     whole run, where master's own "No rule" let -k carry on. The exit code
+#     matches (2), but `make -k -n build/lib/x25519.a lib` with changed knobs
+#     previews nothing here and 13 ca65 lines on master.
+#   * -t on a partly absent tree still creates the absent targets empty, as
+#     ordinary -t does, so the 0-byte-artifact risk moves to the OTHER knob
+#     set; it is not removed. Delete libx25519.a, run `-t` with new knobs on
+#     `lib`, then a real build with the ORIGINAL knobs: it exits 0 holding a
+#     0-byte libx25519.a and x25519.a, because the stamp still says those
+#     knobs match. Master hit the same with the NEW knobs instead.
+#
+# The flags come from MFLAGS, not MAKEFLAGS. MFLAGS is make's own rendering
+# of the switches it decoded, measured on GNU Make 3.81 (/usr/bin/make here):
+# -n `-n`, -nq `-qn`, --no-print-directory `- --no-print-directory`, and in
+# no case measured did it carry a command-line variable. MAKEFLAGS is not that under -e: there
+# it is the environment's value verbatim, and 3.81 obeys switches in it that
+# no word-rule recovers -- `--touch` and any unambiguous prefix down to
+# `--t`, `--dr`, `--ju`, `--r`, `--que`; `-ntx` (touch: unknown letters are
+# skipped); `-nIfoo` (n: -I takes the rest) -- while `w n`, `-Int`, `-I -n`
+# and `-- X=n` are real builds. In every one of those cases MFLAGS held
+# exactly the letters make acted on (`-te`, `-ne`, `-tne`, `-e`). From MFLAGS
+# a single-dash word counts if every letter in it is a boolean make flag;
+# `--long` words never count (--no-print-directory contains n and t). The
+# all-boolean rule is a defence for option arguments (`-Otarget` on newer
+# makes); no 3.81 MFLAGS measured here contains such a word.
+#
+# Make overwrites an environment MFLAGS but believes one set on the command
+# line, in a makefile or by override (measured: `make lib MFLAGS=-n` is a real
+# build whose MFLAGS reads -n). The guard has no other source then, so
+# when the knobs differ it refuses rather than guess. `make
+# lib-verify-dry-run` pins all of this; `make lib-verify-dry-run-negative`
+# shows each rule failing.
+override X25519_KNOB_FORCE :=
+X25519_MF_BOOL := B b d e h i k L m n p q R r S s t v w
+x25519_mf_strip = $(if $2,$(call x25519_mf_strip,$(subst $(firstword $2),,$1),$(wordlist 2,$(words $2),$2)),$1)
+x25519_mf_flags = $(if $(call x25519_mf_strip,$1,$(X25519_MF_BOOL)),,$1)
+X25519_MF_FLAGS := \
+  $(foreach w,$(filter-out --%,$(filter -%,$(MFLAGS))),$(call x25519_mf_flags,$(patsubst -%,%,$w)))
+X25519_NO_EXEC := $(strip $(foreach f,n q t,$(findstring $f,$(X25519_MF_FLAGS))))
+
+# Everything a knob change invalidates. Globs, expanded by the shell in the
+# rm and by $(wildcard) in the force at the end of this file.
+X25519_KNOB_OUTPUTS := $(BUILD_DIR)/*.o $(LIB_DIR)/*.o $(LIB_DIR)/*.a \
+                       $(PRG) $(LABELS) $(LABELS).raw \
+                       $(LIB_VERIFY_DIR)/*.o $(LIB_VERIFY_DIR)/*.prg \
+                       $(LIB_VERIFY_DIR)/*.labels
+
 CONTRACT_STAMP := $(BUILD_DIR)/.contract-defines.stamp
 CURRENT_KNOBS  := $(strip $(ALL_DEFINES))
 STORED_KNOBS   := $(strip $(shell cat $(CONTRACT_STAMP) 2>/dev/null))
 ifneq ($(CURRENT_KNOBS),$(STORED_KNOBS))
+ifneq ($(filter command override file,$(firstword $(origin MFLAGS))),)
+$(error knobs changed ('$(STORED_KNOBS)' -> '$(CURRENT_KNOBS)') but MFLAGS='$(MFLAGS)' was set by $(origin MFLAGS), so the #167 guard cannot tell a -n/-q/-t run from a real one; drop the MFLAGS assignment)
+endif
+ifneq ($(X25519_NO_EXEC),)
+$(warning knobs changed ('$(STORED_KNOBS)' -> '$(CURRENT_KNOBS)') but make was run with -n, -q or -t (found: $(X25519_NO_EXEC); MFLAGS='$(MFLAGS)'): $(BUILD_DIR) left alone and stamp not rewritten; existing files a real build would invalidate answer as if deleted: rebuilt if they have a rule, "No rule" if not (#167))
+override X25519_KNOB_FORCE := x25519-knob-force
+else
 $(shell mkdir -p $(BUILD_DIR); \
-        rm -f $(BUILD_DIR)/*.o $(LIB_DIR)/*.o $(LIB_DIR)/*.a \
-              $(PRG) $(LABELS) $(LABELS).raw \
-              $(LIB_VERIFY_DIR)/*.o $(LIB_VERIFY_DIR)/*.prg \
-              $(LIB_VERIFY_DIR)/*.labels; \
+        rm -f $(X25519_KNOB_OUTPUTS); \
         printf '%s' "$(CURRENT_KNOBS)" > $(CONTRACT_STAMP))
+endif
 endif
 
 # Library .o set (what ships in libx25519.a — no test harness code).
@@ -244,6 +335,8 @@ LIBX25519 = $(LIB_DIR)/libx25519.a
         lib-verify-zp-supply lib-verify-zp-supply-negative \
         lib-verify-guards-legc-negative \
         lib-verify-guards-legc-negative-arm \
+        lib-verify-dry-run lib-verify-dry-run-recurse lib-verify-dry-run-consumer \
+        lib-verify-dry-run-negative lib-verify-dry-run-negative-arm \
         lib-verify-citations lib-verify-citations-negative \
         lib-verify-isolation lib-verify-isolation-negative \
         lib-verify-fill-negative \
@@ -2055,7 +2148,7 @@ lib-verify-shared: lib-verify-app-owned-header lib-verify-single-scan \
 # knob names — so it is parameterised and run twice. One leg family, one
 # extra profile; not the 7x7 cross product.
 lib-verify-guards:
-	@echo "=== lib-verify-guards: SPEC v0.10.0 §6.6/§6.7 negative legs ==="
+	@echo "=== lib-verify-guards: SPEC v0.10.0 §6.6/§6.7 negative legs (A, A2, A3, B), the §6.3 leg C family, and the #167 -n/-q/-t knob-guard legs ==="
 	rm -rf build-guards; mkdir -p build-guards
 	@echo "--- leg A: diverged SQTAB base must fail the PRG link"
 	@# Base must sit ABOVE the standalone image end (__MAIN_LAST__ = $2A82
@@ -2119,7 +2212,8 @@ lib-verify-guards:
 	rm -rf build-guards
 	$(MAKE) LEGC_NAME=default lib-verify-guards-legc
 	$(MAKE) LEGC_NAME=onchip lib-verify-guards-legc
-	@echo "OK: all guard negatives fire with named errors"
+	$(MAKE) lib-verify-dry-run
+	@echo "OK: legs A, A2, A3 and B fail with named errors, leg C holds for default and onchip, and the knob guard holds under -n/-q/-t"
 
 # --- leg C family: §6.3 knob-invalidation ratchet, parameterised by profile --
 #
@@ -2334,6 +2428,309 @@ lib-verify-guards-legc:
 	 fi; \
 	 echo "OK: leg C1b [$(LEGC_NAME)] — unchanged knobs recompiled 0 TUs after a knob change (sub-make exited 0 and emitted its §6.1 banner for $(LEGC_DIR)/lib/x25519.a)"
 	rm -rf $(LEGC_DIR)
+
+# --- the knob guard under -n / -q / -t (issue #167) --------------------------
+#
+# Leg C pins the guard's two properties on real builds; this pins the third:
+# a -n, -q or -t run with changed knobs writes nothing, yet answers for every
+# existing file the rm would have deleted as master did after deleting it --
+# out of date where a rule rebuilds it, rc 2 "No rule" where none does --
+# while absent targets and typos get make's own "No rule"; and that the
+# detector takes none of the REAL builds tried here for one. Run from
+# lib-verify-guards, beside leg C, not from lib-verify: the block is the same
+# in every profile, and lib-verify runs seven times.
+#
+# The dry legs compare a sha256 of every .o, archive, the PRG and labels.txt
+# plus the stamp's content (or its absence) before and after, so the -t
+# defect -- deleted targets re-created as 0-byte files -- fails as surely as a
+# missing one. Each also demands the guard's own #167 warning naming THIS
+# tree, so a leg whose knobs did not actually differ, or whose sub-make died
+# before the parse, cannot pass on an untouched tree. The $(MAKE)-line leg
+# runs the outer make in a different BUILD_DIR, so only the child can print
+# that.
+#
+# The first dry legs pin what the force must NOT reach: with x25519.a moved
+# aside, -n/-t/-q on it, and -n/-t on a typo, must answer master's own
+# "No rule to make target `...'.  Stop." (rc 2) and create nothing. Then the
+# consumer shape, -q on a FILE at MAKELEVEL >= 1: libx25519.a, which has a
+# rule, must answer 1; the canonical x25519.a and labels.txt, which no rule
+# builds -- the phony `lib` recipe and the PRG recipe write them as side
+# effects -- must answer rc 2 "No rule to make target ... once the changed
+# knobs", which is what master answered after its rm. So must an existing
+# util.o whose source is gone (a SRC_DIR copy without util.s), under -n and
+# -t; before those, -n must list one ca65 line per library TU. -q on phony
+# `lib` cannot show any of this, since a phony goal is never up to date. -q with
+# UNCHANGED knobs must still answer 0 on libx25519.a, x25519.a and
+# labels.txt, so the force is not "always out of date". X25519_KNOB_FORCE set
+# in the environment must change nothing on a real build.
+# The -e legs at the end feed MAKEFLAGS from the environment, the one route
+# where 3.81's MAKEFLAGS stops describing the run: (d1)'s `w n` and (d2)'s
+# `-Int -I -n --dry-runx --qu` are real builds (make ignores a dash-less
+# word after the first, and -I takes the next word as its argument) and must
+# not be seen as dry, while `--touch`, ` --dry-run`, the prefix `--ques` and
+# the cluster `-ntx` are obeyed and must be. (e): MFLAGS on the command line
+# with changed knobs must be refused by name and leave the tree alone.
+#
+# The real legs must each recompile every library TU, write the new knobs to
+# the stamp, and leave mul_8x8.o with the §8.3 name count the knobs select:
+# 5 by default, 0 under SHARED_CT_MUL_8X8. Across the sequence that count
+# goes 5 (baseline), 0 (a), 5 and 0 (b), 5 and 5 (c), 0 (d1), 5 (d2): every real leg
+# but (c)'s lone-t one flips the artifact; that one, whose knobs differ from
+# (c)'s lone-n only by an inert -D, proves invalidation and the stamp, not a
+# flip. sqtab_init.o's §8.1 pair is the same-step control that od65 returned
+# something. (a) is the consumer idiom itself, run through
+# lib-verify-dry-run-consumer against the canonical x25519.a, and graded by
+# od65 on the mul_8x8.o member extracted from that archive.
+#
+# (b) is the false-positive direction. --no-print-directory contains n and
+# t; it pins that a `--long` word never counts, but NOT either rule alone:
+# with the `filter-out --%` removed, the all-boolean rule still rejects
+# `-no-print-directory` (measured: the target stays green), and the negative
+# target's arm removes both. -w pins a lone non-n/q/t letter against a false
+# positive. (c) puts a lone `n` (then `t`) from a define value, and a `-n`
+# (`-t`) word from DRYRUN_NOISE, which nothing reads, after `--` in an -e
+# MAKEFLAGS; a probe first proves that tail reached a parse, or the leg would
+# pass on words nothing read.
+#
+# Counts `ca65 ` lines, as leg C does, so it inherits leg C's blindness under
+# a top-level -s, and a CONTRACT_DEFINES that already defers §8.1 or §8.3
+# fails its od65 controls. `make lib-verify-dry-run-negative` is its
+# negative demonstration.
+DRYRUN_DIR = build-dryrun
+DRYRUN_K0  = $(strip $(CONTRACT_DEFINES))
+DRYRUN_K1  = $(strip $(CONTRACT_DEFINES) -D SHARED_CT_MUL_8X8=1)
+DRYRUN_KN  = $(strip $(CONTRACT_DEFINES) -D n)
+DRYRUN_KT  = $(strip $(CONTRACT_DEFINES) -D t)
+# What the stamp must hold for each: it records ALL_DEFINES, stripped.
+dryrun_stamp = $(strip $(CA65FLAGS) $1 $(CONTRACT_ZP_DEFINES))
+DRYRUN_MAKE = $(MAKE) BUILD_DIR=$(DRYRUN_DIR) LIB_DIR=$(DRYRUN_DIR)/lib \
+              CA65FLAGS="$(CA65FLAGS)" CONTRACT_ZP_DEFINES="$(CONTRACT_ZP_DEFINES)"
+DRYRUN_CHILD_DEFINES ?=
+
+lib-verify-dry-run:
+	@echo "=== lib-verify-dry-run: -n/-q/-t with changed knobs MUST write nothing and answer as master did after its rm (out of date with a rule, No rule without); real builds MUST still invalidate (#167) ==="
+	rm -rf $(DRYRUN_DIR)
+	@D=$(DRYRUN_DIR); S=$$D/.contract-defines.stamp; \
+	 snap() { for f in $$D/*.o $$D/lib/*.o $$D/lib/*.a $$D/x25519.prg $$D/labels.txt; do [ -e "$$f" ] && shasum -a 256 "$$f"; done; \
+	          if [ -e $$S ]; then printf 'stamp [%s]\n' "$$(cat $$S)"; else echo 'stamp <absent>'; fi; }; \
+	 member() { rm -rf $$D/arx; mkdir -p $$D/arx; (cd $$D/arx && ar65 x ../lib/x25519.a mul_8x8.o) && od65 --dump-exports $$D/arx/mul_8x8.o 2>&1 | grep -cE $(LEGC_8X3_NAMES) || true; }; \
+	 real() { leg=$$1; want=$$2; nm=$$3; shift 3; \
+	   out=$$("$$@" 2>&1); rc=$$?; \
+	   if [ "$$rc" != "0" ]; then echo "FAIL: lib-verify-dry-run leg $$leg — the real build exited $$rc:"; printf '%s\n' "$$out" | tail -5; exit 1; fi; \
+	   printf '%s\n' "$$out" | grep -qF "$$D/lib/x25519.a" || { echo "FAIL: lib-verify-dry-run leg $$leg — positive control: the output never names $$D/lib/x25519.a, so the lib recipe did not finish"; exit 1; }; \
+	   if printf '%s\n' "$$out" | grep -qF '(#167)'; then echo "FAIL: lib-verify-dry-run leg $$leg — a REAL build was taken for a -n/-q/-t run; the knob guard warned and skipped invalidation:"; printf '%s\n' "$$out" | grep -F '(#167)'; exit 1; fi; \
+	   n=$$(printf '%s\n' "$$out" | grep -c '^ca65 ' || true); \
+	   [ "$$n" = "$(words $(LIB_OBJS))" ] || { echo "FAIL: lib-verify-dry-run leg $$leg — recompiled $$n of $(words $(LIB_OBJS)) library TUs; the knob change did not invalidate the tree"; exit 1; }; \
+	   got=$$(cat $$S 2>/dev/null); \
+	   [ "$$got" = "$$want" ] || { echo "FAIL: lib-verify-dry-run leg $$leg — stamp holds [$$got], expected [$$want]"; exit 1; }; \
+	   ctl=$$(od65 --dump-exports $$D/lib/sqtab_init.o 2>&1 | grep -cE $(LEGC_8X1_NAME_RECORDS) || true); \
+	   [ "$$ctl" = "2" ] || { echo "FAIL: lib-verify-dry-run leg $$leg — control: od65 found $$ctl/2 §8.1 names in $$D/lib/sqtab_init.o, so the §8.3 count below would mean nothing"; exit 1; }; \
+	   got=$$(od65 --dump-exports $$D/lib/mul_8x8.o 2>&1 | grep -cE $(LEGC_8X3_NAMES) || true); \
+	   [ "$$got" = "$$nm" ] || { echo "FAIL: lib-verify-dry-run leg $$leg — wrong artifact: $$D/lib/mul_8x8.o exports $$got/5 §8.3 names, expected $$nm/5 for these knobs"; exit 1; }; \
+	   echo "OK: lib-verify-dry-run leg $$leg — recompiled $$n TUs, stamp [$$want], mul_8x8.o has $$nm/5 §8.3 names"; }; \
+	 dry() { leg=$$1; found=$$2; okrc=$$3; msg=$$4; shift 4; \
+	   snap > $$D/.snap.before; out=$$("$$@" 2>&1); rc=$$?; snap > $$D/.snap.after; fail=0; \
+	   case " $$okrc " in *" $$rc "*) ;; *) echo "FAIL: lib-verify-dry-run leg $$leg — sub-make exited $$rc, expected one of {$$okrc}:"; printf '%s\n' "$$out" | grep -v '^#' | tail -3; fail=1;; esac; \
+	   if ! cmp -s $$D/.snap.before $$D/.snap.after; then echo "FAIL: lib-verify-dry-run leg $$leg — the run changed $$D (objects, archives, PRG, labels or stamp); a dry/question/touch run must write nothing ($$(diff $$D/.snap.before $$D/.snap.after | grep -c '^[<>]') line(s) of the snapshot differ; first files, then the stamp):"; \
+	     diff $$D/.snap.before $$D/.snap.after | grep '^[<>]' | grep -v ' stamp ' | head -4; diff $$D/.snap.before $$D/.snap.after | grep '^[<>] stamp '; fail=1; fi; \
+	   printf '%s\n' "$$out" | grep -F '(#167)' | grep -F "$$D left alone" | grep -qF "(found: $$found;" \
+	     || { echo "FAIL: lib-verify-dry-run leg $$leg — no #167 warning saying '$$D left alone (found: $$found;' — either the guard did not see the flag, or the knobs never differed and this leg examined nothing"; fail=1; }; \
+	   if [ -n "$$msg" ] && ! printf '%s\n' "$$out" | grep -qF "$$msg"; then echo "FAIL: lib-verify-dry-run leg $$leg — make did not say: $$msg"; printf '%s\n' "$$out" | grep -F '***' | head -2; fail=1; fi; \
+	   rm -f $$D/.snap.before $$D/.snap.after; [ "$$fail" = "0" ] || exit 1; \
+	   echo "OK: lib-verify-dry-run leg $$leg — $$D and its stamp byte-unchanged, rc=$$rc, guard reported found: $$found"; }; \
+	 inject() { esc=$$(printf '%s' "$$1" | sed 's/ /\\ /g'); printf ' -- CONTRACT_DEFINES=%s DRYRUN_NOISE=x\\ -%s' "$$esc" "$$2"; }; \
+	 real baseline '$(call dryrun_stamp,$(DRYRUN_K0))' 5 \
+	      $(DRYRUN_MAKE) CONTRACT_DEFINES="$(DRYRUN_K0)" lib; \
+	 $(DRYRUN_MAKE) CONTRACT_DEFINES="$(DRYRUN_K0)" all >/dev/null 2>&1 && [ -e $$D/labels.txt ] \
+	   || { echo "FAIL: lib-verify-dry-run baseline — the PRG link did not produce $$D/labels.txt, so the rule-less-file legs would examine nothing"; exit 1; }; \
+	 mv $$D/lib/x25519.a $$D/.x25519.a.away; \
+	 for m in n t q; do \
+	   dry "-$$m on an ABSENT x25519.a" $$m '2' "No rule to make target \`$$D/lib/x25519.a'.  Stop." \
+	       $(DRYRUN_MAKE) -$$m CONTRACT_DEFINES="$(DRYRUN_K1)" $$D/lib/x25519.a; \
+	 done; \
+	 for m in n t; do \
+	   dry "-$$m on a nonexistent target (typo)" $$m '2' "No rule to make target \`$$D/lib/nonexist.a'.  Stop." \
+	       $(DRYRUN_MAKE) -$$m CONTRACT_DEFINES="$(DRYRUN_K1)" $$D/lib/nonexist.a; \
+	 done; \
+	 mv $$D/.x25519.a.away $$D/lib/x25519.a; \
+	 dry '-q on libx25519.a (consumer shape, a file with a rule)' 'q' '1' '' \
+	     $(DRYRUN_MAKE) -q CONTRACT_DEFINES="$(DRYRUN_K1)" $$D/lib/libx25519.a; \
+	 dry '-q on the canonical x25519.a (consumer shape, no rule)' 'q' '2' "No rule to make target \`$$D/lib/x25519.a' once the changed knobs" \
+	     $(DRYRUN_MAKE) -q CONTRACT_DEFINES="$(DRYRUN_K1)" $$D/lib/x25519.a; \
+	 dry '-n' 'n' '0' '' $(DRYRUN_MAKE) -n CONTRACT_DEFINES="$(DRYRUN_K1)" lib; \
+	 n=$$(printf '%s\n' "$$out" | grep -c '^ca65 ' || true); \
+	 [ "$$n" = "$(words $(LIB_OBJS))" ] || { echo "FAIL: lib-verify-dry-run leg -n — listed $$n ca65 line(s), expected $(words $(LIB_OBJS)); a changed-knob -n must preview the rebuild a real run will do"; exit 1; }; \
+	 echo "OK: lib-verify-dry-run leg -n — previewed $$n ca65 lines"; \
+	 mkdir -p $$D/srcmiss && cp $(SRC_DIR)/*.s $(SRC_DIR)/*.inc $$D/srcmiss/ && rm $$D/srcmiss/util.s; \
+	 dry '-n with src/util.s missing (util.o present)' 'n' '2' "No rule to make target \`$$D/util.o' once the changed knobs" \
+	     $(DRYRUN_MAKE) -n SRC_DIR=$$D/srcmiss CONTRACT_DEFINES="$(DRYRUN_K1)" lib; \
+	 dry '-t with src/util.s missing (util.o present)' 't' '2' "No rule to make target \`$$D/util.o' once the changed knobs" \
+	     $(DRYRUN_MAKE) -t SRC_DIR=$$D/srcmiss CONTRACT_DEFINES="$(DRYRUN_K1)" lib; \
+	 rm -rf $$D/srcmiss; \
+	 dry '-q on labels.txt (no rule)' 'q' '2' "No rule to make target \`$$D/labels.txt' once the changed knobs" \
+	     $(DRYRUN_MAKE) -q CONTRACT_DEFINES="$(DRYRUN_K1)" $$D/labels.txt; \
+	 dry '-q' 'q' '1' '' $(DRYRUN_MAKE) -q CONTRACT_DEFINES="$(DRYRUN_K1)" lib; \
+	 dry '-t' 't' '0' '' $(DRYRUN_MAKE) -t CONTRACT_DEFINES="$(DRYRUN_K1)" lib all; \
+	 dry '-npq' 'n q' '1' '' $(DRYRUN_MAKE) -npq CONTRACT_DEFINES="$(DRYRUN_K1)" lib; \
+	 dry '-n, child of a $$(MAKE) line' 'n' '0' '' \
+	     $(MAKE) -n BUILD_DIR=$$D/outer LIB_DIR=$$D/outer/lib \
+	     DRYRUN_CHILD_DEFINES="$(DRYRUN_K1)" lib-verify-dry-run-recurse; \
+	 for f in lib/libx25519.a lib/x25519.a labels.txt; do \
+	   out=$$($(DRYRUN_MAKE) -q CONTRACT_DEFINES="$(DRYRUN_K0)" $$D/$$f 2>&1); rc=$$?; \
+	   [ "$$rc" = "0" ] || { echo "FAIL: lib-verify-dry-run leg -q, UNCHANGED knobs — exited $$rc on $$D/$$f, expected 0; the force answers for a current tree as if the knobs had changed"; printf '%s\n' "$$out" | tail -3; exit 1; }; \
+	   if printf '%s\n' "$$out" | grep -qF '(#167)'; then echo "FAIL: lib-verify-dry-run leg -q, UNCHANGED knobs — the guard warned on $$D/$$f although the knobs match the stamp"; exit 1; fi; \
+	   echo "OK: lib-verify-dry-run leg -q, UNCHANGED knobs — rc=0 on $$D/$$f"; \
+	 done; \
+	 out=$$(env X25519_KNOB_FORCE=x25519-knob-force $(DRYRUN_MAKE) CONTRACT_DEFINES="$(DRYRUN_K0)" lib 2>&1); rc=$$?; \
+	 n=$$(printf '%s\n' "$$out" | grep -c '^ca65 ' || true); \
+	 [ "$$rc" = "0" ] && [ "$$n" = "0" ] \
+	   || { echo "FAIL: lib-verify-dry-run leg X25519_KNOB_FORCE from the environment — a real unchanged-knob build exited $$rc and recompiled $$n TU(s), expected 0 and 0; the force is reachable without the guard"; exit 1; }; \
+	 out=$$(env X25519_KNOB_FORCE=x25519-knob-force $(DRYRUN_MAKE) CONTRACT_DEFINES="$(DRYRUN_K0)" $$D/lib/nonexist.a 2>&1); \
+	 printf '%s\n' "$$out" | grep -qF "No rule to make target \`$$D/lib/nonexist.a'.  Stop." && [ ! -e $$D/lib/nonexist.a ] \
+	   || { echo "FAIL: lib-verify-dry-run leg X25519_KNOB_FORCE from the environment — a real build of a typo did not answer master's No rule, or created the file:"; printf '%s\n' "$$out" | tail -2; exit 1; }; \
+	 echo "OK: lib-verify-dry-run leg X25519_KNOB_FORCE from the environment — ignored: 0 TUs rebuilt, a typo still has no rule"; \
+	 rm -f $$D/consumer-q.err; \
+	 real '(a) consumer -q x25519.a || make idiom' '$(call dryrun_stamp,$(DRYRUN_K1))' 0 \
+	      $(MAKE) BUILD_DIR=$$D/outer LIB_DIR=$$D/outer/lib \
+	      DRYRUN_CHILD_DEFINES="$(DRYRUN_K1)" lib-verify-dry-run-consumer; \
+	 grep -qF 'consumer: -q rc=2' $$D/consumer-q.err && grep -qF "No rule to make target \`$$D/lib/x25519.a' once the changed knobs" $$D/consumer-q.err \
+	   || { echo "FAIL: lib-verify-dry-run leg (a) consumer -q x25519.a || make idiom — its -q half did not answer 2 with master's No rule, so the rebuild was not the idiom's doing:"; cat $$D/consumer-q.err; exit 1; }; \
+	 m=$$(member); [ "$$m" = "0" ] \
+	   || { echo "FAIL: lib-verify-dry-run leg (a) consumer -q x25519.a || make idiom — the canonical $$D/lib/x25519.a still carries $$m/5 §8.3 names in its mul_8x8.o member; the consumer links the previous configuration"; exit 1; }; \
+	 echo "OK: lib-verify-dry-run leg (a) consumer -q x25519.a || make idiom — -q answered 2 (No rule, as master), and x25519.a's mul_8x8.o member has 0/5 §8.3 names"; \
+	 real '(b) --no-print-directory' '$(call dryrun_stamp,$(DRYRUN_K0))' 5 \
+	      $(DRYRUN_MAKE) --no-print-directory CONTRACT_DEFINES="$(DRYRUN_K0)" lib; \
+	 real '(b) -w' '$(call dryrun_stamp,$(DRYRUN_K1))' 0 \
+	      $(DRYRUN_MAKE) -w CONTRACT_DEFINES="$(DRYRUN_K1)" lib; \
+	 for w in n t; do \
+	   if [ $$w = n ]; then k='$(DRYRUN_KN)'; st='$(call dryrun_stamp,$(DRYRUN_KN))'; \
+	   else k='$(DRYRUN_KT)'; st='$(call dryrun_stamp,$(DRYRUN_KT))'; fi; \
+	   mf=$$(inject "$$k" $$w); \
+	   seen=$$(MAKEFLAGS="$$mf" $(MAKE) -e -p -f /dev/null 2>/dev/null | sed -n 's/^MAKEFLAGS = //p'); \
+	   case "$$seen" in *"-- CONTRACT_DEFINES="*" $$w DRYRUN_NOISE=x\\ -$$w") ;; \
+	     *) echo "FAIL: lib-verify-dry-run leg (c) lone $$w — control: a -e parse saw MAKEFLAGS=[$$seen], not a '-- ...' tail carrying a lone $$w and a -$$w word, so the leg would examine nothing"; exit 1;; esac; \
+	   real "(c) lone $$w and -$$w after --" "$$st" 5 env MAKEFLAGS="$$mf" $(DRYRUN_MAKE) -e lib; \
+	 done; \
+	 real "(d1) -e MAKEFLAGS='w n' (a real build)" '$(call dryrun_stamp,$(DRYRUN_K1))' 0 \
+	      env MAKEFLAGS='w n' $(DRYRUN_MAKE) -e CONTRACT_DEFINES="$(DRYRUN_K1)" lib; \
+	 dry '-e MAKEFLAGS=--touch' 't' '0' '' env MAKEFLAGS='--touch' $(DRYRUN_MAKE) -e CONTRACT_DEFINES="$(DRYRUN_K0)" lib; \
+	 dry '-e MAKEFLAGS=" --dry-run"' 'n' '0' '' env MAKEFLAGS=' --dry-run' $(DRYRUN_MAKE) -e CONTRACT_DEFINES="$(DRYRUN_K0)" lib; \
+	 dry '-e MAKEFLAGS=--ques (a prefix)' 'q' '2' "No rule to make target \`$$D/lib/x25519.a' once the changed knobs" env MAKEFLAGS='--ques' $(DRYRUN_MAKE) -e CONTRACT_DEFINES="$(DRYRUN_K0)" $$D/lib/x25519.a; \
+	 dry '-e MAKEFLAGS=-ntx (cluster with an unknown letter)' 'n t' '0' '' env MAKEFLAGS='-ntx' $(DRYRUN_MAKE) -e CONTRACT_DEFINES="$(DRYRUN_K0)" lib; \
+	 real "(d2) -e MAKEFLAGS='-Int -I -n --dry-runx --qu' (a real build)" '$(call dryrun_stamp,$(DRYRUN_K0))' 5 \
+	      env MAKEFLAGS='-Int -I -n --dry-runx --qu' $(DRYRUN_MAKE) -e CONTRACT_DEFINES="$(DRYRUN_K0)" lib; \
+	 snap > $$D/.snap.before; \
+	 out=$$($(DRYRUN_MAKE) CONTRACT_DEFINES="$(DRYRUN_K1)" MFLAGS=-k lib 2>&1); rc=$$?; snap > $$D/.snap.after; \
+	 [ "$$rc" != "0" ] && printf '%s\n' "$$out" | grep -qF 'was set by command line, so the #167 guard cannot tell' \
+	   || { echo "FAIL: lib-verify-dry-run leg (e) MFLAGS on the command line — exited $$rc without the named refusal; a believed MFLAGS decides real vs dry by itself:"; printf '%s\n' "$$out" | tail -3; exit 1; }; \
+	 cmp -s $$D/.snap.before $$D/.snap.after \
+	   || { echo "FAIL: lib-verify-dry-run leg (e) MFLAGS on the command line — refused, but $$D changed first"; exit 1; }; \
+	 rm -f $$D/.snap.before $$D/.snap.after; \
+	 echo "OK: lib-verify-dry-run leg (e) MFLAGS on the command line — refused by name with rc=$$rc, $$D unchanged"; \
+	 echo "OK: lib-verify-dry-run — every -n/-q/-t leg wrote nothing and answered as master: out of date where a rule rebuilds, No rule where none does or the target is absent; every real build invalidated, stamped and produced its knobs' artifact"
+	rm -rf $(DRYRUN_DIR)
+
+# Helpers for the legs above, not meant to be invoked by hand. $(MAKE) is
+# spelled out rather than taken from $(DRYRUN_MAKE): 3.81 does not run a line
+# under -n when MAKE is only reached through another variable (measured: the
+# child never ran, and the leg's warning control is what reported it).
+# -recurse is a $(MAKE) line that runs even under -n; -consumer is the
+# `$(MAKE) -q <archive> || $(MAKE) ...` idiom a downstream Makefile uses,
+# asked about the canonical x25519.a, with the -q half's stderr and exit
+# status kept for the leg to check.
+lib-verify-dry-run-recurse:
+	$(MAKE) BUILD_DIR=$(DRYRUN_DIR) LIB_DIR=$(DRYRUN_DIR)/lib \
+	        CA65FLAGS="$(CA65FLAGS)" CONTRACT_ZP_DEFINES="$(CONTRACT_ZP_DEFINES)" \
+	        CONTRACT_DEFINES="$(DRYRUN_CHILD_DEFINES)" lib
+
+lib-verify-dry-run-consumer:
+	@$(MAKE) BUILD_DIR=$(DRYRUN_DIR) LIB_DIR=$(DRYRUN_DIR)/lib \
+	        CA65FLAGS="$(CA65FLAGS)" CONTRACT_ZP_DEFINES="$(CONTRACT_ZP_DEFINES)" \
+	        CONTRACT_DEFINES="$(DRYRUN_CHILD_DEFINES)" -q $(DRYRUN_DIR)/lib/x25519.a \
+	        2>$(DRYRUN_DIR)/consumer-q.err; rc=$$?; echo "consumer: -q rc=$$rc" >>$(DRYRUN_DIR)/consumer-q.err; \
+	 [ $$rc = 0 ] || $(MAKE) BUILD_DIR=$(DRYRUN_DIR) LIB_DIR=$(DRYRUN_DIR)/lib \
+	        CA65FLAGS="$(CA65FLAGS)" CONTRACT_ZP_DEFINES="$(CONTRACT_ZP_DEFINES)" \
+	        CONTRACT_DEFINES="$(DRYRUN_CHILD_DEFINES)" lib
+
+# --- lib-verify-dry-run's negative demonstration (#167) ----------------------
+#
+# Each arm copies the tracked tree (plus this working Makefile and src/),
+# sabotages ONE rule of the knob guard in the copy's Makefile with
+# tools/dryrun_negative_mutate.py, runs lib-verify-dry-run there, and
+# demands that it FAILS, that an OK line from an earlier leg was printed (so
+# the run reached the leg under test), and that the failure names the leg
+# built for that rule. The pristine arm must PASS -- the control that the
+# copy builds and reaches every leg at all. Mutations and expected strings
+# live in the script, one table.
+#
+# Arms, and the leg each must redden:
+#   stamp-no-rm            stamp written, rm skipped (#113/#114) -> -n absent x25519.a
+#   drop-t                 t missing from the n/q/t set          -> -t absent x25519.a
+#   no-force               nothing forced out of date            -> -q libx25519.a
+#   no-ruleless-recipe     no catch-all: rule-less files unforced -> -q canonical x25519.a
+#   catch-all-restored     round 3's unscoped do-nothing pattern -> -n absent x25519.a
+#   no-existence-scope     error catch-all without the self-alias -> -n absent x25519.a
+#   no-error-recipe        scoped catch-all that does nothing    -> -q canonical x25519.a
+#   lib-dir-only-catch-all catch-all on $(LIB_DIR) only           -> -n, util.s missing
+#   env-force-honoured     X25519_KNOB_FORCE not cleared first   -> environment force leg
+#   w-no-exec              w treated as a no-exec flag           -> (b) -w
+#   long-and-bool          `--long` filter AND all-boolean gone  -> (b) --no-print-directory
+#   round2-every-word      MAKEFLAGS re-parse, every bare word   -> (d1) w n
+#   round2-detector        MAKEFLAGS re-parse (review round 2)   -> -e --touch
+#   union-with-makeflags   MFLAGS plus that re-parse             -> (d2) -I -n
+#   no-mflags-refusal      MFLAGS on the command line believed   -> (e)
+#   force-before-patterns  the catch-all moved above the rules   -> -q libx25519.a
+#   objects-unforced       only non-.o outputs forced            -> -n preview
+#
+# Rules no arm reddens, each measured by removing it alone on a scratch copy
+# and running lib-verify-dry-run, which stayed green:
+#   * the `--long` filter alone: the all-boolean rule still rejects the
+#     `-no-print-directory` it leaves behind -- hence the combined arm.
+#   * the all-boolean rule alone: every single-dash word in a 3.81 MFLAGS
+#     measured here is pure flag letters (`-n`, `-qn`, `-te`, `-tne`), so
+#     nothing reaches the rule. It is kept for option arguments such as
+#     `-Otarget` that newer makes may render, unverified here.
+DRYNEG_DIR = build-dryrun-neg
+DRYNEG_ARMS = pristine stamp-no-rm drop-t no-force no-ruleless-recipe \
+              catch-all-restored no-existence-scope no-error-recipe \
+              lib-dir-only-catch-all env-force-honoured \
+              w-no-exec long-and-bool round2-every-word round2-detector \
+              union-with-makeflags no-mflags-refusal force-before-patterns \
+              objects-unforced
+DRYNEG_ARM ?= pristine
+
+lib-verify-dry-run-negative:
+	@echo "=== lib-verify-dry-run-negative: each sabotaged guard rule MUST redden the leg built for it (#167) ==="
+	@for a in $(DRYNEG_ARMS); do \
+	   $(MAKE) DRYNEG_ARM=$$a lib-verify-dry-run-negative-arm || exit 1; \
+	 done
+	@rm -rf $(DRYNEG_DIR)
+	@echo "OK: lib-verify-dry-run-negative — $(words $(DRYNEG_ARMS)) arms: the pristine copy passes, and every sabotage arm fails at its own leg"
+
+lib-verify-dry-run-negative-arm:
+	@echo "--- arm [$(DRYNEG_ARM)]"
+	@rm -rf $(DRYNEG_DIR)
+	@mkdir -p $(DRYNEG_DIR)
+	@git ls-files -z | xargs -0 tar -c | tar -x -C $(DRYNEG_DIR)
+	@cp $(SRC_DIR)/*.s $(SRC_DIR)/*.inc $(DRYNEG_DIR)/src/
+	@cp Makefile $(DRYNEG_DIR)/
+	@python3 tools/dryrun_negative_mutate.py $(DRYNEG_ARM) $(DRYNEG_DIR)
+	@out=$$(cd $(DRYNEG_DIR) && $(MAKE) lib-verify-dry-run 2>&1); rc=$$?; \
+	 reached=$$(cat $(DRYNEG_DIR)/expect.reached); names=$$(cat $(DRYNEG_DIR)/expect.names); \
+	 printf '%s\n' "$$out" | grep -E '^FAIL:|^[<>] stamp ' | sed 's/^/    /'; \
+	 if [ -z "$$names" ]; then \
+	   if [ $$rc -ne 0 ] || ! printf '%s\n' "$$out" | grep -qF "$$reached"; then \
+	     echo "FAIL: arm [$(DRYNEG_ARM)] — the UNSABOTAGED copy did not pass lib-verify-dry-run (rc=$$rc), so every sabotage arm below would prove nothing:"; \
+	     printf '%s\n' "$$out" | tail -8; exit 1; \
+	   fi; \
+	   echo "OK: arm [$(DRYNEG_ARM)] — the unsabotaged copy passes, through its last leg"; exit 0; \
+	 fi; \
+	 if [ $$rc -eq 0 ]; then echo "FAIL: arm [$(DRYNEG_ARM)] — lib-verify-dry-run PASSED with this rule sabotaged; the leg built for it is inert"; exit 1; fi; \
+	 printf '%s\n' "$$out" | grep -qF "$$reached" \
+	   || { echo "FAIL: arm [$(DRYNEG_ARM)] — the run never printed '$$reached', so it died before the leg under test:"; printf '%s\n' "$$out" | tail -8; exit 1; }; \
+	 printf '%s\n' "$$out" | grep -qF "$$names" \
+	   || { echo "FAIL: arm [$(DRYNEG_ARM)] — the run failed, but not with '$$names':"; printf '%s\n' "$$out" | grep -E '^FAIL:|Error' | head -5; exit 1; }; \
+	 echo "OK: arm [$(DRYNEG_ARM)] — failed at the expected leg, after '$$reached'"
 
 # --- leg C family's own negative demonstration (issue #133) ------------------
 #
@@ -3250,5 +3647,35 @@ endif
 
 $(LIB_VERIFY_DIR):
 	mkdir -p $(LIB_VERIFY_DIR)
+
+# --- #167 force: set only by the -n/-q/-t branch of the knob guard ----------
+# Under a changed-knob -n/-q/-t run, every EXISTING file in X25519_KNOB_OUTPUTS
+# must answer as it would once a real run deleted it -- which is what master
+# did, measured: a file with a rule is rebuilt, a file with none (x25519.a,
+# labels.txt, the profile archives, an object whose source is gone) fails
+# "No rule to make target", rc 2 -- while an absent target or a typo answers
+# exactly as it does with unchanged knobs, and nothing is created.
+#
+# The first rule makes each existing output depend on a phony target, so a
+# file with a recipe is out of date and -n previews that recipe. The second is
+# a pattern per output directory whose one prerequisite is the TARGET ITSELF
+# under its absolute path: make treats that as a different name for the same
+# file, so the rule applies only when the file exists, and make tries it only
+# for a target no earlier rule can build. Its recipe is a `+` line, which
+# -n, -q and -t all expand, holding $(error): the run stops with master's
+# message instead of touching or skipping the file. (Measured on 3.81 against
+# the alternatives: a no-recipe pattern let -t create a 0-byte x25519.a that
+# the next -q then trusted; a `./`-aliased prerequisite re-matched its own
+# pattern until make crashed; a real `x25519.a: libx25519.a` rule made -t
+# create a 0-byte x25519.a with any knobs.) It sits at the end of the file
+# because order decides on 3.81 (measured: defined above a real pattern rule,
+# a do-nothing pattern won and -n printed `:` instead of the build).
+ifneq ($(X25519_KNOB_FORCE),)
+.PHONY: $(X25519_KNOB_FORCE)
+$(X25519_KNOB_FORCE):
+$(wildcard $(X25519_KNOB_OUTPUTS)): $(X25519_KNOB_FORCE)
+x25519_knob_alias = $(if $(filter /%,$1),/$1,$(CURDIR)/$1)
+$(foreach d,$(sort $(dir $(X25519_KNOB_OUTPUTS))),$(eval $(d)%: $(call x25519_knob_alias,$(d))% ; +$$(error No rule to make target `$$@' once the changed knobs invalidate it: a real build deletes it first and has no rule to rebuild it (#167))))
+endif
 
 endif # issue #140 lock wrapper (opened at the top of this file)
