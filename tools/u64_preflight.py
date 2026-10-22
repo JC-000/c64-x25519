@@ -25,12 +25,27 @@ The guard is the harness's, and it is not reimplemented here
   scrub write in ``test_reu_mul_u64`` included;
 * every ``temp_gc_budget`` attachments it runs ``gc_temp_folder`` over
   FTP, enabling the device's FTP File Service itself if it must;
+* on a leak-prone grade it also sweeps ``/Temp`` at device HANDOVER —
+  before the first attachment-creating request after each outermost
+  ``DeviceLock`` acquire (harness #511) — and, if the process holds no
+  ``DeviceLock`` at all, refuses that request outright (harness #513).
+  That refusal is NOT lifted by ``U64_TEMP_GC_REQUIRED=0``; only
+  ``temp_hygiene=False`` disarms it. Every tool here acquires
+  ``DeviceLock(host)`` before it constructs its client, so this refusal
+  is not expected to fire against them;
+* while the lock IS held, ``_reserve_temp_attachments`` checks that the
+  device is not also being driven under a second lock key (harness #519:
+  one U64E/C64U reached by two addresses). On a leak-prone grade with
+  hygiene armed — or under ``U64_REQUIRE_DEVICE_LOCK=1`` — a collision
+  raises ``Ultimate64DeviceAliasError``, a subclass of
+  ``Ultimate64TempHygieneError``; ``U64_TEMP_GC_REQUIRED=0`` does not
+  lift it either, and the remedy is the alias file its message names;
 * when hygiene is armed and has been proven impossible it raises
   :class:`~c64_test_harness.backends.ultimate64_client.Ultimate64TempHygieneError`,
   with ``U64_TEMP_GC_REQUIRED=0`` as the named opt-out.
 
-That is a refusal with a named opt-out, one layer below us and at the
-request that creates the attachment rather than at a tool's front door.
+Those are refusals one layer below us, at the request that creates the
+attachment rather than at a tool's front door.
 This module used to carry its own version of it — two environment
 variables, a refusal, a retry loop — which duplicated a facility we do
 not own and, once that facility landed, printed sentences that were
@@ -50,17 +65,25 @@ with no recorded reason is the thing someone re-adds.
 This module briefly carried a ``make_client()`` that forced
 ``temp_hygiene=True`` when the client's construct-time capability probe
 returned no firmware version — the "slow device is a distressed device"
-residue the harness's own docstring names. At ``eb245a9`` that is
-redundant and mildly wrong, and it was deleted:
+residue the harness's own docstring names. At ``eb245a9`` that was
+redundant and mildly wrong, and it was deleted; both still hold at the
+pin below:
 
-* **Redundant.** ``60615b5`` added a post-evidence re-probe.
-  ``_before_temp_attachment`` calls ``_maybe_reprobe_capabilities()``
-  and only THEN consults ``temp_hygiene_armed`` — re-probe precedes
-  arming. A client whose 0.5 s construct probe failed re-probes at the
-  full timeout once it has seen one successful request, and arms itself.
-  Every tool here issues GETs (``get_info``, ``snapshot_state``,
-  ``probe_u64``) long before its first attachment-creating write, so the
-  evidence precondition is already met.
+* **Redundant.** The harness re-probes on evidence. The re-probe landed
+  in ``f2b46ce`` (PR #259's squash, merged as ``eb245a9``); this used to
+  cite the pre-squash ``60615b5``, which no longer resolves locally or on
+  GitHub. ``_before_temp_attachment`` calls
+  ``_maybe_reprobe_capabilities()`` and only THEN consults
+  ``temp_hygiene_armed`` — re-probe precedes arming — and since #519
+  ``_reserve_temp_attachments`` calls it earlier still, before the
+  ledger lock. A client whose 0.5 s construct probe failed re-probes at
+  the full timeout once it has seen one successful request, and arms
+  itself. The evidence is ``_saw_successful_request``, set by the
+  client's own ``_request``: every tool here makes client GETs
+  (``get_info``, or ``snapshot_state``'s ``get_config_category`` calls)
+  before its first attachment-creating write, so the precondition is
+  already met. ``probe_u64`` does NOT count — it is a host-level probe
+  that never goes through the client.
 * **Mildly wrong.** ``temp_hygiene=True`` sets ``_temp_hygiene_force``,
   which ``temp_hygiene_armed`` short-circuits on before anything else.
   A forced client therefore stays armed even after the re-probe
@@ -82,19 +105,39 @@ removing.
 Harness pin
 ===========
 
-**Verified against c64-test-harness ``eb245a9`` (2026-09-10).**
+**Verified against c64-test-harness ``c5e65bb`` (2026-10-21).**
+
+The pin follows harness master forward, and
+``tools/test_device_io_routing.py`` FAILS when the installed harness
+(its ``direct_url.json``, or a checkout's ``HEAD``) is not the pinned
+commit. The response is to re-derive the sentences above against the
+installed commit and move the pin, not to hold the harness back.
+
+``c5e65bb`` is the installed 0.13.1. It is six commits past
+``ac2dc95`` (the previous pin), and ``src/c64_test_harness/`` is
+byte-identical between the two — the six touch only the dev-env setup
+script, its test, and docs — so nothing above needed re-deriving at this
+move. ``ac2dc95`` was itself seven commits past ``e32bc69``; between
+those two the hygiene path differs only in message text
+(``set_config_item`` also gained an opt-in ``verify=`` that the hygiene
+pass does not pass), so every sentence above holds at ``e32bc69`` too.
+Re-derived, not re-stamped: the pin before both, ``eb245a9`` (2026-09-10),
+predates the handover sweep and the unlocked-process refusal (#511/#513,
+2026-09-28), which this docstring did not describe until this pin moved.
 
 This module's behaviour is reasoned from harness internals — the arming
-rule, the attachment predicate, the re-probe path — and that dependency
-was observed at four different commits in the session this was written
-(``f4074ab``, ``202c188``, ``d4b96bc``, ``eb245a9``), two of which
-changed ground this file rests on. Of those four, only ``eb245a9`` is
-reachable from HEAD: PR #259 landed as a squash and orphaned the whole
-pre-merge chain, so the other three survive as loose objects and resolve
-today only until a gc. A statement about a sibling repo ages; the
-installed tree is checkable at any moment. If you are changing this
-module, re-read ``backends/ultimate64_client.py`` at the current HEAD
-before trusting any sentence above, and move this pin when you do.
+rule, the attachment predicate, the re-probe path, the lock gate — and
+that dependency was observed at four different commits in the session
+this was first written (``f4074ab``, ``202c188``, ``d4b96bc``,
+``eb245a9``), two of which changed ground this file rests on. PR #259
+landed as a squash and orphaned the pre-merge chain. The three
+pre-squash commits named here, and ``60615b5``, no longer resolve —
+neither in a local clone (checked 2026-10-21) nor on GitHub — as this
+paragraph said they would. A statement
+about a sibling repo ages; the installed tree is checkable at any
+moment. If you are changing this module, re-read
+``backends/ultimate64_client.py`` at the current HEAD before trusting
+any sentence above, and move this pin when you do.
 
 The deletion described above was made BECAUSE of behaviour at
 ``eb245a9``, not because hygiene stopped mattering. A reader who finds
