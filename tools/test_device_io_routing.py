@@ -109,7 +109,17 @@ RED_LEGS = {
     "check_reprobe_precedes_arming":
         "Ultimate64Client._maybe_reprobe_capabilities monkeypatched to a "
         "no-op at runtime (the property is the harness's; this repo does "
-        "not write to that checkout)",
+        "not write to that checkout) -> fails at 'did not re-probe (1 probe "
+        "call(s))'; TempLedger.handover_sweep_due monkeypatched to False "
+        "-> fails at 'ran 0 /Temp sweep(s), not 1' (an earlier draft "
+        "counted after lock.release and stayed GREEN here, because the "
+        "release drain sweeps too); the fixture's acquire_or_raise/release "
+        "deleted from the source, i.e. the pre-fix unlocked fixture -> "
+        "fails at 'refused ... as UNLOCKED ... lock held=False'; the "
+        "gc_temp_folder stub made to return TempGCResult(error=...) -> "
+        "fails at 'refused ... with the DeviceLock HELD ... handover sweep "
+        "failed' (before that split, this leg too blamed the lock). "
+        "Verified at harness ac2dc95",
     "check_harness_hygiene_arms_on_the_leaky_device":
         "fixture serves a self-collecting firmware in place of a leaky one",
     "check_grading_printout_matches_the_threshold_in_use":
@@ -290,6 +300,14 @@ class FakeTransport:
     def read_memory(self, addr, length):
         self.dev.reads += 1
         return bytes(self.dev.mem[addr:addr + length])
+
+    def resume(self):
+        # Ultimate64Transport.resume is ``self._client.resume()`` — a real
+        # PUT /v1/machine:resume on the device. Delegating keeps that shape
+        # (FakeClient.resume is inert). The harness's waiters call it on
+        # every exit path (screen._resume_quietly, from watch_progress and
+        # wait_for_memory); without it each poll logs "resume() failed".
+        self.client.resume()
 
     def close(self):
         pass
@@ -1093,8 +1111,9 @@ class _ProbeClient(Ultimate64Client):
         # `_probe_attempted`. A fixture that stubs it therefore CANNOT
         # reach the re-probe, and a check that thought it was exercising
         # the ordering would have been exercising nothing. It also has to
-        # match `_probe_info(timeout=self.timeout)` at
-        # ultimate64_client.py:481 or TypeError the moment that path runs.
+        # match the `_probe_info(timeout=self.timeout)` call inside
+        # `_maybe_reprobe_capabilities` or TypeError the moment that path
+        # runs.
         # Stubbing the network call one layer down avoids both: everything
         # above it is the harness's real code.
         self.probe_calls += 1
@@ -1107,6 +1126,19 @@ class _ProbeClient(Ultimate64Client):
             # real _probe_info catches it and grades unknown.
             raise Ultimate64Error("fixture: probe did not answer")
         return payload
+
+    def gc_temp_folder(self, **kw):
+        # The FTP sweep, stubbed for the same reason get_info is: it is the
+        # network call, and everything above it — when to sweep, under
+        # which lock, what a failure blocks — stays the harness's own code.
+        # An armed client on a leak-prone grade runs a HANDOVER sweep
+        # before its first upload once it holds the DeviceLock (harness
+        # #511/#513); unstubbed, that dials FTP on host "fake", fails, and
+        # then tries to enable FTP File Service over REST. Recorded so a
+        # check can see the sweep happened here and not on the wire.
+        from c64_test_harness.backends.ultimate64_temp_gc import TempGCResult
+        self.sweeps = getattr(self, "sweeps", 0) + 1
+        return TempGCResult(host=self.host)
 
 
 def _client_for(payload, **kw):
@@ -1132,7 +1164,26 @@ def check_reprobe_precedes_arming():
 
     So this drives the ORDERING: construct-probe returns nothing ->
     DISARMED; one successful request as evidence -> the next
-    attachment-creating request re-probes and arms."""
+    attachment-creating request re-probes and arms.
+
+    The request is made UNDER A DEVICELOCK, as every tool here makes its
+    writes. Since harness #513 (efb0596, merged 685d0d4) an armed client
+    on a leak-prone grade refuses an attachment-creating request from a
+    process that holds no lock — Ultimate64TempHygieneError, not lifted
+    by U64_TEMP_GC_REQUIRED=0 — and, holding one, runs a handover sweep
+    first (#511). That refusal sits AFTER the re-probe and the arming
+    decision, so it does not touch the premise; it only means a fixture
+    that skips the lock is not a client the harness serves. The lock is
+    a real DeviceLock in a private directory: the harness's gate asks
+    whether this process holds the device's lock in ANY directory, so
+    taking it touches no machine-wide lock state. That isolation holds
+    only for the entry point this check calls — see the comment at the
+    call site; the real request path does reach the default lock dir."""
+    import tempfile
+    from pathlib import Path
+    from c64_test_harness.backends.device_lock import DeviceLock
+    from c64_test_harness.backends.ultimate64_client import (
+        Ultimate64TempHygieneError)
     client = _client_for([None, LEAKY_INFO])
     assert client.probe_calls == 1, (
         f"expected one construct-time probe, saw {client.probe_calls}")
@@ -1146,7 +1197,50 @@ def check_reprobe_precedes_arming():
     # test is what happens AFTER evidence exists, not how evidence is
     # recorded.
     client._saw_successful_request = True
-    client._before_temp_attachment("POST /v1/machine:writemem")
+    with tempfile.TemporaryDirectory() as lock_dir:
+        lock = DeviceLock(client.host, lock_dir=Path(lock_dir),
+                          heartbeat_interval=None)
+        lock.acquire_or_raise(timeout=5.0)
+        try:
+            # DELIBERATELY _before_temp_attachment, not the real entry point
+            # _reserve_temp_attachments (what _request calls). The latter
+            # also runs the #519 _check_device_identity, which, with the lock
+            # held, reaches device_aliases.check_device_identity(lock_dir=
+            # None) and from there device_lock._default_lock_dir() with
+            # create=True: the machine-wide lock directory real devices
+            # queue in. This method re-probes and arms itself, so it carries
+            # the whole premise under test without leaving the private
+            # lock_dir. "Fixing" this to the real entry point loses that
+            # isolation silently — nothing here would go red.
+            client._before_temp_attachment("POST /v1/machine:writemem")
+            # Read BEFORE release: DeviceLock.release fires the harness's
+            # lock-release drain, which sweeps too, and counting that one
+            # would let a client that skipped its handover sweep pass.
+            swept_before_send = getattr(client, "sweeps", 0)
+        except Ultimate64TempHygieneError as exc:
+            # Two refusals share this class, and the diagnosis must not
+            # name the wrong one. Asked with the harness's own predicate
+            # (the one its lock gate consults), not lock.held, so the two
+            # cannot disagree about what "held" means.
+            held = client._temp_lock_held()
+            state = (f"{client.probe_calls} probe call(s), armed="
+                     f"{client.temp_hygiene_armed}, lock held={held}")
+            if not held:
+                raise AssertionError(
+                    f"the harness refused the attachment-creating request "
+                    f"as UNLOCKED ({state}). A refusal means it did arm, so "
+                    f"this is the FIXTURE not being a client the harness "
+                    f"serves — it must hold the DeviceLock, as every tool "
+                    f"here does. Harness said: {exc}") from None
+            raise AssertionError(
+                f"the harness refused the attachment-creating request with "
+                f"the DeviceLock HELD ({state}): its handover sweep failed "
+                f"(blocked: {client._temp_hygiene_blocked!r}), so hygiene "
+                f"is proven impossible. That is the gc_temp_folder stub "
+                f"returning a failed TempGCResult, or the sweep escaping the "
+                f"stub — not a lock problem. Harness said: {exc}") from None
+        finally:
+            lock.release()
 
     assert client.probe_calls == 2, (
         f"the first attachment-creating request did not re-probe "
@@ -1157,6 +1251,13 @@ def check_reprobe_precedes_arming():
         "the re-probe ran but the client is still disarmed. The deletion "
         "rests on it arming itself here; if it does not, this repo has no "
         "hygiene handling and neither does the layer below")
+    assert swept_before_send == 1, (
+        f"the client re-probed and armed but ran {swept_before_send} /Temp "
+        f"sweep(s), not 1, before the first attachment-creating request it "
+        f"made under the DeviceLock. Armed is then a flag, not behaviour: "
+        f"the handover sweep (#511) is what arming buys on a leak-prone "
+        f"device (and a count above 1 means a sweep reached the stub that "
+        f"this check did not expect)")
 
 
 def check_harness_hygiene_arms_on_the_leaky_device():
@@ -1270,7 +1371,7 @@ def check_no_tool_forces_temp_hygiene():
             assert "temp_hygiene" not in kw, (
                 f"{modname} passes temp_hygiene={kw['temp_hygiene']!r} to "
                 f"Ultimate64Client. The harness re-probes before arming "
-                f"(60615b5) and decides correctly on its own; forcing "
+                f"(f2b46ce, PR #259) and decides correctly on its own; forcing "
                 f"pins that decision and cannot be undone by "
                 f"U64_AUTO_TEMP_GC, which the operator owns. kwargs: {kw}")
             assert "write_mem_query_threshold" not in kw, (
