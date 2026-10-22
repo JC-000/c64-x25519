@@ -130,7 +130,27 @@ RED_LEGS = {
         "make_client",
     "check_no_tool_forces_temp_hygiene":
         "a tool passes temp_hygiene=True to Ultimate64Client",
-    "check_harness_pin_names_a_real_commit":
+    "check_harness_pin_matches_installed":
+        "pin left on ac2dc95 with c5e65bb installed -> fails naming both "
+        "hashes and 're-derive ... then move the pin'; importlib.metadata "
+        "PathDistribution.read_text monkeypatched to return None for "
+        "direct_url.json, and separately non-JSON, and separately a record "
+        "with no commit -> each fails 'cannot determine installed harness "
+        "commit'; commit_id 'c' -> fails 'not a full 40-hex commit' (was "
+        "GREEN under the two-way prefix match); a site dir holding the "
+        "package plus a 0.13.1 dist-info (c5e65bb) and a leftover 0.10.0 "
+        "dist-info (eb245a9), neither with a RECORD -> fails '0 distinct "
+        "... own' with the pin right AND stale (stale was GREEN via "
+        "md.distribution's first match); the same with both RECORDs "
+        "listing __init__.py -> fails '2 distinct ... AMBIGUOUS'; the real "
+        "c5e65bb dist-info over eb245a9 package files -> fails 'sha256 "
+        "mismatch' (was GREEN on RECORD names alone); a dirty package dir "
+        "in a checkout, and in a git WORKTREE of it (.git is a file) -> "
+        "fails 'DIRTY'. Confirmed NOT red: the venv reached through a "
+        "symlinked site dir (was AMBIGUOUS before realpath dedupe), and "
+        "GIT_DIR=/nonexistent exported (stripped by _git). All sabotages "
+        "at runtime or in scratch copies: this repo does not write to the "
+        "harness venv. Earlier, as check_harness_pin_names_a_real_commit: "
         "pin left on a squashed (unreachable) commit; pin pointed at a "
         "nonexistent one; pin decayed to prose with no commit",
     "check_all_three_u64_tools_grade":
@@ -1140,6 +1160,18 @@ class _ProbeClient(Ultimate64Client):
         self.sweeps = getattr(self, "sweeps", 0) + 1
         return TempGCResult(host=self.host)
 
+    def set_config_item(self, category, item, value, **kw):
+        # The REST config PUT, stubbed and recorded. The hygiene pass makes
+        # its one FTP-enable attempt here (``_run_temp_hygiene``) when a
+        # sweep FAILS — which the green path never does, but the red leg
+        # that makes gc_temp_folder fail does. Unstubbed, that leg resolved
+        # host "fake" over DNS (and consulted the default lock dir via the
+        # advisory lock check in ``_request``) before going red.
+        calls = getattr(self, "config_writes", None)
+        if calls is None:
+            calls = self.config_writes = []
+        calls.append((category, item, value))
+
 
 def _client_for(payload, **kw):
     class C(_ProbeClient):
@@ -1235,8 +1267,10 @@ def check_reprobe_precedes_arming():
             raise AssertionError(
                 f"the harness refused the attachment-creating request with "
                 f"the DeviceLock HELD ({state}): its handover sweep failed "
-                f"(blocked: {client._temp_hygiene_blocked!r}), so hygiene "
-                f"is proven impossible. That is the gc_temp_folder stub "
+                f"(blocked: {client._temp_hygiene_blocked!r}; config "
+                f"writes attempted: {getattr(client, 'config_writes', [])}), "
+                f"so hygiene is proven impossible. That is the gc_temp_folder "
+                f"stub "
                 f"returning a failed TempGCResult, or the sweep escaping the "
                 f"stub — not a lock problem. Harness said: {exc}") from None
         finally:
@@ -1381,19 +1415,277 @@ def check_no_tool_forces_temp_hygiene():
                 f"DISARMED for the client's life. kwargs: {kw}")
 
 
-def check_harness_pin_names_a_real_commit():
-    """The pin in u64_preflight names a harness commit, and that commit
-    exists.
-
-    The dependency moved three times in the session this was written, and
-    a pin that decays to "verified against the harness" is how the next
-    reader inherits the failure the pin exists to prevent.
-
-    STALENESS IS A NOTICE, NOT A GATE: whether HEAD has moved past the
-    pin is the sibling repo's business, not a reason to fail this repo's
-    suite. Only an absent or non-existent pin fails."""
-    import re
+def _git(repo, *args):
+    """git in *repo* with every GIT_* variable stripped from the
+    environment. An exported GIT_DIR / GIT_WORK_TREE / GIT_INDEX_FILE
+    (a hook, a worktree script, a parent git process) otherwise makes
+    every call here describe some OTHER repository than the one the
+    harness was imported from."""
     import subprocess
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    return subprocess.run(["git", *args], cwd=repo, capture_output=True,
+                          text=True, env=env)
+
+
+_FULL_SHA = __import__("re").compile(r"[0-9a-f]{40}")
+
+
+def _checkout_root(pkg_dir):
+    """The work-tree root of a git checkout that TRACKS *pkg_dir*, or None.
+
+    Asked of git (``rev-parse --show-toplevel``) rather than by looking
+    for a ``.git`` directory, so a worktree or submodule — where ``.git``
+    is a FILE — is still recognised. "Tracks" matters: a venv created
+    inside some unrelated repository has a toplevel too, and grading the
+    harness by that repository's HEAD would be wrong, so the package's
+    ``__init__.py`` must be a tracked file there."""
+    if not os.path.isdir(pkg_dir):
+        return None
+    r = _git(pkg_dir, "rev-parse", "--show-toplevel")
+    if r.returncode != 0 or not r.stdout.strip():
+        return None
+    root = os.path.realpath(r.stdout.strip())
+    t = _git(root, "ls-files", "--error-unmatch", "--",
+             os.path.relpath(os.path.join(pkg_dir, "__init__.py"), root))
+    return root if t.returncode == 0 else None
+
+
+def _checkout_head(repo, pkg_dir, cant):
+    """Full HEAD of a harness checkout, refusing a DIRTY package tree.
+
+    Dirty is a failure, not a note: uncommitted edits in the imported
+    package directory mean the code that runs is not HEAD, so a pin that
+    matches HEAD would certify code nobody pinned. Only that directory is
+    consulted — the pathspec is the package's own path relative to the
+    work-tree root, not an assumed ``src/`` layout — with untracked files
+    included and ignored ones such as __pycache__ not, so a dirty docs/
+    or tests/ does not fail this repo's suite."""
+    r = _git(repo, "rev-parse", "HEAD")
+    head = r.stdout.strip()
+    assert r.returncode == 0 and _FULL_SHA.fullmatch(head), (
+        f"{cant}'git rev-parse HEAD' in {repo} gave no full commit "
+        f"(rc={r.returncode}, out={head!r}, err={r.stderr.strip()!r})")
+    spec = os.path.relpath(pkg_dir, repo)
+    st = _git(repo, "status", "--porcelain", "--", spec)
+    assert st.returncode == 0, (
+        f"{cant}'git status' failed in {repo}: {st.stderr.strip()}")
+    dirty = [ln for ln in st.stdout.splitlines() if ln.strip()]
+    assert not dirty, (
+        f"the harness checkout at {repo} is DIRTY under {spec} "
+        f"({len(dirty)} path(s): "
+        f"{'; '.join(dirty[:5])}{' ...' if len(dirty) > 5 else ''}). The "
+        f"code this suite imports is not HEAD {head[:7]}, so no pin can "
+        f"describe it. Commit, stash or discard those changes, or run "
+        f"against an installed harness")
+    return head
+
+
+def _verify_record_hashes(dist, cant):
+    """Every ``c64_test_harness/**`` file *dist*'s RECORD lists exists and
+    has the sha256 the RECORD gives.
+
+    This turns "this dist-info OWNS the imported package" into "this
+    dist-info IS the imported package": a RECORD name match alone was
+    satisfied by a c5e65bb dist-info laid over eb245a9 package files
+    (review G2). Local file reads only. ``__pycache__`` entries, which
+    pip records without a hash, are skipped; any other listed package
+    file without a hash fails, since it cannot be checked."""
+    import base64
+    import hashlib
+    bad, checked = [], 0
+    for f in dist.files or []:
+        rel = str(f).replace(os.sep, "/")
+        if not rel.startswith("c64_test_harness/"):
+            continue
+        if "/__pycache__/" in rel:
+            continue
+        if f.hash is None or f.hash.mode != "sha256":
+            bad.append(f"{rel} (no sha256 in RECORD)")
+            continue
+        path = str(f.locate())
+        try:
+            with open(path, "rb") as fh:
+                digest = base64.urlsafe_b64encode(
+                    hashlib.sha256(fh.read()).digest()).rstrip(b"=").decode()
+        except OSError:
+            bad.append(f"{rel} (listed in RECORD, missing on disk)")
+            continue
+        checked += 1
+        if digest != f.hash.value:
+            bad.append(f"{rel} (sha256 mismatch)")
+    where = str(getattr(dist, "_path", dist))
+    assert not bad, (
+        f"{cant}{where} does not describe the package files on disk: "
+        f"{len(bad)} of its c64_test_harness/ entries fail — "
+        f"{'; '.join(bad[:5])}{' ...' if len(bad) > 5 else ''}. Its "
+        f"direct_url.json names a commit those files are not; reinstall "
+        f"the harness rather than trusting either")
+    assert checked, (
+        f"{cant}{where}'s RECORD lists no c64_test_harness/ file with a "
+        f"hash, so nothing ties it to the package on disk")
+
+
+def _installed_harness_commit():
+    """(full commit, how it was learned, git repo or None) for the harness
+    this process actually imported.
+
+    Two sources, both local — no network:
+
+    * a source checkout: git says the imported package directory is
+      tracked in a work tree (a ``.git`` directory OR file — worktrees and
+      submodules count), and the commit is that work tree's ``HEAD``,
+      refused if the package directory is dirty (see _checkout_head);
+    * a pip install from git: PEP 610's ``direct_url.json`` in the
+      distribution's dist-info, ``vcs_info.commit_id``. An editable pip
+      install records ``dir_info.editable`` and a ``file://`` url instead;
+      that url is followed to its checkout's ``HEAD``.
+
+    WHICH dist-info: exactly one ``c64-test-harness`` distribution must
+    OWN the imported ``__init__.py`` — its RECORD (``dist.files``) lists
+    that file, or it is an editable install whose ``file://`` source
+    contains it — and a RECORD owner must then match the files on disk
+    by sha256 (_verify_record_hashes). ``md.distribution(name)`` is not
+    used: it returns whichever matching dist-info is listed first, and a
+    leftover dist-info from an older install passed the old guard and
+    graded the wrong commit (review F1). Candidates are deduplicated by
+    the dist-info's real path first, so one install reached through two
+    sys.path spellings (a symlinked site directory) counts once rather
+    than reading as AMBIGUOUS (review G1). Zero owners or several fail by
+    name.
+
+    Anything else raises AssertionError naming "cannot determine installed
+    harness commit"; it never passes by default."""
+    import json
+    import importlib.metadata as md
+    from urllib.parse import urlparse, unquote
+    import c64_test_harness
+
+    pkg_init = os.path.realpath(c64_test_harness.__file__)
+    pkg_dir = os.path.dirname(pkg_init)
+    cant = "cannot determine installed harness commit: "
+
+    repo = _checkout_root(pkg_dir)
+    if repo is not None:
+        return (_checkout_head(repo, pkg_dir, cant), f"git HEAD of {repo}",
+                repo)
+
+    def norm(name):
+        return (name or "").lower().replace("_", "-").replace(".", "-")
+
+    def where(dist):
+        return str(getattr(dist, "_path", dist))
+
+    def direct_url(dist):
+        try:
+            raw = dist.read_text("direct_url.json")
+        except OSError as exc:
+            raise AssertionError(
+                f"{cant}direct_url.json in {where(dist)} is unreadable "
+                f"({type(exc).__name__}: {exc})") from None
+        if raw is None:
+            return None, None
+        try:
+            doc = json.loads(raw)
+        except ValueError as exc:
+            raise AssertionError(
+                f"{cant}direct_url.json in {where(dist)} is not a PEP 610 "
+                f"record ({type(exc).__name__}: {exc})") from None
+        return raw, doc
+
+    candidates, seen = [], set()
+    for d in md.distributions():
+        if norm(d.metadata["Name"]) != "c64-test-harness":
+            continue
+        key = os.path.realpath(where(d))
+        if key in seen:
+            continue
+        seen.add(key)
+        candidates.append(d)
+    owners = []
+    for d in candidates:
+        files = d.files or []
+        if any(os.path.realpath(str(f.locate())) == pkg_init for f in files):
+            owners.append((d, "RECORD lists it"))
+            continue
+        try:
+            _, doc = direct_url(d)
+        except AssertionError:
+            doc = None      # a non-owner's broken record is not our input
+        if isinstance(doc, dict) and (doc.get("dir_info") or {}).get(
+                "editable") and str(doc.get("url", "")).startswith("file://"):
+            src = os.path.realpath(unquote(urlparse(doc["url"]).path))
+            if pkg_init.startswith(src + os.sep):
+                owners.append((d, f"editable install of {src}"))
+    listing = "; ".join(f"{os.path.realpath(where(d))} (version {d.version})"
+                        for d in candidates) or "none"
+    assert len(owners) == 1, (
+        f"{cant}{len(owners)} distinct c64-test-harness distribution(s) "
+        f"own the imported {pkg_init} (exactly one must, by its RECORD or "
+        f"as an editable install of its directory). Candidates on "
+        f"sys.path, by real path: {listing}"
+        + (". AMBIGUOUS: several different dist-infos claim this package "
+           "— a leftover from an older install; work out which one the "
+           "package files match before removing anything"
+           if len(owners) > 1 else
+           ". None of them lists this file in its RECORD, so none of "
+           "their direct_url.json can be trusted to describe it — a "
+           "leftover or hand-copied dist-info, or an install without a "
+           "RECORD"))
+    dist, why = owners[0]
+    if why == "RECORD lists it":
+        _verify_record_hashes(dist, cant)
+        why = "RECORD lists it, sha256 verified"
+    raw, doc = direct_url(dist)
+    assert raw is not None, (
+        f"{cant}{where(dist)} has no direct_url.json (installed from an "
+        f"index or a wheel, not from git), and {pkg_init} is not in a git "
+        f"checkout")
+    assert isinstance(doc, dict), (
+        f"{cant}direct_url.json in {where(dist)} is not a JSON object: "
+        f"{raw.strip()}")
+    commit = (doc.get("vcs_info") or {}).get("commit_id")
+    editable = bool((doc.get("dir_info") or {}).get("editable"))
+    url = str(doc.get("url", ""))
+    if commit:
+        assert isinstance(commit, str) and _FULL_SHA.fullmatch(commit), (
+            f"{cant}direct_url.json in {where(dist)} has vcs_info.commit_id "
+            f"{commit!r}, which is not a full 40-hex commit. pip records the "
+            f"resolved full hash; anything shorter cannot be compared to a "
+            f"pin without matching the wrong commit")
+        return commit, f"direct_url.json in {where(dist)} ({why})", None
+    if editable and url.startswith("file://"):
+        src = os.path.realpath(unquote(urlparse(url).path))
+        root = _checkout_root(pkg_dir)
+        assert root is not None, (
+            f"{cant}editable install from {src}, which is not a git "
+            f"checkout tracking {pkg_dir}")
+        return (_checkout_head(root, pkg_dir, cant),
+                f"git HEAD of {root} (editable)", root)
+    raise AssertionError(
+        f"{cant}direct_url.json in {where(dist)} carries neither "
+        f"vcs_info.commit_id nor an editable file:// url: {raw.strip()}")
+
+
+def check_harness_pin_matches_installed():
+    """The pin in u64_preflight names the harness commit that is INSTALLED.
+
+    The pin follows harness master forward: "the test harness constantly
+    moves and we should move with it". So drift is a FAILURE, not a
+    notice. The reasoning in u64_preflight's pin block is about harness
+    internals; once the installed harness is not the pinned one, nothing
+    here has checked that reasoning against the code that will run, and a
+    green suite would say otherwise. The response is to re-derive the
+    claims against the installed commit and move the pin — not to hold
+    the harness back.
+
+    The installed commit is always a full 40-hex hash (enforced where it
+    is read) and the pin must be a prefix of it — one direction only, so a
+    truncated installed commit cannot match a pin by being ITS prefix
+    (review F2: a commit_id of "c" used to go green). Where the installed harness is a git checkout, a mismatch
+    also says whether the pin is an ancestor, unreachable or absent there
+    — the "names a real commit" property this check used to carry; a
+    match against HEAD implies it."""
+    import re
     src = open(os.path.join(PROJECT_ROOT, "tools",
                             "u64_preflight.py")).read()
     m = re.search(r"Verified against c64-test-harness ``([0-9a-f]{7,40})``",
@@ -1404,44 +1696,34 @@ def check_harness_pin_names_a_real_commit():
         "that moved repeatedly in a single afternoon; an unpinned claim "
         "about them is a dated record with no date")
     pinned = m.group(1)
+    installed, source, repo = _installed_harness_commit()
 
-    import c64_test_harness
-    repo = os.path.dirname(os.path.dirname(os.path.dirname(
-        os.path.abspath(c64_test_harness.__file__))))
-    if not os.path.isdir(os.path.join(repo, ".git")):
-        print(f"    (harness at {repo} is not a git checkout; pin "
-              f"{pinned} not resolvable here)")
+    if installed.startswith(pinned):
+        print(f"    pin {pinned} == installed {installed[:12]} ({source})")
         return
-    # merge-base --is-ancestor, not cat-file -e: cat-file succeeds on an
-    # object that is present but UNREACHABLE, which is what a squashed PR
-    # leaves behind. Such a pin passes today and starts failing after a
-    # gc, with a message blaming the wrong thing. Reachability is the
-    # property a pin needs.
-    r = subprocess.run(["git", "merge-base", "--is-ancestor", pinned, "HEAD"],
-                       cwd=repo, capture_output=True)
-    present = subprocess.run(["git", "cat-file", "-e", pinned + "^{commit}"],
-                             cwd=repo, capture_output=True).returncode == 0
-    assert r.returncode == 0, (
-        f"the pin names harness commit {pinned}, which is not an ancestor "
-        f"of HEAD in {repo}"
-        + (" — the object is still present but UNREACHABLE, which is what "
-           "a squash-merged PR leaves behind. It resolves today and stops "
-           "resolving after a gc. Re-pin to a reachable commit."
-           if present else
-           " and does not exist there at all. A pin that cannot be "
-           "resolved is worse than none: it reads as verified."))
-    head = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=repo,
-                          capture_output=True, text=True).stdout.strip()
-    if head and not head.startswith(pinned[:len(head)]):
-        moved = subprocess.run(
-            ["git", "log", "--oneline", f"{pinned}..HEAD", "--",
-             "src/c64_test_harness/backends/ultimate64_client.py"],
-            cwd=repo, capture_output=True, text=True).stdout.strip()
-        print(f"    NOTE: harness HEAD is {head}, pin is {pinned}."
-              + (f" {len(moved.splitlines())} commit(s) since, touching "
-                 f"ultimate64_client.py — re-verify before relying on the "
-                 f"hygiene reasoning." if moved else
-                 " Nothing since touching ultimate64_client.py."))
+
+    where = ""
+    if repo is not None:
+        # merge-base --is-ancestor, not cat-file -e: cat-file succeeds on
+        # an object that is present but UNREACHABLE, which is what a
+        # squashed PR leaves behind.
+        anc = _git(repo, "merge-base", "--is-ancestor", pinned,
+                   installed).returncode == 0
+        present = _git(repo, "cat-file", "-e",
+                       pinned + "^{commit}").returncode == 0
+        where = (f" In {repo} the pin is "
+                 + ("an ancestor of the installed commit, i.e. the harness "
+                    "moved forward." if anc else
+                    "present but NOT an ancestor of the installed commit "
+                    "(squash-orphaned, or a different branch)." if present
+                    else "not a commit at all."))
+    raise AssertionError(
+        f"harness pin drift: tools/u64_preflight.py is verified against "
+        f"c64-test-harness {pinned}, but the installed harness is "
+        f"{installed} (from {source}).{where} Re-derive every claim in "
+        f"u64_preflight.py's pin block (and the harness citations in this "
+        f"file) against {installed[:7]}, then move the pin to it. Do not "
+        f"hold the harness back to make this pass.")
 
 
 class RecordingDevice(FakeDevice):
@@ -2026,8 +2308,8 @@ def main():
           check_no_front_door_refusal_survives)
     check("no tool forces temp_hygiene over the harness's decision",
           check_no_tool_forces_temp_hygiene)
-    check("the harness pin names a commit that exists",
-          check_harness_pin_names_a_real_commit)
+    check("the harness pin names the INSTALLED harness commit",
+          check_harness_pin_matches_installed)
     check("all three U64 tools print their grading before touching the "
           "device", check_all_three_u64_tools_grade)
     check("every reboot is followed by the readiness wait (call site)",

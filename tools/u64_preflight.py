@@ -33,6 +33,13 @@ The guard is the harness's, and it is not reimplemented here
   ``temp_hygiene=False`` disarms it. Every tool here acquires
   ``DeviceLock(host)`` before it constructs its client, so this refusal
   is not expected to fire against them;
+* while the lock IS held, ``_reserve_temp_attachments`` checks that the
+  device is not also being driven under a second lock key (harness #519:
+  one U64E/C64U reached by two addresses). On a leak-prone grade with
+  hygiene armed — or under ``U64_REQUIRE_DEVICE_LOCK=1`` — a collision
+  raises ``Ultimate64DeviceAliasError``, a subclass of
+  ``Ultimate64TempHygieneError``; ``U64_TEMP_GC_REQUIRED=0`` does not
+  lift it either, and the remedy is the alias file its message names;
 * when hygiene is armed and has been proven impossible it raises
   :class:`~c64_test_harness.backends.ultimate64_client.Ultimate64TempHygieneError`,
   with ``U64_TEMP_GC_REQUIRED=0`` as the named opt-out.
@@ -98,14 +105,23 @@ removing.
 Harness pin
 ===========
 
-**Verified against c64-test-harness ``ac2dc95`` (2026-10-21).**
+**Verified against c64-test-harness ``c5e65bb`` (2026-10-21).**
 
-``ac2dc95`` is the installed 0.13.1 (its ``direct_url.json`` names it),
-seven commits past ``e32bc69``. Between the two the hygiene path differs
-only in message text (``set_config_item`` also gained an opt-in
-``verify=`` that the hygiene pass does not pass), so every sentence above
-holds at ``e32bc69`` too.
-Re-derived, not re-stamped: the previous pin, ``eb245a9`` (2026-09-10),
+The pin follows harness master forward, and
+``tools/test_device_io_routing.py`` FAILS when the installed harness
+(its ``direct_url.json``, or a checkout's ``HEAD``) is not the pinned
+commit. The response is to re-derive the sentences above against the
+installed commit and move the pin, not to hold the harness back.
+
+``c5e65bb`` is the installed 0.13.1. It is six commits past
+``ac2dc95`` (the previous pin), and ``src/c64_test_harness/`` is
+byte-identical between the two — the six touch only the dev-env setup
+script, its test, and docs — so nothing above needed re-deriving at this
+move. ``ac2dc95`` was itself seven commits past ``e32bc69``; between
+those two the hygiene path differs only in message text
+(``set_config_item`` also gained an opt-in ``verify=`` that the hygiene
+pass does not pass), so every sentence above holds at ``e32bc69`` too.
+Re-derived, not re-stamped: the pin before both, ``eb245a9`` (2026-09-10),
 predates the handover sweep and the unlocked-process refusal (#511/#513,
 2026-09-28), which this docstring did not describe until this pin moved.
 

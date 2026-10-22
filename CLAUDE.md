@@ -319,10 +319,34 @@ finds it inconvenient. `tools/test_device_io_routing.py` guards them.
   and characterising its behaviour is the harness lane's job, not ours. Raise
   it there if you think you need it.
 - **Do not add a front-door `/Temp` refusal.** `Ultimate64Client` arms an FTP
-  collector on leak-prone devices itself and raises
-  `Ultimate64TempHygieneError` unless `U64_TEMP_GC_REQUIRED=0` — and only
-  when hygiene is *proven impossible*, so a local refusal blocks runs the
-  harness handles correctly. This repo tried one and deleted it; the
+  collector on leak-prone devices itself and refuses, at the request that
+  creates the attachment, in three cases — so a local refusal only blocks
+  runs the harness already handles:
+  - *hygiene proven impossible* (`_refuse_or_warn`): `U64_TEMP_GC_REQUIRED=0`
+    downgrades it to a WARNING.
+  - *unlocked process* (#513, `_refuse_unlocked`): an armed client on a
+    leak-prone grade refuses any attachment-creating request from a process
+    holding no `DeviceLock`. `U64_TEMP_GC_REQUIRED=0` does **not** lift it.
+    Hold the lock — every U64 tool here takes `DeviceLock(host)` before
+    building its client — or disarm deliberately with `temp_hygiene=False`,
+    which this repo's tools must not pass (`check_no_tool_forces_temp_hygiene`
+    rejects any `temp_hygiene` kwarg to `Ultimate64Client`).
+  - *device identity* (#519, `_enforce_device_identity`) — one device under
+    two lock keys, or an alias map whose id the device contradicts:
+    `Ultimate64DeviceAliasError`, a subclass of `Ultimate64TempHygieneError`,
+    raised while the lock is held on a leak-prone armed grade or under
+    `U64_REQUIRE_DEVICE_LOCK=1`. `U64_TEMP_GC_REQUIRED=0` does not lift it
+    either; the remedy is the alias file its message names.
+
+  Fake-host tests satisfy the lock gate as `tools/test_device_io_routing.py`
+  does: a real `DeviceLock` in a temporary `lock_dir` (the gate,
+  `held_by_this_process_in_any_dir`, accepts the device's lock held in any
+  directory). That isolates the hygiene gate only: the real request path
+  (`_reserve_temp_attachments`' identity check, `_request`'s advisory lock
+  check) still reads the default lock dir — and the identity check may
+  create it and write an identity record there — which is why that test calls
+  `_before_temp_attachment` directly. This repo tried a local refusal and
+  deleted it; the
   reasoning, and the one case deliberately left to the operator, is in
   `tools/u64_preflight.py` under "Why there is no hygiene handling here at
   all". Read that before adding any.
@@ -339,6 +363,11 @@ Reasoning that depends on harness internals must name the harness commit it
 was verified against, and re-check it before relying on it: that dependency
 was observed at four different commits in the session these rules were
 written. See the pin in `tools/u64_preflight.py`, which lists them.
+The pin follows harness master forward: `check_harness_pin_matches_installed`
+in `tools/test_device_io_routing.py` fails when the installed harness (its
+`direct_url.json`, or a checkout's `HEAD`) is not the pinned commit. The
+response is to re-derive the pin block's claims against the installed commit
+and move the pin — not to hold the harness back.
 
 ## Workflow notes
 
